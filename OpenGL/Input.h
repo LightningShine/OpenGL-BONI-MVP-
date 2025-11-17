@@ -8,19 +8,24 @@
 #include <iostream>
 #include <sstream>
 #include <string>
-#include <proj/proj.h>
+#include <UTMUPS.hpp>
+//#include <GeographicLib/UTMUPS.hpp>
 
-float lat_degX = 0;
-float lon_degY = 0;
 
-void InputData(
+
+void Input(
+    std::string cordinate,
+    std::mutex& pointsMutex,
+    std::atomic<bool>& running);
+
+void InputDataOpenGL(
     std::vector<glm::vec2>& points,
     std::mutex& pointsMutex,
     std::atomic<bool>& running
 );
 
-void CordinatesToOpenGLFormat(std::atomic<bool>& running);
+void CordinatesToDecimalFormat(std::string line);
 
-void CordinatesToUTM(std::atomic<bool>& running);
+void CordinatesToUTM(float CordinateX, float CordinateY);
 
 

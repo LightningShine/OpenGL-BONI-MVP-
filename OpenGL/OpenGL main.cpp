@@ -1,4 +1,5 @@
-﻿#include <iostream>
+﻿#pragma once
+#include <iostream>
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
 #include "Input.h"
@@ -164,7 +165,7 @@ int main()
 	std::mutex  pointsMutex;
 	std::atomic<bool> running(true);
 	std::thread inputThread(
-	InputData,
+		InputDataOpenGL,
 	std::ref(points),
 	std::ref(pointsMutex),
 	std::ref(running)
@@ -199,8 +200,8 @@ int main()
 		{
 			glLineWidth(5.0f);
 			glPointSize(5.0f);
-			glDrawArrays(GL_POINTS, 0, pointCount); // Draw the points as GL_POINTS
-			glDrawArrays(GL_LINE_STRIP, 0, pointCount); // Draw the points as GL_LINE_STRIP
+			glDrawArrays(GL_POINTS, 0, (GLsizei)pointCount); // Draw the points as GL_POINTS
+			glDrawArrays(GL_LINE_STRIP, 0, (GLsizei)pointCount); // Draw the points as GL_LINE_STRIP
 
 		}
 
@@ -231,5 +232,7 @@ int main()
 
 
 	return 0;
+
+	// Uztaisit Start Stop sistemu lai pec N laiku MVP nepardoda informaciju, lai taupitu energiju
 
 }

@@ -1,6 +1,8 @@
+﻿#pragma once
 #include "Input.h"
 
-void InputData(std::vector<glm::vec2>& points, std::mutex& pointsMutex, std::atomic<bool>& running)
+
+void InputDataOpenGL(std::vector<glm::vec2>& points, std::mutex& pointsMutex, std::atomic<bool>& running)
 {
 	std::cout << "Input date is started\n";
 
@@ -35,44 +37,82 @@ void InputData(std::vector<glm::vec2>& points, std::mutex& pointsMutex, std::ato
 
 }
 
-void CordinatesToOpenGLFormat(std::atomic<bool>& running)
+void Input(std::string cordinate, std::mutex& pointsMutex, std::atomic<bool>& running)
 {
-	std::cout << "Input Earth cordinate is started\n";
-	std::string line;
-
-	int lat_deg, lat_min, lon_deg, lon_min;
-	double lat_sec, lon_sec;
 	while (running)
 	{
+		std::getline(std::cin, cordinate);
+
+		if (cordinate == "exit")
+		{
+			running = false;
+			break;
+		}
+		
+
+	}
+};
+
+void CordinatesToDecimalFormat(std::string line)
+{
+	int lat_deg, lat_min, lon_deg, lon_min;
+	double lat_sec, lon_sec;
+
 		std::getline(std::cin, line);
 
 		int result = sscanf_s(line.c_str(),
-			"%d�%d'%lf\" %d�%d'%lf\"",
+			"%dø%d'%lf\" %dø%d'%lf\"",
 			&lat_deg, &lat_min, &lat_sec,
 			&lon_deg, &lon_min, &lon_sec);
 
 		//std::cout << lat_deg << " " << lat_min << " " << lat_sec << "      " << lon_deg << " " << lon_min << " " << lon_sec << "\n";
-		lat_degX = lat_deg + ((float)lat_min / 60) + ((float)lat_sec / 3600);
-		lon_degY = lon_deg + ((float)lon_min / 60) + ((float)lon_sec / 3600);
+		float X =lat_deg + ((float)lat_min / 60) + ((float)lat_sec / 3600);
+		float Y = lon_deg + ((float)lon_min / 60) + ((float)lon_sec / 3600);
 
-		std::cout << "FlatX " << lat_deg + ((float)lat_min / 60) + ((float)lat_sec / 3600) << "\n" << "FlatY " << lon_deg + ((float)lon_min / 60) + ((float)lon_sec / 3600) << "\n";
-
-
-	}
+		std::cout << "FlatX " << X << "\n" << "FlatY " << Y << "\n";
 }
 
-void CordinatesToUTM(std::atomic<bool>& running)
+void CordinatesToUTM_GeographicLib(double lat_deg, double lon_deg, double& easting, double& northing)
 {
-	PJ_COORD input_cord; 
-	float PI = 3.1415926535897932384626433832795;
-	input_cord.lp.lam = (lon_degY * PI)/180;
+	using namespace GeographicLib;
 
-	PJ_CONTEXT* C = proj_context_create();
+	int zone;
+	bool northp;
 
-	PJ* UTM_def = proj_create_crs_to_crs(C, "EPSG:4326", "+proj=utm +zone=auto +elips=WGS84", nullptr);
+	// 1. Выполняем преобразование
+	UTMUPS::Forward(lat_deg, lon_deg, zone, northp, easting, northing);
 
-	PJ_COORD output_coord = proj_trans(UTM_def, PJ_FWD, input_cord);
+	// 2. Получаем букву зоны на основе широты
+	char zone_letter;
+	if (lat_deg >= 84 || lat_deg < -80) {
+		// Полярные регионы (UPS)
+		zone_letter = (northp) ? 'Z' : 'A';
+	}
+	else {
+		// Стандартные UTM зоны
+		if (lat_deg >= 72) zone_letter = 'X';
+		else if (lat_deg >= 64) zone_letter = 'W';
+		else if (lat_deg >= 56) zone_letter = 'V';
+		else if (lat_deg >= 48) zone_letter = 'U';
+		else if (lat_deg >= 40) zone_letter = 'T';
+		else if (lat_deg >= 32) zone_letter = 'S';
+		else if (lat_deg >= 24) zone_letter = 'R';
+		else if (lat_deg >= 16) zone_letter = 'Q';
+		else if (lat_deg >= 8) zone_letter = 'P';
+		else if (lat_deg >= 0) zone_letter = 'N';
+		else if (lat_deg >= -8) zone_letter = 'M';
+		else if (lat_deg >= -16) zone_letter = 'L';
+		else if (lat_deg >= -24) zone_letter = 'K';
+		else if (lat_deg >= -32) zone_letter = 'J';
+		else if (lat_deg >= -40) zone_letter = 'H';
+		else if (lat_deg >= -48) zone_letter = 'G';
+		else if (lat_deg >= -56) zone_letter = 'F';
+		else if (lat_deg >= -64) zone_letter = 'E';
+		else zone_letter = 'D'; // -80 до -64
+	}
 
-	double easting = output_coord.xy.x;
-	double northing = output_coord.xy.y;
+	std::cout << "UTM Coordinates: \n";
+	std::cout << "  Easting (X): " << easting << " m\n";
+	std::cout << "  Northing (Y): " << northing << " m\n";
+	std::cout << "  Zone: " << zone << zone_letter << "\n"; // Например, 38N
 }
