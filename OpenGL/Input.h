@@ -13,10 +13,7 @@
 
 
 
-void Input(
-    std::string cordinate,
-    std::mutex& pointsMutex,
-    std::atomic<bool>& running);
+void InputOrigin();
 
 void InputDataOpenGL(
     std::vector<glm::vec2>& points,
@@ -24,8 +21,22 @@ void InputDataOpenGL(
     std::atomic<bool>& running
 );
 
-void CordinatesToDecimalFormat(std::string line);
+void CordinatesToDecimalFormat(std::string line, float& dec_lat_deg, float& dec_lon_deg);
 
-void CordinatesToUTM(float CordinateX, float CordinateY);
+void CordinatesToUTM_GeographicLib(double lat_deg, double lon_deg, double& easting, double& northing);
+
+void ChoseInputMode(std::vector<glm::vec2>& points, std::mutex& pointsMutex, std::atomic<bool>& running);
+
+class JsonInput
+{
+public:
+	double input_latitude;
+	double input_longitude;
+	double easting;
+	double northing;
+	int zone;
+	char zone_letter;
+
+};
 
 

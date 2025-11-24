@@ -1,6 +1,32 @@
 ﻿#pragma once
 #include "Input.h"
 
+void ChoseInputMode(std::vector<glm::vec2>& points, std::mutex& pointsMutex, std::atomic<bool>& running)
+{
+	start:
+	std::cout << "1. Create New Map" << "\n";
+	std::cout << "2. Load Existing Map" << "\n";
+	std::cout << "3. Input cordinate manual ( Normalizated cordinat )" << "\n";
+	int input_mode;
+	std::cin >> input_mode;
+	switch (input_mode)
+	{
+		case 1:
+			InputOrigin();
+			break;
+		case 2:
+			std::cout << "Load Existing Map Selected\n";
+			break;
+		case 3:
+			InputDataOpenGL(points, pointsMutex, running);
+			break;
+		default:
+			std::cout << "Invalid input mode selected\n";
+			goto start;
+	}
+
+}
+
 
 void InputDataOpenGL(std::vector<glm::vec2>& points, std::mutex& pointsMutex, std::atomic<bool>& running)
 {
@@ -37,39 +63,33 @@ void InputDataOpenGL(std::vector<glm::vec2>& points, std::mutex& pointsMutex, st
 
 }
 
-void Input(std::string cordinate, std::mutex& pointsMutex, std::atomic<bool>& running)
+void InputOrigin()
 {
-	while (running)
-	{
+		std::string cordinate;
 		std::getline(std::cin, cordinate);
-
-		if (cordinate == "exit")
-		{
-			running = false;
-			break;
-		}
-		
-
-	}
+		float dec_lat_deg, dec_lon_deg;
+		CordinatesToDecimalFormat(cordinate, dec_lat_deg, dec_lon_deg);
+		double easting, northing;
+		CordinatesToUTM_GeographicLib(dec_lat_deg, dec_lon_deg, easting, northing);
+	
 };
 
-void CordinatesToDecimalFormat(std::string line)
+void CordinatesToDecimalFormat(std::string line, float &dec_lat_deg, float& dec_lon_deg)
 {
 	int lat_deg, lat_min, lon_deg, lon_min;
 	double lat_sec, lon_sec;
 
-		std::getline(std::cin, line);
+		//std::getline(std::cin, line);
 
 		int result = sscanf_s(line.c_str(),
 			"%dø%d'%lf\" %dø%d'%lf\"",
 			&lat_deg, &lat_min, &lat_sec,
 			&lon_deg, &lon_min, &lon_sec);
 
-		//std::cout << lat_deg << " " << lat_min << " " << lat_sec << "      " << lon_deg << " " << lon_min << " " << lon_sec << "\n";
-		float X =lat_deg + ((float)lat_min / 60) + ((float)lat_sec / 3600);
-		float Y = lon_deg + ((float)lon_min / 60) + ((float)lon_sec / 3600);
+		 dec_lat_deg =lat_deg + ((float)lat_min / 60) + ((float)lat_sec / 3600);
+		 dec_lon_deg = lon_deg + ((float)lon_min / 60) + ((float)lon_sec / 3600);
 
-		std::cout << "FlatX " << X << "\n" << "FlatY " << Y << "\n";
+		std::cout << "FlatX " << dec_lat_deg << "\n" << "FlatY " << dec_lon_deg << "\n";
 }
 
 void CordinatesToUTM_GeographicLib(double lat_deg, double lon_deg, double& easting, double& northing)
@@ -79,13 +99,12 @@ void CordinatesToUTM_GeographicLib(double lat_deg, double lon_deg, double& easti
 	int zone;
 	bool northp;
 
-	// 1. Выполняем преобразование
+	// Cordinate converter
 	UTMUPS::Forward(lat_deg, lon_deg, zone, northp, easting, northing);
 
-	// 2. Получаем букву зоны на основе широты
+	// 2Getting the char of zone
 	char zone_letter;
 	if (lat_deg >= 84 || lat_deg < -80) {
-		// Полярные регионы (UPS)
 		zone_letter = (northp) ? 'Z' : 'A';
 	}
 	else {
@@ -108,11 +127,20 @@ void CordinatesToUTM_GeographicLib(double lat_deg, double lon_deg, double& easti
 		else if (lat_deg >= -48) zone_letter = 'G';
 		else if (lat_deg >= -56) zone_letter = 'F';
 		else if (lat_deg >= -64) zone_letter = 'E';
-		else zone_letter = 'D'; // -80 до -64
+		else zone_letter = 'D'; // -80 to -64
 	}
 
 	std::cout << "UTM Coordinates: \n";
 	std::cout << "  Easting (X): " << easting << " m\n";
 	std::cout << "  Northing (Y): " << northing << " m\n";
-	std::cout << "  Zone: " << zone << zone_letter << "\n"; // Например, 38N
+	std::cout << "  Zone: " << zone << zone_letter << "\n"; 
+
+	JsonInput jsonInput;
+	jsonInput.input_latitude = lat_deg;
+	jsonInput.input_longitude = lon_deg;
+	jsonInput.easting = easting;
+	jsonInput.northing = northing;
+	jsonInput.zone = zone;
+	jsonInput.zone_letter = zone_letter;
+
 }

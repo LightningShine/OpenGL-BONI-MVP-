@@ -165,11 +165,17 @@ int main()
 	std::mutex  pointsMutex;
 	std::atomic<bool> running(true);
 	std::thread inputThread(
-		InputDataOpenGL,
+		ChoseInputMode,
 	std::ref(points),
 	std::ref(pointsMutex),
 	std::ref(running)
 	);
+
+	//string cordinate;
+	//std::thread TestThread(
+	//	InputOrigin,
+	//	std::ref(cordinate)
+	//);
 
 
 
