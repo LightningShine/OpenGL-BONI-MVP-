@@ -1,5 +1,6 @@
 ﻿#pragma once
 #include "Input.h"
+JsonInput jsonClass;
 
 void ChoseInputMode(std::vector<glm::vec2>& points, std::mutex& pointsMutex, std::atomic<bool>& running)
 {
@@ -9,10 +10,24 @@ void ChoseInputMode(std::vector<glm::vec2>& points, std::mutex& pointsMutex, std
 	std::cout << "3. Input cordinate manual ( Normalizated cordinat )" << "\n";
 	int input_mode;
 	std::cin >> input_mode;
+	std::string line;
+	double dec_lat_deg, dec_lon_deg, easting, northing, normalized_x, normalized_y;
 	switch (input_mode)
 	{
 		case 1:
 			InputOrigin();
+			while (true)
+			{
+				std::getline(std::cin, line);
+				if (line == "exit")
+				{
+					break;
+				}
+				CordinatesToDecimalFormat(line, dec_lat_deg, dec_lon_deg);
+				CordinateToMetersUTM(dec_lat_deg, dec_lon_deg, easting, northing);
+				CordinateDifirenceFromOrigin(easting, northing, 1500.0, normalized_x, normalized_y);
+				InputDatainCode(points, pointsMutex, running, normalized_x, normalized_y);
+			}
 			break;
 		case 2:
 			std::cout << "Load Existing Map Selected\n";
@@ -67,29 +82,27 @@ void InputOrigin()
 {
 		std::string cordinate;
 		std::getline(std::cin, cordinate);
-		float dec_lat_deg, dec_lon_deg;
+		double dec_lat_deg, dec_lon_deg;
 		CordinatesToDecimalFormat(cordinate, dec_lat_deg, dec_lon_deg);
 		double easting, northing;
 		CordinatesToUTM_GeographicLib(dec_lat_deg, dec_lon_deg, easting, northing);
 	
 };
 
-void CordinatesToDecimalFormat(std::string line, float &dec_lat_deg, float& dec_lon_deg)
+void CordinatesToDecimalFormat(std::string line, double &dec_lat_deg, double& dec_lon_deg)
 {
 	int lat_deg, lat_min, lon_deg, lon_min;
 	double lat_sec, lon_sec;
-
-		//std::getline(std::cin, line);
 
 		int result = sscanf_s(line.c_str(),
 			"%dø%d'%lf\" %dø%d'%lf\"",
 			&lat_deg, &lat_min, &lat_sec,
 			&lon_deg, &lon_min, &lon_sec);
 
-		 dec_lat_deg =lat_deg + ((float)lat_min / 60) + ((float)lat_sec / 3600);
-		 dec_lon_deg = lon_deg + ((float)lon_min / 60) + ((float)lon_sec / 3600);
+		 dec_lat_deg =lat_deg + (lat_min / 60) + (lat_sec / 3600);
+		 dec_lon_deg = lon_deg + (lon_min / 60) + (lon_sec / 3600);
 
-		std::cout << "FlatX " << dec_lat_deg << "\n" << "FlatY " << dec_lon_deg << "\n";
+		//std::cout << "FlatX " << dec_lat_deg << "\n" << "FlatY " << dec_lon_deg << "\n";
 }
 
 void CordinatesToUTM_GeographicLib(double lat_deg, double lon_deg, double& easting, double& northing)
@@ -135,12 +148,44 @@ void CordinatesToUTM_GeographicLib(double lat_deg, double lon_deg, double& easti
 	std::cout << "  Northing (Y): " << northing << " m\n";
 	std::cout << "  Zone: " << zone << zone_letter << "\n"; 
 
-	JsonInput jsonInput;
-	jsonInput.input_latitude = lat_deg;
-	jsonInput.input_longitude = lon_deg;
-	jsonInput.easting = easting;
-	jsonInput.northing = northing;
-	jsonInput.zone = zone;
-	jsonInput.zone_letter = zone_letter;
+	
+	jsonClass.input_latitude = lat_deg;
+	jsonClass.input_longitude = lon_deg;
+	jsonClass.easting = easting;
+	jsonClass.northing = northing;
+	jsonClass.zone = zone;
+	jsonClass.zone_letter = zone_letter;
 
+}
+
+void CordinateToMetersUTM(double lat_deg, double lon_deg, double &easting, double &northing)
+{
+	using namespace GeographicLib;
+
+	int zone;
+	bool northp;
+
+	// Cordinate converter
+	UTMUPS::Forward(lat_deg, lon_deg, zone, northp, easting, northing);
+
+}
+
+void CordinateDifirenceFromOrigin(double CordiateX, double CordinateY, double MAP_SIZE, double normalized_x, double normalized_y)
+{
+
+	double diff_easting = CordiateX - jsonClass.easting;
+	double diff_northing = CordinateY - jsonClass.northing;
+
+	normalized_x = (diff_easting / MAP_SIZE);
+	normalized_y = (diff_northing / MAP_SIZE);
+
+}
+
+void InputDatainCode(std::vector<glm::vec2>& points, std::mutex& pointsMutex, std::atomic<bool>& running, double &normalized_x, double &normalized_y)
+{
+	{
+		std::lock_guard<std::mutex> lock(pointsMutex);
+		points.push_back(glm::vec2{ normalized_x, normalized_y });
+		std::cout << "Received point: (" << normalized_x << ", " << normalized_y << ")\n";
+	}
 }

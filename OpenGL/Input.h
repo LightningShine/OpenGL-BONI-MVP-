@@ -21,9 +21,15 @@ void InputDataOpenGL(
     std::atomic<bool>& running
 );
 
-void CordinatesToDecimalFormat(std::string line, float& dec_lat_deg, float& dec_lon_deg);
+void CordinatesToDecimalFormat(std::string line, double& dec_lat_deg, double& dec_lon_deg);
 
 void CordinatesToUTM_GeographicLib(double lat_deg, double lon_deg, double& easting, double& northing);
+
+void CordinateToMetersUTM(double lat_deg, double lon_deg, double& easting, double& northing);
+
+void CordinateDifirenceFromOrigin(double CordiateX, double CordinateY, double MAP_SIZE, double normalized_x, double normalized_y);
+
+void InputDatainCode(std::vector<glm::vec2>& points, std::mutex& pointsMutex, std::atomic<bool>& running, double& normalized_x, double& normalized_y);
 
 void ChoseInputMode(std::vector<glm::vec2>& points, std::mutex& pointsMutex, std::atomic<bool>& running);
 
