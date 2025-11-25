@@ -9,6 +9,8 @@ void ChoseInputMode(std::vector<glm::vec2>& points, std::mutex& pointsMutex, std
 	std::cout << "2. Load Existing Map" << "\n";
 	std::cout << "3. Input cordinate manual ( Normalizated cordinat )" << "\n";
 	int input_mode;
+	std::cout << "Select input mode: ";
+	std::cin.clear();
 	std::cin >> input_mode;
 	std::string line;
 	double dec_lat_deg, dec_lon_deg, easting, northing, normalized_x, normalized_y;
@@ -25,7 +27,7 @@ void ChoseInputMode(std::vector<glm::vec2>& points, std::mutex& pointsMutex, std
 				}
 				CordinatesToDecimalFormat(line, dec_lat_deg, dec_lon_deg);
 				CordinateToMetersUTM(dec_lat_deg, dec_lon_deg, easting, northing);
-				CordinateDifirenceFromOrigin(easting, northing, 1500.0, normalized_x, normalized_y);
+				CordinateDifirenceFromOrigin(easting, northing, 200.0, normalized_x, normalized_y);
 				InputDatainCode(points, pointsMutex, running, normalized_x, normalized_y);
 			}
 			break;
@@ -81,7 +83,8 @@ void InputDataOpenGL(std::vector<glm::vec2>& points, std::mutex& pointsMutex, st
 void InputOrigin()
 {
 		std::string cordinate;
-		std::getline(std::cin, cordinate);
+		std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');  // Очищаем буфер
+		std::getline(std::cin, cordinate); // Ingonoring it
 		double dec_lat_deg, dec_lon_deg;
 		CordinatesToDecimalFormat(cordinate, dec_lat_deg, dec_lon_deg);
 		double easting, northing;
@@ -170,7 +173,7 @@ void CordinateToMetersUTM(double lat_deg, double lon_deg, double &easting, doubl
 
 }
 
-void CordinateDifirenceFromOrigin(double CordiateX, double CordinateY, double MAP_SIZE, double normalized_x, double normalized_y)
+void CordinateDifirenceFromOrigin(double CordiateX, double CordinateY, double MAP_SIZE, double &normalized_x, double &normalized_y)
 {
 
 	double diff_easting = CordiateX - jsonClass.easting;

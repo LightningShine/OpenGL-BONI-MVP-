@@ -27,7 +27,7 @@ void CordinatesToUTM_GeographicLib(double lat_deg, double lon_deg, double& easti
 
 void CordinateToMetersUTM(double lat_deg, double lon_deg, double& easting, double& northing);
 
-void CordinateDifirenceFromOrigin(double CordiateX, double CordinateY, double MAP_SIZE, double normalized_x, double normalized_y);
+void CordinateDifirenceFromOrigin(double CordiateX, double CordinateY, double MAP_SIZE, double& normalized_x, double& normalized_y);
 
 void InputDatainCode(std::vector<glm::vec2>& points, std::mutex& pointsMutex, std::atomic<bool>& running, double& normalized_x, double& normalized_y);
 
