@@ -51,16 +51,18 @@ https://github.com/user-attachments/assets/4bd82d52-cb2b-4506-8cf0-179601198cdf
 The project's JSON file is fully self-describing, containing all the parameters needed to load and render the track correctly on any system without external calibration.
 JSON
 
-```{
+```
+{
   "track_name": "Track Name",
   "projection_zone": "38V",
   "center_easting": 271780.88, // Absolute UTM X of the track center
   "center_northing": 6279715.39, // Absolute UTM Y of the track center
   "max_span_meters": 500.0,    // Largest dimension of the track's bounding box
   "track_points": [
-    [271780.88, 6279715.39], // Absolute UTM [X, Y] points
+    [0, 0], // Normalizated OpenGL [X, Y] points
     // 
   ]
-}```
+}
+```
 
 
