@@ -20,6 +20,46 @@ void processInput(GLFWwindow* window)
 		glfwSetWindowShouldClose(window, true);
 }
 
+void processInput(GLFWwindow* window, glm::vec2& cameraPos, float& zoom, float speed)
+{
+	// Close when press ESC
+	if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
+		glfwSetWindowShouldClose(window, true);
+
+	// Camera movment (W/A/S/D or Arrows)
+	if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS ||
+		glfwGetKey(window, GLFW_KEY_UP) == GLFW_PRESS)
+		cameraPos.y += speed / zoom;  // Up
+
+	if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS ||
+		glfwGetKey(window, GLFW_KEY_DOWN) == GLFW_PRESS)
+		cameraPos.y -= speed / zoom;  // down
+
+	if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS ||
+		glfwGetKey(window, GLFW_KEY_LEFT) == GLFW_PRESS)
+		cameraPos.x -= speed / zoom;  // Left
+
+	if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS ||
+		glfwGetKey(window, GLFW_KEY_RIGHT) == GLFW_PRESS)
+		cameraPos.x += speed / zoom;  // Right
+
+	// Zoom limits
+	if (zoom < 0.1f) zoom = 0.1f;   // Minimum
+	if (zoom > 10.0f) zoom = 10.0f; // Maximum
+}
+
+// Callback for scroolling mouse wheel
+void scroll_callback(GLFWwindow* window, double xoffset, double yoffset)
+{
+	float* zoom = (float*)glfwGetWindowUserPointer(window);
+	*zoom *= (float)(1.0f + yoffset * 0.1f);  // Aspect of zoom change
+
+	// Ограничение зума
+	if (*zoom < 0.1f) *zoom = 0.1f;
+	if (*zoom > 10.0f) *zoom = 10.0f;
+}
+
+
 //Shaders
 
 const char* vertexShaderSource = R"(
@@ -47,18 +87,16 @@ const char* fragmentShaderSource = R"(
 )";
 
 
-
-
 int main()
 {
 	glfwInit();
 	glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);  // Determine OpenGL major version OpenGL 4.X
 	glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 6);	// Determine OpenGL minor version OpenGL X.6
-	glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE); 
+	glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 	// Use the core-profile
 	// get access to a et access to a smaller subset 
 	// of OpenGL features without backwards - compatible features we no longer need
-	
+
 	int Width = 800;
 	int Height = 800;
 
@@ -81,7 +119,7 @@ int main()
 
 	glViewport(0, 0, Width, Height); // Set the OpenGL viewport to cover the whole window
 
-	glfwSetFramebufferSizeCallback(window, framebuffer_size_callback); 
+	glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
 	// Register the callback function to adjust the viewport when the window is resized
 
 
@@ -98,7 +136,7 @@ int main()
 	unsigned int indices[] = { 0, 2, 1,
 							   5, 3, 4,
 							   5, 0, 2,
-							   5, 3, 2}; // How does it work?
+							   5, 3, 2 }; // How does it work?
 
 
 	GLuint VAO, VBO, EBO;
@@ -106,7 +144,7 @@ int main()
 	glGenBuffers(1, &VBO);
 	glGenBuffers(1, &EBO);
 
-	
+
 	// Vertex Buffer Object
 	glBindVertexArray(VAO);
 	glGenVertexArrays(1, &VAO);
@@ -143,7 +181,7 @@ int main()
 	char infoLog[512];
 
 	glGetShaderiv(vertexShader, GL_COMPILE_STATUS, &success);
-	if(!success)
+	if (!success)
 	{
 		glGetShaderInfoLog(vertexShader, 512, NULL, infoLog);
 		cout << "ERROR::SHADER::VERTEX::COMPILATION_FAILED\n" << infoLog << endl;
@@ -170,6 +208,22 @@ int main()
 
 	glEnable(GL_PROGRAM_POINT_SIZE);
 
+	// ========================== Process Input ==========================
+	glm::vec2 cameraPosition(0.0f, 0.0f);  // Camera Position (X, Y)
+	float cameraZoom = 1.0f;                // Zoom (1.0 = Normal, >1 = Zoom)
+	float cameraMoveSpeed = 0.001f;          // Camera movment speed
+	//float cameraZoomSpeed = 0.1f;           // Zoom speed
+	glm::vec2 cameraVelocity(0.0f, 0.0f);  // Velocity
+	float friction = 0.85f;                 // Friction
+	float mapBoundX = 2.0f;  // Map border X
+	float mapBoundY = 2.0f;  // Map border Y
+
+	glfwSetWindowUserPointer(window, &cameraZoom);
+	glfwSetScrollCallback(window, scroll_callback);
+
+	// Callback для скролла мыши
+
+
 
 	// ========================== INPUT THREAD ==========================
 
@@ -192,11 +246,14 @@ int main()
 	double horizontalBound = mapRange;
 	double verticalBound = mapRange;
 
+
 	// ========================== RENDER LOOP ==========================
 
 	while (!glfwWindowShouldClose(window)) // Main loop that runs until the window is closed
 	{
-		processInput(window); // Process user input (e.g., keyboard events)
+		processInput(window, cameraPosition, cameraZoom, cameraMoveSpeed); // Process user input with camera
+		cameraPosition += cameraVelocity;  // Применяем скорость
+		cameraVelocity *= friction;
 		
 		if (!running) glfwSetWindowShouldClose(window, true); // If console closed, close the windows too
 
@@ -207,6 +264,8 @@ int main()
 		 
 		double aspectRatio = (double)windowswidth / (double)windowsheight;
 
+
+		// Basic border with aspect ratio
 		if (aspectRatio >= 1.0)
 		{
 			horizontalBound = mapRange * aspectRatio;
@@ -218,7 +277,21 @@ int main()
 			verticalBound = mapRange / aspectRatio;
 		}
 
-		glm::mat4 projection = glm::ortho((float)-horizontalBound, (float)horizontalBound, (float)-verticalBound, (float)verticalBound, -1.0f, 1.0f);
+		// Apply zoom (devide border on zoom)
+		float zoomedHorizontal = (float)horizontalBound / (float)cameraZoom;
+		float zoomedVertical = (float)verticalBound / (float)cameraZoom;
+
+		cameraPosition.x = glm::clamp(cameraPosition.x, -mapBoundX, mapBoundX);
+		cameraPosition.y = glm::clamp(cameraPosition.y, -mapBoundY, mapBoundY);
+
+		// Creating orthographic projection matrix with camera
+		glm::mat4 projection = glm::ortho(
+			-zoomedHorizontal + cameraPosition.x,  // left
+			zoomedHorizontal + cameraPosition.x,  // right
+			-zoomedVertical + cameraPosition.y,    // bottom
+			zoomedVertical + cameraPosition.y,    // top
+			-1.0f, 1.0f
+		);
 		
 		glUseProgram(shaderProgram);
 		
@@ -240,11 +313,11 @@ int main()
 			
 			if (pointCount > 1)
 			{
-				// 1.White border (wider)
-				borderLayer = GenerateTriangleStripFromLine(points, 0.04f);
+				// Интерполируем точки для плавности
+				std::vector<glm::vec2> smoothPoints = InterpolatePoints(points, 10);
 
-				// 2. Grey asphalt (narrower)
-				asphaltLayer = GenerateTriangleStripFromLine(points, 0.035f);
+				borderLayer = GenerateTriangleStripFromLine(smoothPoints, 0.04f);
+				asphaltLayer = GenerateTriangleStripFromLine(smoothPoints, 0.035f);
 			}
 		}
 
@@ -262,10 +335,9 @@ int main()
 			glBindBuffer(GL_ARRAY_BUFFER, VBO);
 			glBufferData(GL_ARRAY_BUFFER, asphaltLayer.size() * sizeof(glm::vec2), asphaltLayer.data(), GL_DYNAMIC_DRAW);
 
-			glUniform3f(colorLoc, 0.3f, 0.3f, 0.3f); // White color for border
+			glUniform3f(colorLoc, 0.3f, 0.3f, 0.3f); // Grey color for asphalt
 			glDrawArrays(GL_TRIANGLE_STRIP, 0, (GLsizei)asphaltLayer.size());
 		}
-
 
 
 		// check and call events and swap the buffers
