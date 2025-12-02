@@ -134,11 +134,14 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="Edit.cpp" />
     <ClCompile Include="glad.c" />
     <ClCompile Include="Input.cpp" />
     <ClCompile Include="OpenGL main.cpp" />
+    <ClCompile Include="Source.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="EDITH.h" />
     <ClInclude Include="Input.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

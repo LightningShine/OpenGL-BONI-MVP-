@@ -14,9 +14,11 @@ void ChoseInputMode(std::vector<glm::vec2>& points, std::mutex& pointsMutex, std
 	std::cin >> input_mode;
 	std::string line;
 	double dec_lat_deg, dec_lon_deg, easting, northing, normalized_x, normalized_y;
+	std::vector<glm::vec2> smoothedData;
 	switch (input_mode)
 	{
 		case 1:
+			std::cout << "Create New Map Started ( Input your cordibate in DMS format )\n";
 			InputOrigin();
 			while (true)
 			{
@@ -27,9 +29,33 @@ void ChoseInputMode(std::vector<glm::vec2>& points, std::mutex& pointsMutex, std
 				}
 				CordinatesToDecimalFormat(line, dec_lat_deg, dec_lon_deg);
 				CordinateToMetersUTM(dec_lat_deg, dec_lon_deg, easting, northing);
-				CordinateDifirenceFromOrigin(easting, northing, 200.0, normalized_x, normalized_y);
+				CordinateDifirenceFromOrigin(easting, northing, 100.0, normalized_x, normalized_y);
 				InputDatainCode(points, pointsMutex, running, normalized_x, normalized_y);
+
+				{
+					std::lock_guard<std::mutex> lock(pointsMutex); // Neded to explain
+					if (points.back() == points.front() && points.size() != 1)
+					{
+						std::cout << "Map closed.\n";
+						break;
+					}
+				}
 			}
+
+			// There will function which interpolate map points
+			// --- INTERPOLATION START ---
+			//std::cout << "Interpolating map points with Centripetal Catmull-Rom (alpha=0.5)...\n";
+
+			//// Using alpha = 0.5f to prevent artifacts and loops
+			//smoothedData = InterpolatePoints(points, 10, 0.5f);
+
+			//{
+			//	std::lock_guard<std::mutex> lock(pointsMutex);
+			//	points = smoothedData;
+			//}
+			//std::cout << "Interpolation finished.\n";
+			// --- INTERPOLATION END ---
+
 			break;
 		case 2:
 			std::cout << "Load Existing Map Selected\n";
@@ -164,6 +190,7 @@ void CordinatesToUTM_GeographicLib(double lat_deg, double lon_deg, double& easti
 void CordinateToMetersUTM(double lat_deg, double lon_deg, double &easting, double &northing)
 {
 	using namespace GeographicLib;
+
 
 	int zone;
 	bool northp;

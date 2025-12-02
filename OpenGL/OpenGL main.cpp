@@ -2,6 +2,9 @@
 #include <iostream>
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
+#include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/type_ptr.hpp>
 #include "Input.h"
 
 using namespace std;
@@ -21,19 +24,25 @@ void processInput(GLFWwindow* window)
 
 const char* vertexShaderSource = R"(
     #version 460 core
-    layout (location = 0) in vec2 aPos; 
+    layout (location = 0) in vec2 aPos;
+    
+    uniform mat4 projection;
+    
     void main()
     {
-        gl_Position = vec4(aPos.x, aPos.y, 0.0, 1.0); 
+        gl_Position = projection * vec4(aPos.x, aPos.y, 0.0, 1.0); 
     }
 )";
 
 const char* fragmentShaderSource = R"(
     #version 460 core
     out vec4 FragColor;
+    
+    uniform vec3 uColor;
+    
     void main()
     {
-        FragColor = vec4(1.0f, 0.0f, 0.0f, 1.0f); 
+        FragColor = vec4(uColor, 1.0f); 
     }
 )";
 
@@ -50,8 +59,11 @@ int main()
 	// get access to a et access to a smaller subset 
 	// of OpenGL features without backwards - compatible features we no longer need
 	
+	int Width = 800;
+	int Height = 800;
 
-	GLFWwindow* window = glfwCreateWindow(800, 600, "Race Map", NULL, NULL); // Create a windowed mode at windows 800x600, titled Race Map
+
+	GLFWwindow* window = glfwCreateWindow(Width, Height, "Race Map", NULL, NULL); // Create a windowed mode at windows 800x800, titled Race Map
 	if (window == NULL) // Check if the window was created successfully
 	{
 		cout << "Failed to create GLFW window" << endl;
@@ -67,7 +79,7 @@ int main()
 		return -1;
 	}
 
-	glViewport(0, 0, 800, 600); // Set the OpenGL viewport to cover the whole window
+	glViewport(0, 0, Width, Height); // Set the OpenGL viewport to cover the whole window
 
 	glfwSetFramebufferSizeCallback(window, framebuffer_size_callback); 
 	// Register the callback function to adjust the viewport when the window is resized
@@ -120,7 +132,7 @@ int main()
 	glShaderSource(vertexShader, 1, &vertexShaderSource, NULL);
 	glCompileShader(vertexShader);
 
-	GLuint fragmentShader = glCreateShader(GL_VERTEX_SHADER);
+	GLuint fragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
 	glShaderSource(fragmentShader, 1, &fragmentShaderSource, NULL);
 	glCompileShader(fragmentShader);
 
@@ -141,7 +153,7 @@ int main()
 	if (!success)
 	{
 		glGetShaderInfoLog(fragmentShader, 512, NULL, infoLog);
-		cout << "ERROR::SHADER::VERTEX::COMPILATION_FAILED\n" << infoLog << endl;
+		cout << "ERROR::SHADER::FRAGMENT::COMPILATION_FAILED\n" << infoLog << endl;
 	}
 
 	// =================== Create Shader Program ===================
@@ -171,13 +183,14 @@ int main()
 	std::ref(running)
 	);
 
-	//string cordinate;
-	//std::thread TestThread(
-	//	InputOrigin,
-	//	std::ref(cordinate)
-	//);
 
+	int windowswidth;
+	int windowsheight;
 
+	double mapRange = 1.0; // Assuming the map range is normalized to 1.0
+
+	double horizontalBound = mapRange;
+	double verticalBound = mapRange;
 
 	// ========================== RENDER LOOP ==========================
 
@@ -190,39 +203,76 @@ int main()
 		glClearColor(0.0f, 0.0f, 0.1f, 1.0f); // Set the clear color for the window (background color)
 		glClear(GL_COLOR_BUFFER_BIT); // Clear the color buffer with the specified clear color
 		
-		glUseProgram(shaderProgram); // Use the shader program (0 means no shader program, using fixed-function pipeline)
+		glfwGetWindowSize(window, &windowswidth, &windowsheight);
+		 
+		double aspectRatio = (double)windowswidth / (double)windowsheight;
+
+		if (aspectRatio >= 1.0)
+		{
+			horizontalBound = mapRange * aspectRatio;
+			verticalBound = mapRange;
+		}
+		else
+		{
+			horizontalBound = mapRange;
+			verticalBound = mapRange / aspectRatio;
+		}
+
+		glm::mat4 projection = glm::ortho((float)-horizontalBound, (float)horizontalBound, (float)-verticalBound, (float)verticalBound, -1.0f, 1.0f);
+		
+		glUseProgram(shaderProgram);
+		
+		GLint projLoc = glGetUniformLocation(shaderProgram, "projection");
+		glUniformMatrix4fv(projLoc, 1, GL_FALSE, glm::value_ptr(projection));
+		
+		GLint colorLoc = glGetUniformLocation(shaderProgram, "uColor");
+
 		glBindVertexArray(VAO);
 
+		std::vector<glm::vec2> borderLayer;
+		std::vector<glm::vec2> asphaltLayer;
+
 		size_t pointCount = 0;
+		std::vector<glm::vec2> triangleStripPoints;
 		{
 			std::lock_guard<std::mutex> lock(pointsMutex);
 			pointCount = points.size();
-			glBindBuffer(GL_ARRAY_BUFFER, VBO); // Updating VBO with new points   VBO update the point data
-			glBufferData(GL_ARRAY_BUFFER, pointCount * sizeof(glm::vec2), points.data(), GL_DYNAMIC_DRAW);
-			// Copy the new point data to the GPU from points.data()
+			
+			if (pointCount > 1)
+			{
+				// 1.White border (wider)
+				borderLayer = GenerateTriangleStripFromLine(points, 0.04f);
+
+				// 2. Grey asphalt (narrower)
+				asphaltLayer = GenerateTriangleStripFromLine(points, 0.035f);
+			}
 		}
 
-		if (pointCount > 0)
+		if (borderLayer.size() > 0)
 		{
-			glLineWidth(5.0f);
-			glPointSize(5.0f);
-			glDrawArrays(GL_POINTS, 0, (GLsizei)pointCount); // Draw the points as GL_POINTS
-			glDrawArrays(GL_LINE_STRIP, 0, (GLsizei)pointCount); // Draw the points as GL_LINE_STRIP
+			glBindBuffer(GL_ARRAY_BUFFER, VBO);
+			glBufferData(GL_ARRAY_BUFFER, borderLayer.size() * sizeof(glm::vec2), borderLayer.data(), GL_DYNAMIC_DRAW);
 
+			glUniform3f(colorLoc, 1.0f, 1.0f, 1.0f); // White color for border
+			glDrawArrays(GL_TRIANGLE_STRIP, 0, (GLsizei)borderLayer.size());
 		}
 
-			//glLineWidth(5.0f);
-			//glPointSize(5.0f);
-		//glDrawArrays(GL_LINE_LOOP, 0, 6);
-		
-		//glDrawElements(GL_TRIANGLES, 12, GL_UNSIGNED_INT, 0);
+		if (asphaltLayer.size() > 0)
+		{
+			glBindBuffer(GL_ARRAY_BUFFER, VBO);
+			glBufferData(GL_ARRAY_BUFFER, asphaltLayer.size() * sizeof(glm::vec2), asphaltLayer.data(), GL_DYNAMIC_DRAW);
+
+			glUniform3f(colorLoc, 0.3f, 0.3f, 0.3f); // White color for border
+			glDrawArrays(GL_TRIANGLE_STRIP, 0, (GLsizei)asphaltLayer.size());
+		}
+
+
 
 		// check and call events and swap the buffers
 		glfwPollEvents(); // Poll for and process events (e.g., keyboard, mouse)
 		glfwSwapBuffers(window); // Swap the front and back buffers (render image display)
 		
 	}
-
 	
 	running = false; // Signal the input thread to stop
 	
