@@ -3,6 +3,7 @@
 #include <vector>
 #include <glm/glm.hpp>
 
+
 // Interpolates a set of points using Centripetal Catmull-Rom Spline algorithm.
 // originalPoints: The raw input coordinates.
 // pointsPerSegment: How many new points to generate between two original points.

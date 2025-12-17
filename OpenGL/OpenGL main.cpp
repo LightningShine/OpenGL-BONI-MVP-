@@ -6,6 +6,15 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include "Input.h"
+#include "VENCHILEH.h"
+#include "TelemetryServer.h"
+
+// Global managers
+VenchileManager venchileManager;
+TelemetryServer telemetryServer;
+
+// Track state - shared between threads
+std::atomic<bool> g_trackLoaded(false);
 
 using namespace std;
 
@@ -22,43 +31,44 @@ void processInput(GLFWwindow* window)
 
 void processInput(GLFWwindow* window, glm::vec2& cameraPos, float& zoom, float speed)
 {
-	// Close when press ESC
 	if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
 		glfwSetWindowShouldClose(window, true);
 
-	// Camera movment (W/A/S/D or Arrows)
 	if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS ||
 		glfwGetKey(window, GLFW_KEY_UP) == GLFW_PRESS)
-		cameraPos.y += speed / zoom;  // Up
+		cameraPos.y += speed / zoom;
 
 	if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS ||
 		glfwGetKey(window, GLFW_KEY_DOWN) == GLFW_PRESS)
-		cameraPos.y -= speed / zoom;  // down
+		cameraPos.y -= speed / zoom;
 
 	if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS ||
 		glfwGetKey(window, GLFW_KEY_LEFT) == GLFW_PRESS)
-		cameraPos.x -= speed / zoom;  // Left
+		cameraPos.x -= speed / zoom;
 
 	if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS ||
 		glfwGetKey(window, GLFW_KEY_RIGHT) == GLFW_PRESS)
-		cameraPos.x += speed / zoom;  // Right
+		cameraPos.x += speed / zoom;
 
-	// Zoom limits
-	if (zoom < 0.1f) zoom = 0.1f;   // Minimum
-	if (zoom > 10.0f) zoom = 10.0f; // Maximum
+	if (zoom < 0.1f) zoom = 0.1f;
+	if (zoom > 10.0f) zoom = 10.0f;
 }
 
-// Callback for scroolling mouse wheel
 void scroll_callback(GLFWwindow* window, double xoffset, double yoffset)
 {
 	float* zoom = (float*)glfwGetWindowUserPointer(window);
-	*zoom *= (float)(1.0f + yoffset * 0.1f);  // Aspect of zoom change
+	*zoom *= (float)(1.0f + yoffset * 0.1f);
 
-	// Ограничение зума
 	if (*zoom < 0.1f) *zoom = 0.1f;
 	if (*zoom > 10.0f) *zoom = 10.0f;
 }
 
+// Telemetry callback - called from server thread
+// Машины добавляются ВСЕГДА, но отрисовываются только когда трек загружен
+void OnTelemetryReceived(const ParsedTelemetry& telemetry)
+{
+	venchileManager.UpdateFromTelemetry(telemetry);
+}
 
 //Shaders
 
@@ -89,39 +99,50 @@ const char* fragmentShaderSource = R"(
 
 int main()
 {
+	// ========================== TELEMETRY SERVER ==========================
+	// Сервер запускается в ОТДЕЛЬНОМ ПОТОКЕ внутри TelemetryServer::Start()
+	cout << "========================================\n";
+	cout << "   RaceMap - Starting Application\n";
+	cout << "========================================\n";
+
+	telemetryServer.SetCallback(OnTelemetryReceived);
+	
+	if (telemetryServer.Start(TELEMETRY_DEFAULT_PORT))
+	{
+		cout << "[Main] Telemetry server thread started on port " << TELEMETRY_DEFAULT_PORT << "\n";
+	}
+	else
+	{
+		cerr << "[Main] ERROR: Failed to start telemetry server!\n";
+	}
+
+	// ========================== GLFW INIT ==========================
 	glfwInit();
-	glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);  // Determine OpenGL major version OpenGL 4.X
-	glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 6);	// Determine OpenGL minor version OpenGL X.6
+	glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
+	glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 6);
 	glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
-	// Use the core-profile
-	// get access to a et access to a smaller subset 
-	// of OpenGL features without backwards - compatible features we no longer need
 
 	int Width = 800;
 	int Height = 800;
 
-
-	GLFWwindow* window = glfwCreateWindow(Width, Height, "Race Map", NULL, NULL); // Create a windowed mode at windows 800x800, titled Race Map
-	if (window == NULL) // Check if the window was created successfully
+	GLFWwindow* window = glfwCreateWindow(Width, Height, "Race Map", NULL, NULL);
+	if (window == NULL)
 	{
 		cout << "Failed to create GLFW window" << endl;
 		glfwTerminate();
 		return -1;
 	}
 
-	glfwMakeContextCurrent(window); // Make the window's context in current thread
+	glfwMakeContextCurrent(window);
 
-	if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress)) // Initialize GLAD before calling any OpenGL function
+	if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress))
 	{
 		cout << "Failed to initialize GLAD" << endl;
 		return -1;
 	}
 
-	glViewport(0, 0, Width, Height); // Set the OpenGL viewport to cover the whole window
-
+	glViewport(0, 0, Width, Height);
 	glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
-	// Register the callback function to adjust the viewport when the window is resized
-
 
 	// ============================ CUBE ============================
 	float vertices[] = {
@@ -306,7 +327,7 @@ int main()
 		std::vector<glm::vec2> asphaltLayer;
 
 		size_t pointCount = 0;
-		std::vector<glm::vec2> triangleStripPoints;
+		bool trackClosed = false;
 		{
 			std::lock_guard<std::mutex> lock(pointsMutex);
 			pointCount = points.size();
@@ -318,8 +339,20 @@ int main()
 
 				borderLayer = GenerateTriangleStripFromLine(smoothPoints, 0.04f);
 				asphaltLayer = GenerateTriangleStripFromLine(smoothPoints, 0.035f);
+				
+				// Check if track is closed (first point == last point)
+				if (pointCount > 2)
+				{
+					glm::vec2 first = points.front();
+					glm::vec2 last = points.back();
+					float distance = glm::length(last - first);
+					trackClosed = (distance < 0.01f); // threshold for "closed"
+				}
 			}
 		}
+
+		// Update track loaded state
+		g_trackLoaded = (pointCount > 1) && trackClosed;
 
 		if (borderLayer.size() > 0)
 		{
@@ -339,6 +372,8 @@ int main()
 			glDrawArrays(GL_TRIANGLE_STRIP, 0, (GLsizei)asphaltLayer.size());
 		}
 
+		// Render vehicles only if track is loaded and closed
+		venchileManager.RenderVenchiles(g_trackLoaded);
 
 		// check and call events and swap the buffers
 		glfwPollEvents(); // Poll for and process events (e.g., keyboard, mouse)
@@ -346,10 +381,10 @@ int main()
 		
 	}
 	
-	running = false; // Signal the input thread to stop
-	
-
 	// ========================== CLEAN UP ==========================
+	running = false;
+	telemetryServer.Stop();
+
 	glDeleteVertexArrays(1, &VAO);
 	glDeleteBuffers(1, &VBO);
 	glDeleteProgram(shaderProgram);
@@ -357,10 +392,8 @@ int main()
 
 	inputThread.join(); // Wait for the input thread to finish
 
-
-
 	return 0;
 
-	// Uztaisit Start Stop sistemu lai pec N laiku MVP nepardoda informaciju, lai taupitu energiju
+	// Uztaisit Start Stop sistēmu lai pēc N laiku MVP nepārdod informāciju, lai taupītu enerģiju
 
 }

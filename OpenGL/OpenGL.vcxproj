@@ -138,11 +138,16 @@
     <ClCompile Include="glad.c" />
     <ClCompile Include="Input.cpp" />
     <ClCompile Include="OpenGL main.cpp" />
+    <ClCompile Include="Server.cpp" />
     <ClCompile Include="Source.cpp" />
+    <ClCompile Include="TelemetryServer.cpp" />
+    <ClCompile Include="Venchile.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="EDITH.h" />
     <ClInclude Include="Input.h" />
+    <ClInclude Include="TelemetryServer.h" />
+    <ClInclude Include="VENCHILEH.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
