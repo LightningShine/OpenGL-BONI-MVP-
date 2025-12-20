@@ -1,5 +1,4 @@
-﻿#pragma once
-#include <iostream>
+﻿#include <iostream>
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
 #include <glm/glm.hpp>
@@ -9,391 +8,330 @@
 #include "VENCHILEH.h"
 #include "TelemetryServer.h"
 
-// Global managers
+// ==================== CONSTANTS ====================
+namespace Config
+{
+	constexpr int WINDOW_WIDTH = 800;
+	constexpr int WINDOW_HEIGHT = 800;
+	constexpr const char* WINDOW_TITLE = "Race Map";
+
+	constexpr float CAMERA_MOVE_SPEED = 0.001f;
+	constexpr float CAMERA_FRICTION = 0.85f;
+	constexpr float ZOOM_MIN = 0.1f;
+	constexpr float ZOOM_MAX = 10.0f;
+	constexpr float ZOOM_SENSITIVITY = 0.1f;
+
+	constexpr float MAP_BOUND_X = 2.0f;
+	constexpr float MAP_BOUND_Y = 2.0f;
+	constexpr double MAP_RANGE = 1.0;
+
+	constexpr float TRACK_BORDER_WIDTH = 0.04f;
+	constexpr float TRACK_ASPHALT_WIDTH = 0.035f;
+	constexpr float TRACK_CLOSE_THRESHOLD = 0.01f;
+	constexpr int TRACK_INTERPOLATION_POINTS = 10;
+}
+
+// ==================== GLOBAL STATE ====================
 VenchileManager venchileManager;
 TelemetryServer telemetryServer;
-
-// Track state - shared between threads
 std::atomic<bool> g_trackLoaded(false);
 
-using namespace std;
-
-void framebuffer_size_callback(GLFWwindow* window, int width, int height)
-{
-	glViewport(0, 0, width, height);
-}
-
-void processInput(GLFWwindow* window)
-{
-	if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
-		glfwSetWindowShouldClose(window, true);
-}
-
-void processInput(GLFWwindow* window, glm::vec2& cameraPos, float& zoom, float speed)
-{
-	if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
-		glfwSetWindowShouldClose(window, true);
-
-	if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS ||
-		glfwGetKey(window, GLFW_KEY_UP) == GLFW_PRESS)
-		cameraPos.y += speed / zoom;
-
-	if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS ||
-		glfwGetKey(window, GLFW_KEY_DOWN) == GLFW_PRESS)
-		cameraPos.y -= speed / zoom;
-
-	if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS ||
-		glfwGetKey(window, GLFW_KEY_LEFT) == GLFW_PRESS)
-		cameraPos.x -= speed / zoom;
-
-	if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS ||
-		glfwGetKey(window, GLFW_KEY_RIGHT) == GLFW_PRESS)
-		cameraPos.x += speed / zoom;
-
-	if (zoom < 0.1f) zoom = 0.1f;
-	if (zoom > 10.0f) zoom = 10.0f;
-}
-
-void scroll_callback(GLFWwindow* window, double xoffset, double yoffset)
-{
-	float* zoom = (float*)glfwGetWindowUserPointer(window);
-	*zoom *= (float)(1.0f + yoffset * 0.1f);
-
-	if (*zoom < 0.1f) *zoom = 0.1f;
-	if (*zoom > 10.0f) *zoom = 10.0f;
-}
-
-// Telemetry callback - called from server thread
-// Машины добавляются ВСЕГДА, но отрисовываются только когда трек загружен
-void OnTelemetryReceived(const ParsedTelemetry& telemetry)
-{
-	venchileManager.UpdateFromTelemetry(telemetry);
-}
-
-//Shaders
-
-const char* vertexShaderSource = R"(
+// ==================== SHADERS ====================
+static const char* VERTEX_SHADER_SOURCE = R"(
     #version 460 core
     layout (location = 0) in vec2 aPos;
-    
     uniform mat4 projection;
-    
     void main()
     {
         gl_Position = projection * vec4(aPos.x, aPos.y, 0.0, 1.0); 
     }
 )";
 
-const char* fragmentShaderSource = R"(
+static const char* FRAGMENT_SHADER_SOURCE = R"(
     #version 460 core
     out vec4 FragColor;
-    
     uniform vec3 uColor;
-    
     void main()
     {
         FragColor = vec4(uColor, 1.0f); 
     }
 )";
 
-
-int main()
+// ==================== CALLBACKS ====================
+void FramebufferSizeCallback(GLFWwindow* window, int width, int height)
 {
-	// ========================== TELEMETRY SERVER ==========================
-	// Сервер запускается в ОТДЕЛЬНОМ ПОТОКЕ внутри TelemetryServer::Start()
-	cout << "========================================\n";
-	cout << "   RaceMap - Starting Application\n";
-	cout << "========================================\n";
+	glViewport(0, 0, width, height);
+}
 
-	telemetryServer.SetCallback(OnTelemetryReceived);
-	
-	if (telemetryServer.Start(TELEMETRY_DEFAULT_PORT))
+void ScrollCallback(GLFWwindow* window, double xoffset, double yoffset)
+{
+	float* zoom = static_cast<float*>(glfwGetWindowUserPointer(window));
+	*zoom *= (1.0f + static_cast<float>(yoffset) * Config::ZOOM_SENSITIVITY);
+	*zoom = glm::clamp(*zoom, Config::ZOOM_MIN, Config::ZOOM_MAX);
+}
+
+void OnTelemetryReceived(const ParsedTelemetry& telemetry)
+{
+	venchileManager.UpdateFromTelemetry(telemetry);
+}
+
+// ==================== INPUT PROCESSING ====================
+void ProcessInput(GLFWwindow* window, glm::vec2& cameraPos, float zoom)
+{
+	if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
 	{
-		cout << "[Main] Telemetry server thread started on port " << TELEMETRY_DEFAULT_PORT << "\n";
-	}
-	else
-	{
-		cerr << "[Main] ERROR: Failed to start telemetry server!\n";
-	}
-
-	// ========================== GLFW INIT ==========================
-	glfwInit();
-	glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
-	glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 6);
-	glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
-
-	int Width = 800;
-	int Height = 800;
-
-	GLFWwindow* window = glfwCreateWindow(Width, Height, "Race Map", NULL, NULL);
-	if (window == NULL)
-	{
-		cout << "Failed to create GLFW window" << endl;
-		glfwTerminate();
-		return -1;
+		glfwSetWindowShouldClose(window, true);
 	}
 
-	glfwMakeContextCurrent(window);
+	float moveAmount = Config::CAMERA_MOVE_SPEED / zoom;
 
-	if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress))
-	{
-		cout << "Failed to initialize GLAD" << endl;
-		return -1;
-	}
+	if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS || glfwGetKey(window, GLFW_KEY_UP) == GLFW_PRESS)
+		cameraPos.y += moveAmount;
 
-	glViewport(0, 0, Width, Height);
-	glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
+	if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS || glfwGetKey(window, GLFW_KEY_DOWN) == GLFW_PRESS)
+		cameraPos.y -= moveAmount;
 
-	// ============================ CUBE ============================
-	float vertices[] = {
-		0.5f,  0.5f,  // top right 0
-		0.7f,  0.0f,  // middle right 1
-		0.5f, -0.5f,  // bottom right 2
-	   -0.5f, -0.5f,  // bottom left 3
-	   -0.7f,  0.0f,  // middle left 4
-	   -0.5f,  0.5f   // top left 5
-	};
+	if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS || glfwGetKey(window, GLFW_KEY_LEFT) == GLFW_PRESS)
+		cameraPos.x -= moveAmount;
 
-	unsigned int indices[] = { 0, 2, 1,
-							   5, 3, 4,
-							   5, 0, 2,
-							   5, 3, 2 }; // How does it work?
+	if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS || glfwGetKey(window, GLFW_KEY_RIGHT) == GLFW_PRESS)
+		cameraPos.x += moveAmount;
+}
 
-
-	GLuint VAO, VBO, EBO;
-	glGenVertexArrays(1, &VAO);
-	glGenBuffers(1, &VBO);
-	glGenBuffers(1, &EBO);
-
-
-	// Vertex Buffer Object
-	glBindVertexArray(VAO);
-	glGenVertexArrays(1, &VAO);
-	glGenBuffers(1, &VBO);
-	glBindVertexArray(VAO);
-
-	glBindBuffer(GL_ARRAY_BUFFER, VBO);
-	glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
-
-	//Index Buffer Object
-	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
-	glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(indices), indices, GL_STATIC_DRAW);
-
-	//Vertex Attribute
-	glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void*)0);
-	glEnableVertexAttribArray(0);
-
-	glBindVertexArray(0);
-
-
-	// ================= Shader compilation ===================
-	GLuint vertexShader = glCreateShader(GL_VERTEX_SHADER);
-	glShaderSource(vertexShader, 1, &vertexShaderSource, NULL);
-	glCompileShader(vertexShader);
-
-	GLuint fragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
-	glShaderSource(fragmentShader, 1, &fragmentShaderSource, NULL);
-	glCompileShader(fragmentShader);
-
-
-	// Shader compile check
+// ==================== SHADER UTILITIES ====================
+GLuint CompileShader(GLenum type, const char* source)
+{
+	GLuint shader = glCreateShader(type);
+	glShaderSource(shader, 1, &source, nullptr);
+	glCompileShader(shader);
 
 	int success;
-	char infoLog[512];
-
-	glGetShaderiv(vertexShader, GL_COMPILE_STATUS, &success);
+	glGetShaderiv(shader, GL_COMPILE_STATUS, &success);
 	if (!success)
 	{
-		glGetShaderInfoLog(vertexShader, 512, NULL, infoLog);
-		cout << "ERROR::SHADER::VERTEX::COMPILATION_FAILED\n" << infoLog << endl;
+		char infoLog[512];
+		glGetShaderInfoLog(shader, sizeof(infoLog), nullptr, infoLog);
+		std::cerr << "[Shader] Compilation failed: " << infoLog << std::endl;
 	}
+	return shader;
+}
 
-	glGetShaderiv(fragmentShader, GL_COMPILE_STATUS, &success);
-	if (!success)
-	{
-		glGetShaderInfoLog(fragmentShader, 512, NULL, infoLog);
-		cout << "ERROR::SHADER::FRAGMENT::COMPILATION_FAILED\n" << infoLog << endl;
-	}
+GLuint CreateShaderProgram(const char* vertexSource, const char* fragmentSource)
+{
+	GLuint vertexShader = CompileShader(GL_VERTEX_SHADER, vertexSource);
+	GLuint fragmentShader = CompileShader(GL_FRAGMENT_SHADER, fragmentSource);
 
-	// =================== Create Shader Program ===================
-
-	GLuint shaderProgram = glCreateProgram();
-
-	glAttachShader(shaderProgram, vertexShader);
-	glAttachShader(shaderProgram, fragmentShader);
-
-	glLinkProgram(shaderProgram);
+	GLuint program = glCreateProgram();
+	glAttachShader(program, vertexShader);
+	glAttachShader(program, fragmentShader);
+	glLinkProgram(program);
 
 	glDeleteShader(vertexShader);
 	glDeleteShader(fragmentShader);
 
-	glEnable(GL_PROGRAM_POINT_SIZE);
+	return program;
+}
 
-	// ========================== Process Input ==========================
-	glm::vec2 cameraPosition(0.0f, 0.0f);  // Camera Position (X, Y)
-	float cameraZoom = 1.0f;                // Zoom (1.0 = Normal, >1 = Zoom)
-	float cameraMoveSpeed = 0.001f;          // Camera movment speed
-	//float cameraZoomSpeed = 0.1f;           // Zoom speed
-	glm::vec2 cameraVelocity(0.0f, 0.0f);  // Velocity
-	float friction = 0.85f;                 // Friction
-	float mapBoundX = 2.0f;  // Map border X
-	float mapBoundY = 2.0f;  // Map border Y
+// ==================== OPENGL SETUP ====================
+bool InitOpenGL(GLFWwindow*& window)
+{
+	if (!glfwInit())
+	{
+		std::cerr << "[GLFW] Failed to initialize\n";
+		return false;
+	}
+
+	glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
+	glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 6);
+	glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+
+	window = glfwCreateWindow(Config::WINDOW_WIDTH, Config::WINDOW_HEIGHT, Config::WINDOW_TITLE, nullptr, nullptr);
+	if (!window)
+	{
+		std::cerr << "[GLFW] Failed to create window\n";
+		glfwTerminate();
+		return false;
+	}
+
+	glfwMakeContextCurrent(window);
+
+	if (!gladLoadGLLoader(reinterpret_cast<GLADloadproc>(glfwGetProcAddress)))
+	{
+		std::cerr << "[GLAD] Failed to initialize\n";
+		return false;
+	}
+
+	glViewport(0, 0, Config::WINDOW_WIDTH, Config::WINDOW_HEIGHT);
+	glfwSetFramebufferSizeCallback(window, FramebufferSizeCallback);
+
+	return true;
+}
+
+void SetupBuffers(GLuint& VAO, GLuint& VBO)
+{
+	glGenVertexArrays(1, &VAO);
+	glGenBuffers(1, &VBO);
+
+	glBindVertexArray(VAO);
+	glBindBuffer(GL_ARRAY_BUFFER, VBO);
+
+	glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), nullptr);
+	glEnableVertexAttribArray(0);
+
+	glBindVertexArray(0);
+}
+
+// ==================== TRACK RENDERING ====================
+bool IsTrackClosed(const std::vector<glm::vec2>& points)
+{
+	if (points.size() < 3) return false;
+	
+	float distance = glm::length(points.back() - points.front());
+	return distance < Config::TRACK_CLOSE_THRESHOLD;
+}
+
+void RenderTrackLayer(GLuint VBO, GLint colorLoc, const std::vector<glm::vec2>& layer, const glm::vec3& color)
+{
+	if (layer.empty()) return;
+
+	glBindBuffer(GL_ARRAY_BUFFER, VBO);
+	glBufferData(GL_ARRAY_BUFFER, 
+		static_cast<GLsizeiptr>(layer.size() * sizeof(glm::vec2)), 
+		layer.data(), 
+		GL_DYNAMIC_DRAW);
+	
+	glUniform3f(colorLoc, color.r, color.g, color.b);
+	glDrawArrays(GL_TRIANGLE_STRIP, 0, static_cast<GLsizei>(layer.size()));
+}
+
+// ==================== MAIN ====================
+int main()
+{
+	std::cout << "========================================\n";
+	std::cout << "   RaceMap - Starting Application\n";
+	std::cout << "========================================\n";
+
+	// Start telemetry server
+	telemetryServer.SetCallback(OnTelemetryReceived);
+	if (telemetryServer.Start(TELEMETRY_DEFAULT_PORT))
+	{
+		std::cout << "[Main] Telemetry server started on port " << TELEMETRY_DEFAULT_PORT << "\n";
+	}
+	else
+	{
+		std::cerr << "[Main] ERROR: Failed to start telemetry server!\n";
+	}
+
+	// Initialize OpenGL
+	GLFWwindow* window = nullptr;
+	if (!InitOpenGL(window))
+	{
+		return -1;
+	}
+
+	// Setup buffers and shaders
+	GLuint VAO, VBO;
+	SetupBuffers(VAO, VBO);
+	GLuint shaderProgram = CreateShaderProgram(VERTEX_SHADER_SOURCE, FRAGMENT_SHADER_SOURCE);
+
+	// Camera state
+	glm::vec2 cameraPosition(0.0f);
+	glm::vec2 cameraVelocity(0.0f);
+	float cameraZoom = 1.0f;
 
 	glfwSetWindowUserPointer(window, &cameraZoom);
-	glfwSetScrollCallback(window, scroll_callback);
+	glfwSetScrollCallback(window, ScrollCallback);
 
-	// Callback для скролла мыши
-
-
-
-	// ========================== INPUT THREAD ==========================
-
+	// Track data (shared with input thread)
 	std::vector<glm::vec2> points;
-	std::mutex  pointsMutex;
+	std::mutex pointsMutex;
 	std::atomic<bool> running(true);
-	std::thread inputThread(
-		ChoseInputMode,
-	std::ref(points),
-	std::ref(pointsMutex),
-	std::ref(running)
-	);
 
+	std::thread inputThread(ChoseInputMode, std::ref(points), std::ref(pointsMutex), std::ref(running));
 
-	int windowswidth;
-	int windowsheight;
-
-	double mapRange = 1.0; // Assuming the map range is normalized to 1.0
-
-	double horizontalBound = mapRange;
-	double verticalBound = mapRange;
-
-
-	// ========================== RENDER LOOP ==========================
-
-	while (!glfwWindowShouldClose(window)) // Main loop that runs until the window is closed
+	// Render loop
+	while (!glfwWindowShouldClose(window))
 	{
-		processInput(window, cameraPosition, cameraZoom, cameraMoveSpeed); // Process user input with camera
-		cameraPosition += cameraVelocity;  // Применяем скорость
-		cameraVelocity *= friction;
-		
-		if (!running) glfwSetWindowShouldClose(window, true); // If console closed, close the windows too
-
-		glClearColor(0.0f, 0.0f, 0.1f, 1.0f); // Set the clear color for the window (background color)
-		glClear(GL_COLOR_BUFFER_BIT); // Clear the color buffer with the specified clear color
-		
-		glfwGetWindowSize(window, &windowswidth, &windowsheight);
-		 
-		double aspectRatio = (double)windowswidth / (double)windowsheight;
-
-
-		// Basic border with aspect ratio
-		if (aspectRatio >= 1.0)
+		if (!running)
 		{
-			horizontalBound = mapRange * aspectRatio;
-			verticalBound = mapRange;
-		}
-		else
-		{
-			horizontalBound = mapRange;
-			verticalBound = mapRange / aspectRatio;
+			glfwSetWindowShouldClose(window, true);
 		}
 
-		// Apply zoom (devide border on zoom)
-		float zoomedHorizontal = (float)horizontalBound / (float)cameraZoom;
-		float zoomedVertical = (float)verticalBound / (float)cameraZoom;
+		ProcessInput(window, cameraPosition, cameraZoom);
+		
+		// Apply physics
+		cameraPosition += cameraVelocity;
+		cameraVelocity *= Config::CAMERA_FRICTION;
+		cameraPosition = glm::clamp(cameraPosition, 
+			glm::vec2(-Config::MAP_BOUND_X, -Config::MAP_BOUND_Y),
+			glm::vec2(Config::MAP_BOUND_X, Config::MAP_BOUND_Y));
 
-		cameraPosition.x = glm::clamp(cameraPosition.x, -mapBoundX, mapBoundX);
-		cameraPosition.y = glm::clamp(cameraPosition.y, -mapBoundY, mapBoundY);
+		// Clear screen
+		glClearColor(0.0f, 0.0f, 0.1f, 1.0f);
+		glClear(GL_COLOR_BUFFER_BIT);
 
-		// Creating orthographic projection matrix with camera
+		// Calculate projection
+		int windowWidth, windowHeight;
+		glfwGetWindowSize(window, &windowWidth, &windowHeight);
+		
+		double aspectRatio = static_cast<double>(windowWidth) / static_cast<double>(windowHeight);
+		double horizontalBound = (aspectRatio >= 1.0) ? Config::MAP_RANGE * aspectRatio : Config::MAP_RANGE;
+		double verticalBound = (aspectRatio >= 1.0) ? Config::MAP_RANGE : Config::MAP_RANGE / aspectRatio;
+
+		float zoomedH = static_cast<float>(horizontalBound) / cameraZoom;
+		float zoomedV = static_cast<float>(verticalBound) / cameraZoom;
+
 		glm::mat4 projection = glm::ortho(
-			-zoomedHorizontal + cameraPosition.x,  // left
-			zoomedHorizontal + cameraPosition.x,  // right
-			-zoomedVertical + cameraPosition.y,    // bottom
-			zoomedVertical + cameraPosition.y,    // top
+			-zoomedH + cameraPosition.x, zoomedH + cameraPosition.x,
+			-zoomedV + cameraPosition.y, zoomedV + cameraPosition.y,
 			-1.0f, 1.0f
 		);
-		
+
+		// Setup shader
 		glUseProgram(shaderProgram);
-		
-		GLint projLoc = glGetUniformLocation(shaderProgram, "projection");
-		glUniformMatrix4fv(projLoc, 1, GL_FALSE, glm::value_ptr(projection));
-		
+		glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
 		GLint colorLoc = glGetUniformLocation(shaderProgram, "uColor");
 
 		glBindVertexArray(VAO);
 
-		std::vector<glm::vec2> borderLayer;
-		std::vector<glm::vec2> asphaltLayer;
-
-		size_t pointCount = 0;
+		// Process track points
+		std::vector<glm::vec2> borderLayer, asphaltLayer;
 		bool trackClosed = false;
 		{
 			std::lock_guard<std::mutex> lock(pointsMutex);
-			pointCount = points.size();
 			
-			if (pointCount > 1)
+			if (points.size() > 1)
 			{
-				// Интерполируем точки для плавности
-				std::vector<glm::vec2> smoothPoints = InterpolatePoints(points, 10);
-
-				borderLayer = GenerateTriangleStripFromLine(smoothPoints, 0.04f);
-				asphaltLayer = GenerateTriangleStripFromLine(smoothPoints, 0.035f);
-				
-				// Check if track is closed (first point == last point)
-				if (pointCount > 2)
-				{
-					glm::vec2 first = points.front();
-					glm::vec2 last = points.back();
-					float distance = glm::length(last - first);
-					trackClosed = (distance < 0.01f); // threshold for "closed"
-				}
+				auto smoothPoints = InterpolatePoints(points, Config::TRACK_INTERPOLATION_POINTS);
+				borderLayer = GenerateTriangleStripFromLine(smoothPoints, Config::TRACK_BORDER_WIDTH);
+				asphaltLayer = GenerateTriangleStripFromLine(smoothPoints, Config::TRACK_ASPHALT_WIDTH);
+				trackClosed = IsTrackClosed(points);
 			}
 		}
 
-		// Update track loaded state
-		g_trackLoaded = (pointCount > 1) && trackClosed;
+		g_trackLoaded = !borderLayer.empty() && trackClosed;
 
-		if (borderLayer.size() > 0)
-		{
-			glBindBuffer(GL_ARRAY_BUFFER, VBO);
-			glBufferData(GL_ARRAY_BUFFER, borderLayer.size() * sizeof(glm::vec2), borderLayer.data(), GL_DYNAMIC_DRAW);
+		// Render track
+		RenderTrackLayer(VBO, colorLoc, borderLayer, glm::vec3(1.0f));           // White border
+		RenderTrackLayer(VBO, colorLoc, asphaltLayer, glm::vec3(0.3f));          // Gray asphalt
 
-			glUniform3f(colorLoc, 1.0f, 1.0f, 1.0f); // White color for border
-			glDrawArrays(GL_TRIANGLE_STRIP, 0, (GLsizei)borderLayer.size());
-		}
-
-		if (asphaltLayer.size() > 0)
-		{
-			glBindBuffer(GL_ARRAY_BUFFER, VBO);
-			glBufferData(GL_ARRAY_BUFFER, asphaltLayer.size() * sizeof(glm::vec2), asphaltLayer.data(), GL_DYNAMIC_DRAW);
-
-			glUniform3f(colorLoc, 0.3f, 0.3f, 0.3f); // Grey color for asphalt
-			glDrawArrays(GL_TRIANGLE_STRIP, 0, (GLsizei)asphaltLayer.size());
-		}
-
-		// Render vehicles only if track is loaded and closed
+		// Render vehicles
 		venchileManager.RenderVenchiles(g_trackLoaded);
 
-		// check and call events and swap the buffers
-		glfwPollEvents(); // Poll for and process events (e.g., keyboard, mouse)
-		glfwSwapBuffers(window); // Swap the front and back buffers (render image display)
-		
+		glfwPollEvents();
+		glfwSwapBuffers(window);
 	}
-	
-	// ========================== CLEAN UP ==========================
+
+	// Cleanup
 	running = false;
 	telemetryServer.Stop();
 
 	glDeleteVertexArrays(1, &VAO);
 	glDeleteBuffers(1, &VBO);
 	glDeleteProgram(shaderProgram);
-	glfwTerminate(); // Clean up all resources allocated by GLFW and exit
+	glfwTerminate();
 
-	inputThread.join(); // Wait for the input thread to finish
+	inputThread.join();
 
 	return 0;
-
-	// Uztaisit Start Stop sistēmu lai pēc N laiku MVP nepārdod informāciju, lai taupītu enerģiju
-
 }
