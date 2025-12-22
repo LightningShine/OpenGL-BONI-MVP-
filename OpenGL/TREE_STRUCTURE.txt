@@ -1,0 +1,64 @@
+Folder PATH listing
+Volume serial number is 8CEE-AF63
+C:\USERS\GAMER\SOURCE\REPOS\OPENGL\OPENGL\SRC
++---core
+|       main.cpp
+|       main_backup.cpp
+|       
++---input
+|       Input.cpp
+|       Input.h
+|       
++---network
+|       Server.cpp
+|       Server.h
+|       
++---rendering
+|       Interpolation.cpp
+|       Interpolation.h
+|       
++---ui
+|       UIManager.cpp
+|       UIManager.h
+|       
++---utils
+|       Config.h
+|       SaveManager.cpp
+|       SaveManager.h
+|       
+\---vehicle
+        Vehicle.cpp
+        Vehicle.h
+        
+Folder PATH listing
+Volume serial number is 8CEE-AF63
+C:\USERS\GAMER\SOURCE\REPOS\OPENGL\OPENGL\DATA
++---config
+|       .gitkeep
+|       app_config.example.json
+|       user_settings.example.json
+|       
++---maps
+|       .gitkeep
+|       example_track.json
+|       
+\---saves
+        .gitkeep
+        
+Folder PATH listing
+Volume serial number is 8CEE-AF63
+C:\USERS\GAMER\SOURCE\REPOS\OPENGL\OPENGL\RESOURCES
++---shaders
+|       .gitkeep
+|       
+\---textures
+        .gitkeep
+        
+Folder PATH listing
+Volume serial number is 8CEE-AF63
+C:\USERS\GAMER\SOURCE\REPOS\OPENGL\OPENGL\DOCS
+    ARCHITECTURE.md
+    USAGE.md
+    
+No subfolders exist 
+

@@ -1,42 +1,66 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup>
-    <Filter Include="Source Files">
+    <Filter Include="src">
       <UniqueIdentifier>{4FC737F1-C7A5-4376-A066-2A32D752A2FF}</UniqueIdentifier>
-      <Extensions>cpp;c;cc;cxx;c++;cppm;ixx;def;odl;idl;hpj;bat;asm;asmx</Extensions>
     </Filter>
-    <Filter Include="Header Files">
+    <Filter Include="src\core">
+      <UniqueIdentifier>{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="src\input">
       <UniqueIdentifier>{93995380-89BD-4b04-88EB-625FBE52EBFB}</UniqueIdentifier>
-      <Extensions>h;hh;hpp;hxx;h++;hm;inl;inc;ipp;xsd</Extensions>
     </Filter>
-    <Filter Include="Resource Files">
+    <Filter Include="src\network">
       <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
-      <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav;mfcribbon-ms</Extensions>
+    </Filter>
+    <Filter Include="src\rendering">
+      <UniqueIdentifier>{A8F1D8E2-45C3-4F8D-9B2A-5D8E9C4A1B3F}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="src\vehicle">
+      <UniqueIdentifier>{B9E2D9F3-56D4-4191-AC3B-6E9F0D5B2C41}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="src\ui">
+      <UniqueIdentifier>{C0F3E014-67E5-4102-BD4C-7F0A1E6C3D52}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="src\saves">
+      <UniqueIdentifier>{D1A4F115-78F6-4113-CE5D-8A1B2F7D4E63}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="src\thirdparty">
+      <UniqueIdentifier>{E2B5F216-89G7-4224-DF6E-9B2C3G8E5F74}</UniqueIdentifier>
     </Filter>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="glad.c">
-      <Filter>Source Files</Filter>
+    <ClCompile Include="src\core\main.cpp">
+      <Filter>src\core</Filter>
     </ClCompile>
-    <ClCompile Include="OpenGL main.cpp">
-      <Filter>Source Files</Filter>
+    <ClCompile Include="src\input\Input.cpp">
+      <Filter>src\input</Filter>
     </ClCompile>
-    <ClCompile Include="Input.cpp">
-      <Filter>Source Files</Filter>
+    <ClCompile Include="src\network\Server.cpp">
+      <Filter>src\network</Filter>
     </ClCompile>
-    <ClCompile Include="Source.cpp">
-      <Filter>Source Files</Filter>
+    <ClCompile Include="src\rendering\Interpolation.cpp">
+      <Filter>src\rendering</Filter>
     </ClCompile>
-    <ClCompile Include="Edit.cpp">
-      <Filter>Source Files</Filter>
+    <ClCompile Include="src\vehicle\Vehicle.cpp">
+      <Filter>src\vehicle</Filter>
+    </ClCompile>
+    <ClCompile Include="src\thirdparty\glad.c">
+      <Filter>src\thirdparty</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="Input.h">
-      <Filter>Source Files</Filter>
+    <ClInclude Include="src\input\Input.h">
+      <Filter>src\input</Filter>
     </ClInclude>
-    <ClInclude Include="EDITH.h">
-      <Filter>Header Files</Filter>
+    <ClInclude Include="src\network\Server.h">
+      <Filter>src\network</Filter>
+    </ClInclude>
+    <ClInclude Include="src\rendering\Interpolation.h">
+      <Filter>src\rendering</Filter>
+    </ClInclude>
+    <ClInclude Include="src\vehicle\Vehicle.h">
+      <Filter>src\vehicle</Filter>
     </ClInclude>
   </ItemGroup>
 </Project>

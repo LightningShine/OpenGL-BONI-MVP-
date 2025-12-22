@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup Label="ProjectConfigurations">
     <ProjectConfiguration Include="Debug|Win32">
@@ -134,21 +134,15 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="src\core\main.cpp" />
-    <ClCompile Include="src\input\Input.cpp" />
-    <ClCompile Include="src\network\Server.cpp" />
-    <ClCompile Include="src\rendering\Interpolation.cpp" />
-    <ClCompile Include="src\vehicle\Vehicle.cpp" />
-    <ClCompile Include="src\thirdparty\glad.c" />
+    <ClCompile Include="Edit.cpp" />
+    <ClCompile Include="glad.c" />
+    <ClCompile Include="Input.cpp" />
+    <ClCompile Include="OpenGL main.cpp" />
+    <ClCompile Include="Source.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="src\input\Input.h" />
-    <ClInclude Include="src\network\Server.h" />
-    <ClInclude Include="src\rendering\Interpolation.h" />
-    <ClInclude Include="src\vehicle\Vehicle.h" />
-  </ItemGroup>
-  <ItemGroup>
-    <Text Include="RESTRUCTURE_SUMMARY.txt" />
+    <ClInclude Include="EDITH.h" />
+    <ClInclude Include="Input.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
