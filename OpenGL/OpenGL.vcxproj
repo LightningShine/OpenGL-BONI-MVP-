@@ -140,12 +140,14 @@
     <ClCompile Include="src\rendering\Interpolation.cpp" />
     <ClCompile Include="src\vehicle\Vehicle.cpp" />
     <ClCompile Include="src\thirdparty\glad.c" />
+    <ClCompile Include="UI.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\input\Input.h" />
     <ClInclude Include="src\network\Server.h" />
     <ClInclude Include="src\rendering\Interpolation.h" />
     <ClInclude Include="src\vehicle\Vehicle.h" />
+    <ClInclude Include="UI.h" />
   </ItemGroup>
   <ItemGroup>
     <Text Include="RESTRUCTURE_SUMMARY.txt" />
