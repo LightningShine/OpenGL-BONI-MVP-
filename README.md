@@ -66,4 +66,31 @@ JSON
 }
 ```
 
+---
+
+### 🚨 Problems and Drawbacks (Technical Debt)
+
+* **Raw Pointer Management** — Using raw pointers creates the risk of memory leaks and undefined behavior.
+* **Hardcoded Assets Paths** — Hardcoded shader/texture paths make the application non-portable.
+* **Lack of Error Handling** — The lack of OpenGL state checks and shader compilation validation makes debugging difficult.
+* **Mixed Code Style** — Inconsistent tabulation and mixed camelCase/snake_case make code less readable.
+* **Global State Dependency** — Excessive use of global variables or macros instead of encapsulation.
+* **Redundant Redraws** — Lack of visibility optimization; everything is drawn every frame, even if it's outside the camera's view. * **Manual Buffer Sync** — lack of automation when updating data in VBO/VAO, leading to errors when changing data structures.
+
+---
+
+### 🛠 Roadmap
+
+* **Smart Pointers Migration** — replace resource management with `std::unique_ptr` and `std::shared_ptr`.
+* **Resource Manager** — create a centralized class for loading textures and shaders with caching and relative paths.
+* **Modern OpenGL (DSA)** — implement Direct State Access for changing object parameters without constant Bind/Unbind.
+* **Logging System** — integrate `spdlog` or similar for outputting errors and render status to the console/file.
+* **UBO/SSBO Implementation** — move the transfer of matrices and material data to buffers to reduce the number of draw calls. * **Camera Frustum Culling** — Add a check to see if an object is within the camera frustum to avoid unnecessary GPU load.
+* **Coordinate Transformation (GIS)** — Implement integration with GeographicLib to convert coordinates from LLA to the local metric system.
+* **Async Data Loading** — Move loading of heavy meshes and textures to a separate thread to avoid UI freezes.
+* **GUI Integration** — Enable Dear ImGui for performance monitoring and live editing of scene parameters.
+* **Clang-Format Setup** — Add a config for automatic code alignment to a single standard (e.g., LLVM).
+
+---
+
 
