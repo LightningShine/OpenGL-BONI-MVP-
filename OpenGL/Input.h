@@ -10,7 +10,6 @@
 #include <string>
 #include <UTMUPS.hpp>
 #include "EDITH.h"
-#include <nlohmann/json.hpp>
 
 
 

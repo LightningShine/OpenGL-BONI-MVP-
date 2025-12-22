@@ -42,6 +42,20 @@ void ChoseInputMode(std::vector<glm::vec2>& points, std::mutex& pointsMutex, std
 				}
 			}
 
+			// There will function which interpolate map points
+			// --- INTERPOLATION START ---
+			//std::cout << "Interpolating map points with Centripetal Catmull-Rom (alpha=0.5)...\n";
+
+			//// Using alpha = 0.5f to prevent artifacts and loops
+			//smoothedData = InterpolatePoints(points, 10, 0.5f);
+
+			//{
+			//	std::lock_guard<std::mutex> lock(pointsMutex);
+			//	points = smoothedData;
+			//}
+			//std::cout << "Interpolation finished.\n";
+			// --- INTERPOLATION END ---
+
 			break;
 		case 2:
 			std::cout << "Load Existing Map Selected\n";
@@ -186,11 +200,11 @@ void CordinateToMetersUTM(double lat_deg, double lon_deg, double &easting, doubl
 
 }
 
-void CordinateDifirenceFromOrigin(double CordiateXMetrs, double CordinateYMetrs, double MAP_SIZE, double &normalized_x, double &normalized_y)
+void CordinateDifirenceFromOrigin(double CordiateX, double CordinateY, double MAP_SIZE, double &normalized_x, double &normalized_y)
 {
 
-	double diff_easting = CordiateXMetrs - jsonClass.easting;
-	double diff_northing = CordinateYMetrs - jsonClass.northing;
+	double diff_easting = CordiateX - jsonClass.easting;
+	double diff_northing = CordinateY - jsonClass.northing;
 
 	normalized_x = (diff_easting / MAP_SIZE);
 	normalized_y = (diff_northing / MAP_SIZE);

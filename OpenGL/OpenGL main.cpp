@@ -5,6 +5,65 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include "Input.h"
+<<<<<<< HEAD
+
+using namespace std;
+
+void framebuffer_size_callback(GLFWwindow* window, int width, int height)
+{
+	glViewport(0, 0, width, height);
+}
+
+void processInput(GLFWwindow* window)
+{
+	if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
+		glfwSetWindowShouldClose(window, true);
+}
+
+void processInput(GLFWwindow* window, glm::vec2& cameraPos, float& zoom, float speed)
+{
+	// Close when press ESC
+	if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
+		glfwSetWindowShouldClose(window, true);
+
+	// Camera movment (W/A/S/D or Arrows)
+	if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS ||
+		glfwGetKey(window, GLFW_KEY_UP) == GLFW_PRESS)
+		cameraPos.y += speed / zoom;  // Up
+
+	if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS ||
+		glfwGetKey(window, GLFW_KEY_DOWN) == GLFW_PRESS)
+		cameraPos.y -= speed / zoom;  // down
+
+	if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS ||
+		glfwGetKey(window, GLFW_KEY_LEFT) == GLFW_PRESS)
+		cameraPos.x -= speed / zoom;  // Left
+
+	if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS ||
+		glfwGetKey(window, GLFW_KEY_RIGHT) == GLFW_PRESS)
+		cameraPos.x += speed / zoom;  // Right
+
+	// Zoom limits
+	if (zoom < 0.1f) zoom = 0.1f;   // Minimum
+	if (zoom > 10.0f) zoom = 10.0f; // Maximum
+}
+
+// Callback for scroolling mouse wheel
+void scroll_callback(GLFWwindow* window, double xoffset, double yoffset)
+{
+	float* zoom = (float*)glfwGetWindowUserPointer(window);
+	*zoom *= (float)(1.0f + yoffset * 0.1f);  // Aspect of zoom change
+
+	// Ограничение зума
+	if (*zoom < 0.1f) *zoom = 0.1f;
+	if (*zoom > 10.0f) *zoom = 10.0f;
+}
+
+
+//Shaders
+
+const char* vertexShaderSource = R"(
+=======
 #include "VENCHILEH.h"
 #include "TelemetryServer.h"
 
@@ -38,6 +97,7 @@ std::atomic<bool> g_trackLoaded(false);
 
 // ==================== SHADERS ====================
 static const char* VERTEX_SHADER_SOURCE = R"(
+>>>>>>> c784474956008c989a0e5ee699405981940db8bd
     #version 460 core
     layout (location = 0) in vec2 aPos;
     uniform mat4 projection;
@@ -60,6 +120,15 @@ static const char* FRAGMENT_SHADER_SOURCE = R"(
 // ==================== CALLBACKS ====================
 void FramebufferSizeCallback(GLFWwindow* window, int width, int height)
 {
+<<<<<<< HEAD
+	glfwInit();
+	glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);  // Determine OpenGL major version OpenGL 4.X
+	glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 6);	// Determine OpenGL minor version OpenGL X.6
+	glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+	// Use the core-profile
+	// get access to a et access to a smaller subset 
+	// of OpenGL features without backwards - compatible features we no longer need
+=======
 	glViewport(0, 0, width, height);
 }
 
@@ -84,10 +153,70 @@ void ProcessInput(GLFWwindow* window, glm::vec2& cameraPos, float zoom)
 	}
 
 	float moveAmount = Config::CAMERA_MOVE_SPEED / zoom;
+>>>>>>> c784474956008c989a0e5ee699405981940db8bd
 
 	if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS || glfwGetKey(window, GLFW_KEY_UP) == GLFW_PRESS)
 		cameraPos.y += moveAmount;
 
+<<<<<<< HEAD
+
+	GLFWwindow* window = glfwCreateWindow(Width, Height, "Race Map", NULL, NULL); // Create a windowed mode at windows 800x800, titled Race Map
+	if (window == NULL) // Check if the window was created successfully
+	{
+		cout << "Failed to create GLFW window" << endl;
+		glfwTerminate();
+		return -1;
+	}
+
+	glfwMakeContextCurrent(window); // Make the window's context in current thread
+
+	if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress)) // Initialize GLAD before calling any OpenGL function
+	{
+		cout << "Failed to initialize GLAD" << endl;
+		return -1;
+	}
+
+	glViewport(0, 0, Width, Height); // Set the OpenGL viewport to cover the whole window
+
+	glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
+	// Register the callback function to adjust the viewport when the window is resized
+
+
+	GLuint VAO, VBO, EBO;
+	glGenVertexArrays(1, &VAO);
+	glGenBuffers(1, &VBO);
+	glGenBuffers(1, &EBO);
+
+
+	// Vertex Buffer Object
+	glBindVertexArray(VAO);
+	glGenVertexArrays(1, &VAO);
+	glGenBuffers(1, &VBO);
+	glBindVertexArray(VAO);
+
+	//glBindBuffer(GL_ARRAY_BUFFER, VBO);
+
+	//Index Buffer Object
+	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
+
+	//Vertex Attribute
+	//glEnableVertexAttribArray(0);
+
+	//glBindVertexArray(0);
+
+
+	// ================= Shader compilation ===================
+	GLuint vertexShader = glCreateShader(GL_VERTEX_SHADER);
+	glShaderSource(vertexShader, 1, &vertexShaderSource, NULL);
+	glCompileShader(vertexShader);
+
+	GLuint fragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
+	glShaderSource(fragmentShader, 1, &fragmentShaderSource, NULL);
+	glCompileShader(fragmentShader);
+
+
+	// Shader compile check
+=======
 	if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS || glfwGetKey(window, GLFW_KEY_DOWN) == GLFW_PRESS)
 		cameraPos.y -= moveAmount;
 
@@ -104,6 +233,7 @@ GLuint CompileShader(GLenum type, const char* source)
 	GLuint shader = glCreateShader(type);
 	glShaderSource(shader, 1, &source, nullptr);
 	glCompileShader(shader);
+>>>>>>> c784474956008c989a0e5ee699405981940db8bd
 
 	int success;
 	glGetShaderiv(shader, GL_COMPILE_STATUS, &success);
@@ -294,14 +424,50 @@ int main()
 
 		glBindVertexArray(VAO);
 
+<<<<<<< HEAD
+		std::vector<glm::vec2> borderLayer;
+		std::vector<glm::vec2> asphaltLayer;
+
+		size_t pointCount = 0;
+		std::vector<glm::vec2> triangleStripPoints;
+=======
 		// Process track points
 		std::vector<glm::vec2> borderLayer, asphaltLayer;
 		bool trackClosed = false;
+>>>>>>> c784474956008c989a0e5ee699405981940db8bd
 		{
 			std::lock_guard<std::mutex> lock(pointsMutex);
 			
 			if (points.size() > 1)
 			{
+<<<<<<< HEAD
+				// Интерполируем точки для плавности
+				std::vector<glm::vec2> smoothPoints = InterpolatePoints(points, 10);
+
+				borderLayer = GenerateTriangleStripFromLine(smoothPoints, 0.04f);
+				asphaltLayer = GenerateTriangleStripFromLine(smoothPoints, 0.035f);
+			}
+		}
+
+		if (borderLayer.size() > 0)
+		{
+			glBindBuffer(GL_ARRAY_BUFFER, VBO);
+			glBufferData(GL_ARRAY_BUFFER, borderLayer.size() * sizeof(glm::vec2), borderLayer.data(), GL_DYNAMIC_DRAW);
+
+			glUniform3f(colorLoc, 1.0f, 1.0f, 1.0f); // White color for border
+			glDrawArrays(GL_TRIANGLE_STRIP, 0, (GLsizei)borderLayer.size());
+		}
+
+		if (asphaltLayer.size() > 0)
+		{
+			glBindBuffer(GL_ARRAY_BUFFER, VBO);
+			glBufferData(GL_ARRAY_BUFFER, asphaltLayer.size() * sizeof(glm::vec2), asphaltLayer.data(), GL_DYNAMIC_DRAW);
+
+			glUniform3f(colorLoc, 0.3f, 0.3f, 0.3f); // Grey color for asphalt
+			glDrawArrays(GL_TRIANGLE_STRIP, 0, (GLsizei)asphaltLayer.size());
+		}
+
+=======
 				auto smoothPoints = InterpolatePoints(points, Config::TRACK_INTERPOLATION_POINTS);
 				borderLayer = GenerateTriangleStripFromLine(smoothPoints, Config::TRACK_BORDER_WIDTH);
 				asphaltLayer = GenerateTriangleStripFromLine(smoothPoints, Config::TRACK_ASPHALT_WIDTH);
@@ -317,15 +483,23 @@ int main()
 
 		// Render vehicles
 		venchileManager.RenderVenchiles(g_trackLoaded);
+>>>>>>> c784474956008c989a0e5ee699405981940db8bd
 
 		glfwPollEvents();
 		glfwSwapBuffers(window);
 	}
+<<<<<<< HEAD
+	
+	running = false; // Signal the input thread to stop
+	
+=======
 
 	// Cleanup
 	running = false;
 	telemetryServer.Stop();
+>>>>>>> c784474956008c989a0e5ee699405981940db8bd
 
+	// ========================== CLEAN UP ==========================
 	glDeleteVertexArrays(1, &VAO);
 	glDeleteBuffers(1, &VBO);
 	glDeleteProgram(shaderProgram);
@@ -333,5 +507,13 @@ int main()
 
 	inputThread.join();
 
+
+
 	return 0;
+<<<<<<< HEAD
+
+	// Uztaisit Start Stop sistemu lai pec N laiku MVP nepardoda informaciju, lai taupitu energiju
+
+=======
+>>>>>>> c784474956008c989a0e5ee699405981940db8bd
 }

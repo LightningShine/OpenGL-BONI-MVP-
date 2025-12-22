@@ -30,27 +30,12 @@
     <ClCompile Include="Edit.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="Venchile.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="Server.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="TelemetryServer.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Input.h">
       <Filter>Source Files</Filter>
     </ClInclude>
     <ClInclude Include="EDITH.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="VENCHILEH.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="TelemetryServer.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

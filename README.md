@@ -39,9 +39,6 @@ The project follows a critical four-step conversion pipeline to ensure accuracy 
 
 https://github.com/user-attachments/assets/4bd82d52-cb2b-4506-8cf0-179601198cdf
 
-https://github.com/user-attachments/assets/d4d4955a-df7d-4405-a996-7e215657ae76
-
-
     Input: D°M'S".
 
     Geodetic Conversion: WGS84 → Absolute UTM Meters (Easting/Northing) + Zone (38V).
