@@ -71,7 +71,7 @@
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <IncludePath>C:\Users\gamer\source\repos\OpenGL\OpenGL\libraries\include\GeographicLib;C:\Users\gamer\source\repos\OpenGL\OpenGL\libraries\include;$(IncludePath)</IncludePath>
+    <IncludePath>libraries\include\imgui;libraries\include\imgui\backends;C:\Users\gamer\source\repos\OpenGL\OpenGL\libraries\include\GeographicLib;C:\Users\gamer\source\repos\OpenGL\OpenGL\libraries\include;$(IncludePath)</IncludePath>
     <ExternalIncludePath>$(ExternalIncludePath)</ExternalIncludePath>
     <LibraryPath>C:\Users\gamer\source\repos\OpenGL\OpenGL\libraries\lib;$(LibraryPath)</LibraryPath>
   </PropertyGroup>
@@ -141,6 +141,13 @@
     <ClCompile Include="src\vehicle\Vehicle.cpp" />
     <ClCompile Include="src\thirdparty\glad.c" />
     <ClCompile Include="UI.cpp" />
+    <ClCompile Include="libraries\include\imgui\imgui.cpp" />
+    <ClCompile Include="libraries\include\imgui\imgui_demo.cpp" />
+    <ClCompile Include="libraries\include\imgui\imgui_draw.cpp" />
+    <ClCompile Include="libraries\include\imgui\imgui_tables.cpp" />
+    <ClCompile Include="libraries\include\imgui\imgui_widgets.cpp" />
+    <ClCompile Include="libraries\include\imgui\backends\imgui_impl_glfw.cpp" />
+    <ClCompile Include="libraries\include\imgui\backends\imgui_impl_opengl3.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\input\Input.h" />

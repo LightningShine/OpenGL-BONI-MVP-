@@ -7,6 +7,7 @@
 #include <glm/gtc/type_ptr.hpp>
 #include "../input/Input.h"
 #include "../rendering/Interpolation.h"
+#include "../../UI.h"
 
 using namespace std;
 
@@ -142,6 +143,20 @@ int main()
 
 	glBindVertexArray(0);
 
+	// ================= UI Initialization ==================
+
+	glfwMakeContextCurrent(window);
+	gladLoadGLLoader((GLADloadproc)glfwGetProcAddress);
+
+	UI ui;
+	if (!ui.Initialize(window))
+	{
+		std::cerr << "Failed UI Initialization" << endl;
+		glfwTerminate();
+		return -1;
+	}
+
+
 
 	// ================= Shader compilation ===================
 	GLuint vertexShader = glCreateShader(GL_VERTEX_SHADER);
@@ -226,6 +241,8 @@ int main()
 
 	while (!glfwWindowShouldClose(window)) // Main loop that runs until the window is closed
 	{
+		ui.BeginFrame();
+
 		processInput(window, cameraPosition, cameraZoom, cameraMoveSpeed); // Process user input with camera
 		cameraPosition += cameraVelocity;  
 		cameraVelocity *= friction;
@@ -236,25 +253,26 @@ int main()
 		glClear(GL_COLOR_BUFFER_BIT); // Clear the color buffer with the specified clear color
 
 
-		// Aspect Ratio Calculation
+		// Aspect Ratio Calculation 
+		{
+			glfwGetWindowSize(window, &windowswidth, &windowsheight);
+
+			double aspectRatio = (double)windowswidth / (double)windowsheight;
+
+
+			// Basic border with aspect ratio
+			if (aspectRatio >= 1.0)
+			{
+				horizontalBound = mapRange * aspectRatio;
+				verticalBound = mapRange;
+			}
+			else
+			{
+				horizontalBound = mapRange;
+				verticalBound = mapRange / aspectRatio;
+			}
+		}
 		
-		glfwGetWindowSize(window, &windowswidth, &windowsheight);
-		 
-		double aspectRatio = (double)windowswidth / (double)windowsheight;
-
-
-		// Basic border with aspect ratio
-		if (aspectRatio >= 1.0)
-		{
-			horizontalBound = mapRange * aspectRatio;
-			verticalBound = mapRange;
-		}
-		else
-		{
-			horizontalBound = mapRange;
-			verticalBound = mapRange / aspectRatio;
-		}
-
 		// Apply zoom (devide border on zoom)
 		float zoomedHorizontal = (float)horizontalBound / (float)cameraZoom;
 		float zoomedVertical = (float)verticalBound / (float)cameraZoom;
@@ -270,12 +288,13 @@ int main()
 			zoomedVertical + cameraPosition.y,    // top
 			-1.0f, 1.0f
 		);
-		
+
+		// Track creation and drawing
 		glUseProgram(shaderProgram);
-		
+
 		GLint projLoc = glGetUniformLocation(shaderProgram, "projection");
 		glUniformMatrix4fv(projLoc, 1, GL_FALSE, glm::value_ptr(projection));
-		
+
 		GLint colorLoc = glGetUniformLocation(shaderProgram, "uColor");
 
 		glBindVertexArray(VAO);
@@ -288,7 +307,7 @@ int main()
 		{
 			std::lock_guard<std::mutex> lock(pointsMutex);
 			pointCount = points.size();
-			
+
 			if (pointCount > 1)
 			{
 
@@ -317,6 +336,8 @@ int main()
 			glDrawArrays(GL_TRIANGLE_STRIP, 0, (GLsizei)asphaltLayer.size());
 		}
 
+		ui.Render();
+		ui.EndFrame();
 
 		// check and call events and swap the buffers
 		glfwPollEvents(); // Poll for and process events (e.g., keyboard, mouse)
@@ -328,6 +349,7 @@ int main()
 	
 
 	// ========================== CLEAN UP ==========================
+	ui.Shutdown();
 	glDeleteVertexArrays(1, &VAO);
 	glDeleteBuffers(1, &VBO);
 	glDeleteProgram(shaderProgram);
