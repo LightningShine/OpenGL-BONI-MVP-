@@ -48,6 +48,35 @@ void processInput(GLFWwindow* window, glm::vec2& cameraPos, float& zoom, float s
 	// Zoom limits
 	if (zoom < 0.1f) zoom = 0.1f;   // Minimum
 	if (zoom > 10.0f) zoom = 10.0f; // Maximum
+
+	// === F11 ??? ???????????? Fullscreen ===
+	static bool wasF11Pressed = false;
+	if (glfwGetKey(window, GLFW_KEY_F11) == GLFW_PRESS && !wasF11Pressed)
+	{
+		wasF11Pressed = true;
+
+		GLFWmonitor* currentMonitor = glfwGetWindowMonitor(window);
+
+		if (currentMonitor == NULL)
+		{
+			// ??????? ? fullscreen
+			GLFWmonitor* monitor = glfwGetPrimaryMonitor();
+			const GLFWvidmode* mode = glfwGetVideoMode(monitor);
+			glfwSetWindowMonitor(window, monitor, 0, 0, mode->width, mode->height, mode->refreshRate);
+		}
+		else
+		{
+			// ??????? ? ??????? ????? ? ???????
+			glfwSetWindowMonitor(window, NULL, 100, 100, 1280, 720, GLFW_DONT_CARE);
+
+			// ?????: ??????????????? ????????? ???? (?????, ?????? ???????? ? ?.?.)
+			glfwSetWindowAttrib(window, GLFW_DECORATED, GLFW_TRUE);
+		}
+	}
+	if (glfwGetKey(window, GLFW_KEY_F11) == GLFW_RELEASE)
+	{
+		wasF11Pressed = false;
+	}
 }
 
 // Callback for scroolling mouse wheel
@@ -98,12 +127,18 @@ int main()
 	// get access to a et access to a smaller subset 
 	// of OpenGL features without backwards - compatible features we no longer need
 
-	int Width = 512;
-	int Height = 512;
+	int Width;
+	int Height;
 
+	GLFWmonitor* monitor = glfwGetPrimaryMonitor();
 
-	GLFWwindow* window = glfwCreateWindow(Width, Height, "Race Map", NULL, NULL); // Create a windowed mode at windows 800x800, titled Race Map
-	if (window == NULL) // Check if the window was created successfully
+	const GLFWvidmode* mode = glfwGetVideoMode(monitor);
+	Width = mode->width;
+	Height = mode->height;
+
+	glfwWindowHint(GLFW_DECORATED, GLFW_FALSE); //Full mode without borders
+	GLFWwindow* window = glfwCreateWindow(Width, Height, "Race Map", monitor, NULL); // ???????? monitor ??? fullscreen
+	if (window == NULL)
 	{
 		cout << "Failed to create GLFW window" << endl;
 		glfwTerminate();

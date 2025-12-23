@@ -48,6 +48,14 @@
     <ClCompile Include="src\thirdparty\glad.c">
       <Filter>src\thirdparty</Filter>
     </ClCompile>
+    <ClCompile Include="UI.cpp" />
+    <ClCompile Include="libraries\include\imgui\imgui.cpp" />
+    <ClCompile Include="libraries\include\imgui\imgui_demo.cpp" />
+    <ClCompile Include="libraries\include\imgui\imgui_draw.cpp" />
+    <ClCompile Include="libraries\include\imgui\imgui_tables.cpp" />
+    <ClCompile Include="libraries\include\imgui\imgui_widgets.cpp" />
+    <ClCompile Include="libraries\include\imgui\backends\imgui_impl_glfw.cpp" />
+    <ClCompile Include="libraries\include\imgui\backends\imgui_impl_opengl3.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\input\Input.h">
@@ -62,5 +70,10 @@
     <ClInclude Include="src\vehicle\Vehicle.h">
       <Filter>src\vehicle</Filter>
     </ClInclude>
+    <ClInclude Include="UI.h" />
+    <ClInclude Include="libraries\include\stb_image.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <Text Include="RESTRUCTURE_SUMMARY.txt" />
   </ItemGroup>
 </Project>
