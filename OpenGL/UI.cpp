@@ -29,6 +29,7 @@ UI::UI()
     , m_showSplash(true)
     , m_closeSplash(false)
     , m_fontRegular(nullptr)
+	, m_fontRace(nullptr)
     , m_fontTitle(nullptr)
     , m_backgroundTexture(nullptr)
     , m_iconFile(nullptr)
@@ -84,8 +85,14 @@ void UI::LoadResources()
         std::cerr << "[UI] Warning: Background image not loaded\n";
     }
     
-    // SVG не поддерживаются stb_image - используем текстовые символы или конвертируйте в PNG
-    
+    // Load Icons
+    if (!LoadTextureFromFile("styles/icons/PNG/file.png", &m_iconFile, nullptr, nullptr)) std::cerr << "Failed to load file.png\n";
+    if (!LoadTextureFromFile("styles/icons/PNG/contact.png", &m_iconContact, nullptr, nullptr)) std::cerr << "Failed to load contact.png\n";
+    if (!LoadTextureFromFile("styles/icons/PNG/copyright.png", &m_iconCopyright, nullptr, nullptr)) std::cerr << "Failed to load copyright.png\n";
+    if (!LoadTextureFromFile("styles/icons/PNG/heart.png", &m_iconHeart, nullptr, nullptr)) std::cerr << "Failed to load heart.png\n";
+    if (!LoadTextureFromFile("styles/icons/PNG/circle-x.png", &m_iconClose, nullptr, nullptr)) std::cerr << "Failed to load circle-x.png\n";
+    if (!LoadTextureFromFile("styles/icons/PNG/DragAndDrop.png", &m_iconDragDrop, nullptr, nullptr)) std::cerr << "Failed to load DragAndDrop.png\n";
+
     // Test recent files
     m_recentFiles.push_back({"333 Track.json", "C:/tracks/333.json"});
     m_recentFiles.push_back({"Rulitis.json", "C:/tracks/rulitis.json"});
@@ -120,9 +127,11 @@ bool UI::Initialize(GLFWwindow* window)
     // Load Fonts
     m_fontRegular = io.Fonts->AddFontFromFileTTF("styles/fonts/JetBrains Mono/ttf/JetBrainsMono-Regular.ttf", 18.0f);
     m_fontTitle = io.Fonts->AddFontFromFileTTF("styles/fonts/JetBrains Mono/ttf/JetBrainsMono-Bold.ttf", 18.0f);
+	m_fontRace = io.Fonts->AddFontFromFileTTF("styles/fonts/F1-Font-Family/Formula1-Black.ttf", 16.0f);
     
     if (!m_fontRegular) std::cerr << "[UI] Failed to load Regular font\n";
     if (!m_fontTitle) std::cerr << "[UI] Failed to load Bold font\n";
+	if (!m_fontRace) std::cerr << "[UI] Failed to load Race font\n";
 
     if (!ImGui_ImplGlfw_InitForOpenGL(window, true))
     {
@@ -138,11 +147,12 @@ bool UI::Initialize(GLFWwindow* window)
     
     // Style
     ImGuiStyle& style = ImGui::GetStyle();
-    style.WindowRounding = 5.0f;
+    style.WindowRounding = 15.0f;
     style.FrameRounding = 12.0f;
     style.WindowPadding = ImVec2(0, 0);
     style.FramePadding = ImVec2(12, 8);
     style.ItemSpacing = ImVec2(8, 8);
+	style.WindowBorderSize = 0.0f; // No border for windows
     
     ImVec4* colors = style.Colors;
     colors[ImGuiCol_WindowBg] = ImVec4(0.0f, 0.0f, 0.0f, 1.0f);
@@ -156,6 +166,9 @@ bool UI::Initialize(GLFWwindow* window)
     colors[ImGuiCol_Header] = ImVec4(0.0f, 0.0f, 0.0f, 0.0f);
     colors[ImGuiCol_HeaderHovered] = ImVec4(0.0f, 0.0f, 0.0f, 0.0f);
     colors[ImGuiCol_HeaderActive] = ImVec4(0.0f, 0.0f, 0.0f, 0.0f);
+
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+    io.MouseDrawCursor = true; // ImGui will draw the program cursor
     
     LoadResources();
     
@@ -208,13 +221,15 @@ void UI::RenderSplashWindow()
     ImGuiIO& io = ImGui::GetIO();
     ImVec2 displaySize = io.DisplaySize;
     
-    // ПРАВИЛЬНЫЙ размер окна: 847x750
-    ImVec2 windowSize(847, 750);
+
+    ImVec2 windowSize(displaySize.x * 0.44f, displaySize.y * 0.69f);
     ImVec2 windowPos((displaySize.x - windowSize.x) * 0.5f, (displaySize.y - windowSize.y) * 0.5f);
     
     // Dark background overlay
     ImGui::SetNextWindowPos(ImVec2(0, 0));
     ImGui::SetNextWindowSize(displaySize);
+
+
     ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.0f, 0.0f, 0.0f, 0.7f));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
     
@@ -272,13 +287,13 @@ void UI::RenderMainWindow()
         ImGuiWindowFlags_NoMove |
         ImGuiWindowFlags_NoScrollbar);
     
-    // === BACKGROUND IMAGE ===
+    // === IMAGE ===
     if (m_backgroundTexture)
     {
         ImGui::GetWindowDrawList()->AddImageRounded(
             (ImTextureID)m_backgroundTexture,
             windowPos,
-            ImVec2(windowPos.x + windowSize.x, windowPos.y + windowSize.y - 290),
+            ImVec2(windowPos.x + windowSize.x, windowPos.y + windowSize.y - 320), // Image bootom size
             ImVec2(0, 0),
             ImVec2(1, 1),
             IM_COL32(255, 255, 255, 255),
@@ -291,7 +306,7 @@ void UI::RenderMainWindow()
         // Fallback: dark background
         ImGui::GetWindowDrawList()->AddRectFilled(
             windowPos,
-            ImVec2(windowPos.x + windowSize.x, windowPos.y + windowSize.y - 290),
+            ImVec2(windowPos.x + windowSize.x, windowPos.y + windowSize.y - 320), // Black Shape bottom size
             IM_COL32(20, 20, 25, 255),
             ImGui::GetStyle().WindowRounding,
             ImDrawFlags_RoundCornersTop
@@ -301,10 +316,12 @@ void UI::RenderMainWindow()
     // === TITLE "RACE APP" ===
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, 0));
     
-    if (m_fontTitle) ImGui::PushFont(m_fontTitle);
+	// Use the new F1 font for the title
+    if (m_fontRace) ImGui::PushFont(m_fontRace);
+	else if (m_fontTitle) ImGui::PushFont(m_fontTitle);
 
     ImGui::SetCursorPos(ImVec2(35, 35));
-    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+	ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f)); // White color RACE APP color
     ImGui::SetWindowFontScale(3.5f);
     ImGui::Text("RACE");
     ImGui::SetWindowFontScale(1.0f);
@@ -317,14 +334,15 @@ void UI::RenderMainWindow()
     ImGui::SetWindowFontScale(1.0f);
     ImGui::PopStyleColor();
     
-    if (m_fontTitle) ImGui::PopFont();
+    if (m_fontRace) ImGui::PopFont();
+    else if (m_fontTitle) ImGui::PopFont();
 
     ImGui::PopStyleVar();
     
     // === VERSION ===
     if (m_fontTitle) ImGui::PushFont(m_fontTitle);
     ImGui::SetCursorPos(ImVec2(windowSize.x - 100, 35));
-    ImGui::TextColored(ImVec4(0.835f, 0.835f, 0.835f, 1.0f), "0.0.5v");
+    ImGui::TextColored(ImVec4(0.835f, 0.835f, 0.835f, 1.0f), "0.0.6v");
     if (m_fontTitle) ImGui::PopFont();
     
     // === AUTHOR NAME ===
@@ -348,20 +366,22 @@ void UI::RenderMainWindow()
     // === SEPARATORS ===
     ImDrawList* drawList = ImGui::GetWindowDrawList();
     ImU32 separatorColor = IM_COL32(100, 100, 100, 255);
-    float bottomBarY = windowSize.y - 40;
+    
+    // CHANGE HEIGHT HERE: (windowSize.y - 40) is the Y position. Increase 40 to move higher, decrease to move lower.
+    float bottomBarY = windowSize.y - 45; // Moved higher to give space for content below
 
     // Vertical Line
     drawList->AddLine(
         ImVec2(windowPos.x + 425, windowPos.y + (windowSize.y - 290)),
         ImVec2(windowPos.x + 425, windowPos.y + bottomBarY),
-        separatorColor, 1.0f
+        separatorColor, 2.0f // Thicker line
     );
 
     // Horizontal Line
     drawList->AddLine(
         ImVec2(windowPos.x, windowPos.y + bottomBarY),
         ImVec2(windowPos.x + windowSize.x, windowPos.y + bottomBarY),
-        separatorColor, 1.0f
+        separatorColor, 2.0f // Thicker line
     );
     
     // === DRAG AND DROP ZONE ===
@@ -373,26 +393,22 @@ void UI::RenderMainWindow()
     // ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 8.0f);
     
     // Disable border in BeginChild
-    ImGui::BeginChild("##DragDrop", ImVec2(390, 140), false, ImGuiWindowFlags_NoScrollbar);
+	// Increased height to 160 (was 140) DRAG AND DROP AREA
+    ImGui::BeginChild("##DragDrop", ImVec2(390, 160), false, ImGuiWindowFlags_NoScrollbar);
     
     // Draw Dashed Border
     ImVec2 ddMin = ImVec2(windowPos.x + 21, windowPos.y + (windowSize.y - 215));
-    ImVec2 ddMax = ImVec2(ddMin.x + 390, ddMin.y + 140);
-    AddDashedRect(drawList, ddMin, ddMax, separatorColor, 1.0f, 10.0f, 5.0f);
+    ImVec2 ddMax = ImVec2(ddMin.x + 390, ddMin.y + 160); // Increased height to 160
+    AddDashedRect(drawList, ddMin, ddMax, separatorColor, 2.0f, 10.0f, 5.0f); // Thicker line (2.0f)
 
-    // Draw Download Icon (Vector style)
-    ImVec2 center = ImVec2(ddMin.x + 195, ddMin.y + 55);
-    ImU32 iconColor = IM_COL32(197, 197, 197, 255);
-    // Arrow
-    drawList->AddLine(ImVec2(center.x, center.y - 15), ImVec2(center.x, center.y + 15), iconColor, 2.0f);
-    drawList->AddLine(ImVec2(center.x, center.y + 15), ImVec2(center.x - 10, center.y + 5), iconColor, 2.0f);
-    drawList->AddLine(ImVec2(center.x, center.y + 15), ImVec2(center.x + 10, center.y + 5), iconColor, 2.0f);
-    // Tray
-    drawList->AddLine(ImVec2(center.x - 15, center.y + 10), ImVec2(center.x - 15, center.y + 25), iconColor, 2.0f);
-    drawList->AddLine(ImVec2(center.x - 15, center.y + 25), ImVec2(center.x + 15, center.y + 25), iconColor, 2.0f);
-    drawList->AddLine(ImVec2(center.x + 15, center.y + 25), ImVec2(center.x + 15, center.y + 10), iconColor, 2.0f);
+    // Draw Download Icon
+    if (m_iconDragDrop)
+    {
+        ImGui::SetCursorPos(ImVec2(179, 55)); // Moved down (was 40)
+        ImGui::Image((ImTextureID)m_iconDragDrop, ImVec2(32, 32));
+    }
 
-    ImGui::SetCursorPos(ImVec2(95, 95));
+    ImGui::SetCursorPos(ImVec2(95, 110)); // Moved down (was 95)
     ImGui::TextColored(ImVec4(0.835f, 0.835f, 0.835f, 1.0f), "Drag and Drop file there");
     
     ImGui::EndChild();
@@ -410,19 +426,11 @@ void UI::RenderMainWindow()
     {
         ImGui::SetCursorPos(ImVec2(435, listStartY + i * 30));
         
-        // Draw File Icon (Vector style)
-        ImVec2 p = ImGui::GetCursorScreenPos();
-        p.y += 4; // Center vertically
-        ImU32 fileIconColor = IM_COL32(197, 197, 197, 255);
-        drawList->AddLine(ImVec2(p.x, p.y), ImVec2(p.x + 10, p.y), fileIconColor); // Top
-        drawList->AddLine(ImVec2(p.x + 10, p.y), ImVec2(p.x + 14, p.y + 4), fileIconColor); // Corner
-        drawList->AddLine(ImVec2(p.x + 14, p.y + 4), ImVec2(p.x + 14, p.y + 18), fileIconColor); // Right
-        drawList->AddLine(ImVec2(p.x + 14, p.y + 18), ImVec2(p.x, p.y + 18), fileIconColor); // Bottom
-        drawList->AddLine(ImVec2(p.x, p.y + 18), ImVec2(p.x, p.y), fileIconColor); // Left
-        drawList->AddLine(ImVec2(p.x + 10, p.y), ImVec2(p.x + 10, p.y + 4), fileIconColor); // Fold V
-        drawList->AddLine(ImVec2(p.x + 10, p.y + 4), ImVec2(p.x + 14, p.y + 4), fileIconColor); // Fold H
-
-        ImGui::Dummy(ImVec2(20, 20)); // Spacer for icon
+        // Draw File Icon
+        if (m_iconFile)
+        {
+            ImGui::Image((ImTextureID)m_iconFile, ImVec2(18, 18));
+        }
         
         ImGui::SameLine();
         ImGui::SetCursorPosX(465);
@@ -440,50 +448,63 @@ void UI::RenderMainWindow()
     
     // === BOTTOM BAR ===
     // float bottomBarY = windowSize.y - 40; // Already defined
+    float contentY = bottomBarY + 12; // Offset content below the line
     
     // Contact Us
-    ImGui::SetCursorPos(ImVec2(25, bottomBarY));
-    ImGui::TextColored(ImVec4(0.773f, 0.773f, 0.773f, 1.0f), "\xF0\x9F\x93\xA7"); // 📧 mail
-    ImGui::SameLine();
+    ImGui::SetCursorPos(ImVec2(25, contentY));
+    if (m_iconContact)
+    {
+        ImGui::Image((ImTextureID)m_iconContact, ImVec2(20, 20));
+        ImGui::SameLine();
+    }
     ImGui::TextColored(ImVec4(0.835f, 0.835f, 0.835f, 1.0f), " Contact Us");
     
-    ImGui::SetCursorPos(ImVec2(25, bottomBarY));
+    ImGui::SetCursorPos(ImVec2(25, contentY));
     if (ImGui::InvisibleButton("##contact", ImVec2(140, 30)))
     {
         std::cout << "[UI] Contact Us\n";
     }
     
     // Copyright
-    ImGui::SetCursorPos(ImVec2(215, bottomBarY));
-    ImGui::TextColored(ImVec4(0.773f, 0.773f, 0.773f, 1.0f), "\xC2\xA9"); // © copyright
-    ImGui::SameLine();
+    ImGui::SetCursorPos(ImVec2(215, contentY));
+    if (m_iconCopyright)
+    {
+        ImGui::Image((ImTextureID)m_iconCopyright, ImVec2(20, 20));
+        ImGui::SameLine();
+    }
     ImGui::TextColored(ImVec4(0.835f, 0.835f, 0.835f, 1.0f), " Copyright by us");
     
-    ImGui::SetCursorPos(ImVec2(215, bottomBarY));
+    ImGui::SetCursorPos(ImVec2(215, contentY));
     if (ImGui::InvisibleButton("##copyright", ImVec2(180, 30)))
     {
         std::cout << "[UI] Copyright\n";
     }
     
     // Donate
-    ImGui::SetCursorPos(ImVec2(455, bottomBarY));
-    ImGui::TextColored(ImVec4(0.773f, 0.773f, 0.773f, 1.0f), "\xE2\x9D\xA4"); // ❤ heart
-    ImGui::SameLine();
+    ImGui::SetCursorPos(ImVec2(455, contentY));
+    if (m_iconHeart)
+    {
+        ImGui::Image((ImTextureID)m_iconHeart, ImVec2(20, 20));
+        ImGui::SameLine();
+    }
     ImGui::TextColored(ImVec4(0.835f, 0.835f, 0.835f, 1.0f), " Donate to Us");
     
-    ImGui::SetCursorPos(ImVec2(455, bottomBarY));
+    ImGui::SetCursorPos(ImVec2(455, contentY));
     if (ImGui::InvisibleButton("##donate", ImVec2(150, 30)))
     {
         std::cout << "[UI] Donate\n";
     }
     
     // Close App
-    ImGui::SetCursorPos(ImVec2(windowSize.x - 155, bottomBarY));
-    ImGui::TextColored(ImVec4(0.773f, 0.773f, 0.773f, 1.0f), "\xE2\x9C\x96"); // ✖ x mark
-    ImGui::SameLine();
+    ImGui::SetCursorPos(ImVec2(windowSize.x - 155, contentY));
+    if (m_iconClose)
+    {
+        ImGui::Image((ImTextureID)m_iconClose, ImVec2(20, 20));
+        ImGui::SameLine();
+    }
     ImGui::TextColored(ImVec4(0.835f, 0.835f, 0.835f, 1.0f), " Close App");
     
-    ImGui::SetCursorPos(ImVec2(windowSize.x - 155, bottomBarY));
+    ImGui::SetCursorPos(ImVec2(windowSize.x - 155, contentY));
     if (ImGui::InvisibleButton("##close", ImVec2(130, 30)))
     {
         std::cout << "[UI] Close App\n";

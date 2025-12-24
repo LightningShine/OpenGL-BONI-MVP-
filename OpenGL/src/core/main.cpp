@@ -137,7 +137,9 @@ int main()
 	Height = mode->height;
 
 	glfwWindowHint(GLFW_DECORATED, GLFW_FALSE); //Full mode without borders
-	GLFWwindow* window = glfwCreateWindow(Width, Height, "Race Map", monitor, NULL); // ???????? monitor ??? fullscreen
+    // Use NULL for monitor to create a windowed mode (borderless because of GLFW_DECORATED = FALSE)
+    // This fixes the black screen issue on capture and cursor visibility
+	GLFWwindow* window = glfwCreateWindow(Width, Height, "Race Map", NULL, NULL); 
 	if (window == NULL)
 	{
 		cout << "Failed to create GLFW window" << endl;
@@ -146,6 +148,9 @@ int main()
 	}
 
 	glfwMakeContextCurrent(window); // Make the window's context in current thread
+    
+    // Ensure cursor is visible
+    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
 
 	if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress)) // Initialize GLAD before calling any OpenGL function
 	{
@@ -284,7 +289,7 @@ int main()
 		
 		if (!running) glfwSetWindowShouldClose(window, true); // If console closed, close the windows too
 
-		glClearColor(0.0f, 0.0f, 0.1f, 1.0f); // Set the clear color for the window (background color)
+		glClearColor(0.5f, 0.5f, 0.5f, 1.0f); // Set the clear color for the window (background color)
 		glClear(GL_COLOR_BUFFER_BIT); // Clear the color buffer with the specified clear color
 
 
