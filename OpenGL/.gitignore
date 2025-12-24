@@ -1,0 +1,10 @@
+
+# User data - DO NOT COMMIT
+data/maps/*.json
+data/saves/*.json
+data/config/*.json
+
+# Keep directory structure
+!data/maps/.gitkeep
+!data/saves/.gitkeep
+!data/config/.gitkeep

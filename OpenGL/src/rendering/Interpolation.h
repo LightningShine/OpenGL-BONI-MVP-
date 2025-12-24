@@ -1,5 +1,5 @@
 #pragma once
-#include "Input.h"
+#include "../input/Input.h"
 #include <vector>
 #include <glm/glm.hpp>
 

@@ -1,6 +1,4 @@
-﻿#pragma once
-#include "Input.h"
-#include "EDITH.h"
+﻿#include "Interpolation.h"
 #include <cmath>
 
 // Helper: Calculates the time knot for a point based on distance and alpha.

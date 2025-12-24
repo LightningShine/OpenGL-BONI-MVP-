@@ -1,5 +1,7 @@
 ﻿#pragma once
 #include "Input.h"
+#include "../rendering/Interpolation.h"
+
 JsonInput jsonClass;
 
 void ChoseInputMode(std::vector<glm::vec2>& points, std::mutex& pointsMutex, std::atomic<bool>& running)
@@ -41,20 +43,6 @@ void ChoseInputMode(std::vector<glm::vec2>& points, std::mutex& pointsMutex, std
 					}
 				}
 			}
-
-			// There will function which interpolate map points
-			// --- INTERPOLATION START ---
-			//std::cout << "Interpolating map points with Centripetal Catmull-Rom (alpha=0.5)...\n";
-
-			//// Using alpha = 0.5f to prevent artifacts and loops
-			//smoothedData = InterpolatePoints(points, 10, 0.5f);
-
-			//{
-			//	std::lock_guard<std::mutex> lock(pointsMutex);
-			//	points = smoothedData;
-			//}
-			//std::cout << "Interpolation finished.\n";
-			// --- INTERPOLATION END ---
 
 			break;
 		case 2:
