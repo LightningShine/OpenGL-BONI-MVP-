@@ -375,7 +375,7 @@ int main()
 			if (pointCount > 1)
 			{
 
-				std::vector<glm::vec2> smoothPoints = InterpolatePoints(points, 10);
+				std::vector<SplinePoint> smoothPoints = InterpolatePointsWithTangents(points, 5);
 
 				borderLayer = GenerateTriangleStripFromLine(smoothPoints, 0.04f);
 				asphaltLayer = GenerateTriangleStripFromLine(smoothPoints, 0.035f);
