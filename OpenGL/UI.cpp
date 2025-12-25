@@ -29,8 +29,8 @@ UI::UI()
     , m_showSplash(true)
     , m_closeSplash(false)
     , m_fontRegular(nullptr)
-	, m_fontRace(nullptr)
     , m_fontTitle(nullptr)
+    , m_fontRace(nullptr)
     , m_backgroundTexture(nullptr)
     , m_iconFile(nullptr)
     , m_iconContact(nullptr)
@@ -127,11 +127,11 @@ bool UI::Initialize(GLFWwindow* window)
     // Load Fonts
     m_fontRegular = io.Fonts->AddFontFromFileTTF("styles/fonts/JetBrains Mono/ttf/JetBrainsMono-Regular.ttf", 18.0f);
     m_fontTitle = io.Fonts->AddFontFromFileTTF("styles/fonts/JetBrains Mono/ttf/JetBrainsMono-Bold.ttf", 18.0f);
-	m_fontRace = io.Fonts->AddFontFromFileTTF("styles/fonts/F1-Font-Family/Formula1-Black.ttf", 16.0f);
+    m_fontRace = io.Fonts->AddFontFromFileTTF("styles/fonts/F1-Font-Family/Formula1-Regular-1.ttf", 18.0f);
     
     if (!m_fontRegular) std::cerr << "[UI] Failed to load Regular font\n";
     if (!m_fontTitle) std::cerr << "[UI] Failed to load Bold font\n";
-	if (!m_fontRace) std::cerr << "[UI] Failed to load Race font\n";
+    if (!m_fontRace) std::cerr << "[UI] Failed to load F1 font\n";
 
     if (!ImGui_ImplGlfw_InitForOpenGL(window, true))
     {
@@ -152,7 +152,7 @@ bool UI::Initialize(GLFWwindow* window)
     style.WindowPadding = ImVec2(0, 0);
     style.FramePadding = ImVec2(12, 8);
     style.ItemSpacing = ImVec2(8, 8);
-	style.WindowBorderSize = 0.0f; // No border for windows
+    style.WindowBorderSize = 0.0f;
     
     ImVec4* colors = style.Colors;
     colors[ImGuiCol_WindowBg] = ImVec4(0.0f, 0.0f, 0.0f, 1.0f);
@@ -238,8 +238,7 @@ void UI::RenderSplashWindow()
         ImGuiWindowFlags_NoResize |
         ImGuiWindowFlags_NoMove |
         ImGuiWindowFlags_NoScrollbar |
-        ImGuiWindowFlags_NoInputs |
-        ImGuiWindowFlags_NoBringToFrontOnFocus);
+        ImGuiWindowFlags_NoInputs);
     ImGui::End();
     
     ImGui::PopStyleVar();
@@ -316,9 +315,8 @@ void UI::RenderMainWindow()
     // === TITLE "RACE APP" ===
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, 0));
     
-	// Use the new F1 font for the title
     if (m_fontRace) ImGui::PushFont(m_fontRace);
-	else if (m_fontTitle) ImGui::PushFont(m_fontTitle);
+    else if (m_fontTitle) ImGui::PushFont(m_fontTitle);
 
     ImGui::SetCursorPos(ImVec2(35, 35));
 	ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f)); // White color RACE APP color

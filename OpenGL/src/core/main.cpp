@@ -2,9 +2,21 @@
 #include <iostream>
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
+
+// === WINDOWS BORDER COLOR ===
+#define GLFW_EXPOSE_NATIVE_WIN32
+#include <GLFW/glfw3native.h>		// For glfwGetWin32Window
+#include <dwmapi.h>					// DwmSetWindowAttribute function
+#pragma comment(lib, "dwmapi.lib")  // Link with dwmapi.lib
+// =================================
+
+// === 3RD LIBRARIES ===
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
+// =================================
+
+// === PROJECTS FILES ===
 #include "../input/Input.h"
 #include "../rendering/Interpolation.h"
 #include "../../UI.h"
@@ -14,12 +26,6 @@ using namespace std;
 void framebuffer_size_callback(GLFWwindow* window, int width, int height)
 {
 	glViewport(0, 0, width, height);
-}
-
-void processInput(GLFWwindow* window)
-{
-	if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
-		glfwSetWindowShouldClose(window, true);
 }
 
 void processInput(GLFWwindow* window, glm::vec2& cameraPos, float& zoom, float speed)
@@ -49,7 +55,7 @@ void processInput(GLFWwindow* window, glm::vec2& cameraPos, float& zoom, float s
 	if (zoom < 0.1f) zoom = 0.1f;   // Minimum
 	if (zoom > 10.0f) zoom = 10.0f; // Maximum
 
-	// === F11 ??? ???????????? Fullscreen ===
+
 	static bool wasF11Pressed = false;
 	if (glfwGetKey(window, GLFW_KEY_F11) == GLFW_PRESS && !wasF11Pressed)
 	{
@@ -59,23 +65,28 @@ void processInput(GLFWwindow* window, glm::vec2& cameraPos, float& zoom, float s
 
 		if (currentMonitor == NULL)
 		{
-			// ??????? ? fullscreen
-			GLFWmonitor* monitor = glfwGetPrimaryMonitor();
-			const GLFWvidmode* mode = glfwGetVideoMode(monitor);
-			glfwSetWindowMonitor(window, monitor, 0, 0, mode->width, mode->height, mode->refreshRate);
+			//GLFWmonitor* monitor = glfwGetPrimaryMonitor();
+			//const GLFWvidmode* mode = glfwGetVideoMode(monitor);
+			//glfwSetWindowMonitor(window, NULL, 0, 0, mode->width, mode->height, mode->refreshRate);
+			glfwMaximizeWindow(window);
 		}
 		else
 		{
-			// ??????? ? ??????? ????? ? ???????
-			glfwSetWindowMonitor(window, NULL, 100, 100, 1280, 720, GLFW_DONT_CARE);
 
-			// ?????: ??????????????? ????????? ???? (?????, ?????? ???????? ? ?.?.)
+			//glfwSetWindowMonitor(window, NULL, 100, 100, 1280, 720, GLFW_DONT_CARE);
+			glfwRestoreWindow(window);
 			glfwSetWindowAttrib(window, GLFW_DECORATED, GLFW_TRUE);
+			glfwSetWindowPos(window, 100, 100);
+			glfwSetWindowSize(window, 1280, 720);
+
+			
+
 		}
 	}
 	if (glfwGetKey(window, GLFW_KEY_F11) == GLFW_RELEASE)
 	{
 		wasF11Pressed = false;
+		
 	}
 }
 
@@ -136,10 +147,10 @@ int main()
 	Width = mode->width;
 	Height = mode->height;
 
-	glfwWindowHint(GLFW_DECORATED, GLFW_FALSE); //Full mode without borders
+	//glfwWindowHint(GLFW_DECORATED, GLFW_FALSE); //Full mode without borders
     // Use NULL for monitor to create a windowed mode (borderless because of GLFW_DECORATED = FALSE)
     // This fixes the black screen issue on capture and cursor visibility
-	GLFWwindow* window = glfwCreateWindow(Width, Height, "Race Map", NULL, NULL); 
+	GLFWwindow* window = glfwCreateWindow(Width, Height, "RACE APP", NULL, NULL); 
 	if (window == NULL)
 	{
 		cout << "Failed to create GLFW window" << endl;
@@ -147,10 +158,23 @@ int main()
 		return -1;
 	}
 
+	// === CHANGE WINDOW BORDER COLOR (Windows 11) ===
+	HWND hwnd = glfwGetWin32Window(window);
+
+	// Color in the format 0x00BBGGRR (Blue, Green, Red)
+	COLORREF titleBarColor = 0x00242424; // Dark gray (almost black)
+	COLORREF borderColor = 0x00252020;   // Border color
+
+	// DWMWA_CAPTION_COLOR = 35, DWMWA_BORDER_COLOR = 34
+	DwmSetWindowAttribute(hwnd, 35, &titleBarColor, sizeof(titleBarColor));
+	DwmSetWindowAttribute(hwnd, 34, &borderColor, sizeof(borderColor));
+
+	// Force dark title bar theme
+	BOOL useDarkMode = TRUE;
+	DwmSetWindowAttribute(hwnd, 20, &useDarkMode, sizeof(useDarkMode)); // DWMWA_USE_IMMERSIVE_DARK_MODE
+
 	glfwMakeContextCurrent(window); // Make the window's context in current thread
-    
-    // Ensure cursor is visible
-    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL); // Show the cursor
 
 	if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress)) // Initialize GLAD before calling any OpenGL function
 	{
@@ -289,7 +313,7 @@ int main()
 		
 		if (!running) glfwSetWindowShouldClose(window, true); // If console closed, close the windows too
 
-		glClearColor(0.5f, 0.5f, 0.5f, 1.0f); // Set the clear color for the window (background color)
+		glClearColor(0.09f, 0.09f, 0.09f, 1.0f); // Set the clear color for the window (background color)
 		glClear(GL_COLOR_BUFFER_BIT); // Clear the color buffer with the specified clear color
 
 

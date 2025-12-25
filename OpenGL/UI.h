@@ -31,7 +31,7 @@ private:
     // Fonts
     ImFont* m_fontRegular;
     ImFont* m_fontTitle;
-    ImFont* m_fontRace;
+    ImFont* m_fontRace; // Added F1 font
     
     // Textures (using void* instead of ImTextureID to avoid forward declaration issues)
     void* m_backgroundTexture;
