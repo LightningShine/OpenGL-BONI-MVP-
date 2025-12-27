@@ -158,6 +158,8 @@ int main()
 		return -1;
 	}
 
+	
+	
 	// === CHANGE WINDOW BORDER COLOR (Windows 11) ===
 	HWND hwnd = glfwGetWin32Window(window);
 
@@ -186,6 +188,8 @@ int main()
 
 	glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
 	// Register the callback function to adjust the viewport when the window is resized
+
+	glfwMaximizeWindow(window);
 
 
 	GLuint VAO, VBO, EBO;
@@ -301,6 +305,10 @@ int main()
 	double verticalBound = mapRange;
 
 
+
+
+
+
 	// ========================== RENDER LOOP ==========================
 
 	while (!glfwWindowShouldClose(window)) // Main loop that runs until the window is closed
@@ -375,10 +383,27 @@ int main()
 			if (pointCount > 1)
 			{
 
-				std::vector<SplinePoint> smoothPoints = InterpolatePointsWithTangents(points, 5);
+			//	std::vector<SplinePoint> smoothPoints = InterpolatePointsWithTangents(points, 5);
 
-				borderLayer = GenerateTriangleStripFromLine(smoothPoints, 0.04f);
-				asphaltLayer = GenerateTriangleStripFromLine(smoothPoints, 0.035f);
+			//	borderLayer = GenerateTriangleStripFromLine(smoothPoints, 0.08f);
+			//	asphaltLayer = GenerateTriangleStripFromLine(smoothPoints, 0.075f);
+
+				// radius: 0.02f (rounding), segments: 10 (corner smoth)
+				float CornerRadius = 0.075f;
+
+				// 1. Filter noise (points too close)
+				std::vector<glm::vec2> filteredPoints = FilterPointsByDistance(points, 0.05f);
+
+				// 2. Simplify path (remove wavy lines on straights)
+				std::vector<glm::vec2> simplifiedPoints = SimplifyPath(filteredPoints, 0.02f);
+
+				// 3. Generate rounded corners
+				std::vector<SplinePoint> smoothPoints = InterpolateRoundedPolyline(simplifiedPoints, CornerRadius, 10);
+
+				borderLayer = GenerateTriangleStripFromLine(smoothPoints, 0.085f);
+				asphaltLayer = GenerateTriangleStripFromLine(smoothPoints, 0.075f);
+
+
 			}
 		}
 

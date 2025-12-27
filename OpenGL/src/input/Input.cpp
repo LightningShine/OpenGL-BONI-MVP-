@@ -116,8 +116,8 @@ void CordinatesToDecimalFormat(std::string line, double &dec_lat_deg, double& de
 			&lat_deg, &lat_min, &lat_sec,
 			&lon_deg, &lon_min, &lon_sec);
 
-		 dec_lat_deg =lat_deg + (lat_min / 60) + (lat_sec / 3600);
-		 dec_lon_deg = lon_deg + (lon_min / 60) + (lon_sec / 3600);
+		 dec_lat_deg =lat_deg + (lat_min / 60.0f) + (lat_sec / 3600.0f);
+		 dec_lon_deg = lon_deg + (lon_min / 60.0f) + (lon_sec / 3600.0f);
 
 		//std::cout << "FlatX " << dec_lat_deg << "\n" << "FlatY " << dec_lon_deg << "\n";
 }
@@ -203,6 +203,15 @@ void InputDatainCode(std::vector<glm::vec2>& points, std::mutex& pointsMutex, st
 {
 	{
 		std::lock_guard<std::mutex> lock(pointsMutex);
+		glm::vec2 newPoint(normalized_x, normalized_y);
+
+		if (!points.empty()) {
+			float dist = glm::distance(points.back(), newPoint);
+			// 0.001f - it is neear to 10 cm with MAP_SIZE 100;
+			// If car stay or move slowly, do not 
+			if (dist < 0.001f) return;
+		}
+
 		points.push_back(glm::vec2{ normalized_x, normalized_y });
 		std::cout << "Received point: (" << normalized_x << ", " << normalized_y << ")\n";
 	}
