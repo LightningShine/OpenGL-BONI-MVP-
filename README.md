@@ -37,7 +37,10 @@ Data Transformation Pipeline
 
 The project follows a critical four-step conversion pipeline to ensure accuracy and visual stability:
 
-https://github.com/user-attachments/assets/4bd82d52-cb2b-4506-8cf0-179601198cdf
+How the app need to look
+<img width="1450" height="902" alt="RACE APP UI" src="https://github.com/user-attachments/assets/33a6f908-bd48-44a5-a12d-8618bb7d539e" />
+
+https://github.com/user-attachments/assets/8c6edb5c-e213-41df-9ce5-17a8a5635f33
 
     Input: D°M'S".
 
