@@ -1,11 +1,14 @@
-﻿#include "UI.h"
-#include "libraries/include/imgui/imgui.h"
-#include "libraries/include/imgui/backends/imgui_impl_glfw.h"
-#include "libraries/include/imgui/backends/imgui_impl_opengl3.h"
+﻿#include "src/input/Input.h"
+#include "UI.h"
 #include <iostream>
+#include <algorithm>
 
 #define STB_IMAGE_IMPLEMENTATION
 #include "libraries/include/stb_image.h"
+
+#include "libraries/include/imgui/imgui.h"
+#include "libraries/include/imgui/backends/imgui_impl_glfw.h"
+#include "libraries/include/imgui/backends/imgui_impl_opengl3.h"
 
 static void AddDashedRect(ImDrawList* draw_list, const ImVec2& p_min, const ImVec2& p_max, ImU32 col, float thickness, float dash_len, float gap_len)
 {
@@ -38,6 +41,8 @@ UI::UI()
     , m_iconHeart(nullptr)
     , m_iconClose(nullptr)
     , m_iconDragDrop(nullptr)
+    , m_points(nullptr)
+    , m_pointsMutex(nullptr)
 {
 }
 
@@ -214,10 +219,28 @@ void UI::EndFrame()
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 }
 
+void UI::SetTrackData(std::vector<glm::vec2>* points, std::mutex* mutex)
+{
+    m_points = points;
+    m_pointsMutex = mutex;
+}
+
 void UI::RenderSplashWindow()
 {
     if (!m_showSplash) return;
     
+    // Handle Ctrl+V
+    if (ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_V))
+    {
+        const char* clipboard = glfwGetClipboardString(m_window);
+        if (clipboard && m_points && m_pointsMutex)
+        {
+            LoadTrackFromData(std::string(clipboard), *m_points, *m_pointsMutex);
+            m_showSplash = false;
+            m_closeSplash = true;
+        }
+    }
+
     ImGuiIO& io = ImGui::GetIO();
     ImVec2 displaySize = io.DisplaySize;
     
@@ -394,10 +417,14 @@ void UI::RenderMainWindow()
 	// Increased height to 160 (was 140) DRAG AND DROP AREA
     ImGui::BeginChild("##DragDrop", ImVec2(390, 160), false, ImGuiWindowFlags_NoScrollbar);
     
+    // Check hover
+    bool isHovered = ImGui::IsWindowHovered();
+    ImU32 borderColor = isHovered ? IM_COL32(0, 184, 190, 255) : separatorColor; // Cyan if hovered
+
     // Draw Dashed Border
     ImVec2 ddMin = ImVec2(windowPos.x + 21, windowPos.y + (windowSize.y - 215));
     ImVec2 ddMax = ImVec2(ddMin.x + 390, ddMin.y + 160); // Increased height to 160
-    AddDashedRect(drawList, ddMin, ddMax, separatorColor, 2.0f, 10.0f, 5.0f); // Thicker line (2.0f)
+    AddDashedRect(drawList, ddMin, ddMax, borderColor, 2.0f, 10.0f, 5.0f); // Thicker line (2.0f)
 
     // Draw Download Icon
     if (m_iconDragDrop)
@@ -406,9 +433,11 @@ void UI::RenderMainWindow()
         ImGui::Image((ImTextureID)m_iconDragDrop, ImVec2(32, 32));
     }
 
-    ImGui::SetCursorPos(ImVec2(95, 110)); // Moved down (was 95)
-    ImGui::TextColored(ImVec4(0.835f, 0.835f, 0.835f, 1.0f), "Drag and Drop file there");
+    ImGui::SetCursorPos(ImVec2(65, 110)); // Adjusted position
+    ImGui::TextColored(ImVec4(0.835f, 0.835f, 0.835f, 1.0f), "Drag and Drop or paste from clipboard");
     
+    // Removed Button
+
     ImGui::EndChild();
     
     ImGui::PopStyleColor(1); // Only ChildBg was pushed

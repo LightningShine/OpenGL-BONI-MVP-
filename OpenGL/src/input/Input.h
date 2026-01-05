@@ -32,6 +32,8 @@ void InputDatainCode(std::vector<glm::vec2>& points, std::mutex& pointsMutex, st
 
 void ChoseInputMode(std::vector<glm::vec2>& points, std::mutex& pointsMutex, std::atomic<bool>& running);
 
+void LoadTrackFromData(const std::string& data, std::vector<glm::vec2>& points, std::mutex& pointsMutex);
+
 class JsonInput
 {
 public:
@@ -43,5 +45,6 @@ public:
 	char zone_letter;
 
 };
+
 
 

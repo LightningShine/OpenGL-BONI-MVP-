@@ -111,15 +111,71 @@ void CordinatesToDecimalFormat(std::string line, double &dec_lat_deg, double& de
 	int lat_deg, lat_min, lon_deg, lon_min;
 	double lat_sec, lon_sec;
 
-		int result = sscanf_s(line.c_str(),
-			"%dø%d'%lf\" %dø%d'%lf\"",
-			&lat_deg, &lat_min, &lat_sec,
-			&lon_deg, &lon_min, &lon_sec);
+	// Replace non-numeric characters with space (except dot and minus)
+	std::string tempLine = line;
+	for (char& c : tempLine) {
+		if (c != '.' && c != '-' && (c < '0' || c > '9')) {
+			c = ' ';
+		}
+	}
 
-		 dec_lat_deg =lat_deg + (lat_min / 60.0f) + (lat_sec / 3600.0f);
-		 dec_lon_deg = lon_deg + (lon_min / 60.0f) + (lon_sec / 3600.0f);
+	std::stringstream ss(tempLine);
+	if (ss >> lat_deg >> lat_min >> lat_sec >> lon_deg >> lon_min >> lon_sec)
+	{
+		dec_lat_deg = lat_deg + (lat_min / 60.0f) + (lat_sec / 3600.0f);
+		dec_lon_deg = lon_deg + (lon_min / 60.0f) + (lon_sec / 3600.0f);
+	}
+	else
+	{
+		// Fallback or error handling
+		dec_lat_deg = 0;
+		dec_lon_deg = 0;
+	}
+}
 
-		//std::cout << "FlatX " << dec_lat_deg << "\n" << "FlatY " << dec_lon_deg << "\n";
+void LoadTrackFromData(const std::string& data, std::vector<glm::vec2>& points, std::mutex& pointsMutex)
+{
+	std::stringstream ss(data);
+	std::string line;
+	bool firstPoint = true;
+
+	{
+		std::lock_guard<std::mutex> lock(pointsMutex);
+		points.clear();
+	}
+
+	while (std::getline(ss, line))
+	{
+		if (line.empty()) continue;
+		
+		// Simple check if line contains digits
+		bool hasDigit = false;
+		for (char c : line) { if (isdigit(c)) { hasDigit = true; break; } }
+		if (!hasDigit) continue;
+
+		double dec_lat_deg, dec_lon_deg;
+		CordinatesToDecimalFormat(line, dec_lat_deg, dec_lon_deg);
+
+		double easting, northing;
+		if (firstPoint)
+		{
+			CordinatesToUTM_GeographicLib(dec_lat_deg, dec_lon_deg, easting, northing);
+			firstPoint = false;
+		}
+		else
+		{
+			CordinateToMetersUTM(dec_lat_deg, dec_lon_deg, easting, northing);
+		}
+
+		double normalized_x, normalized_y;
+		CordinateDifirenceFromOrigin(easting, northing, 100.0, normalized_x, normalized_y);
+
+		{
+			std::lock_guard<std::mutex> lock(pointsMutex);
+			points.push_back(glm::vec2(normalized_x, normalized_y));
+		}
+	}
+	std::cout << "Track loaded with " << points.size() << " points." << std::endl;
 }
 
 void CordinatesToUTM_GeographicLib(double lat_deg, double lon_deg, double& easting, double& northing)

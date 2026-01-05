@@ -9,19 +9,25 @@
 #include <dwmapi.h>					// DwmSetWindowAttribute function
 #pragma comment(lib, "dwmapi.lib")  // Link with dwmapi.lib
 // =================================
-
 // === 3RD LIBRARIES ===
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 // =================================
-
 // === PROJECTS FILES ===
 #include "../input/Input.h"
 #include "../rendering/Interpolation.h"
 #include "../../UI.h"
+#include <fstream>
 
 using namespace std;
+
+struct AppContext {
+    float* zoom;
+    std::vector<glm::vec2>* points;
+    std::mutex* pointsMutex;
+    UI* ui;
+};
 
 void framebuffer_size_callback(GLFWwindow* window, int width, int height)
 {
@@ -93,11 +99,42 @@ void processInput(GLFWwindow* window, glm::vec2& cameraPos, float& zoom, float s
 // Callback for scroolling mouse wheel
 void scroll_callback(GLFWwindow* window, double xoffset, double yoffset)
 {
-	float* zoom = (float*)glfwGetWindowUserPointer(window);
-	*zoom *= (float)(1.0f + yoffset * 0.1f);  // Aspect of zoom change
+	AppContext* context = (AppContext*)glfwGetWindowUserPointer(window);
+	if (context && context->zoom) {
+		float* zoom = context->zoom;
+		*zoom *= (float)(1.0f + yoffset * 0.1f);  // Aspect of zoom change
 
-	if (*zoom < 0.1f) *zoom = 0.1f;
-	if (*zoom > 10.0f) *zoom = 10.0f;
+		if (*zoom < 0.1f) *zoom = 0.1f;
+		if (*zoom > 10.0f) *zoom = 10.0f;
+	}
+}
+
+void drop_callback(GLFWwindow* window, int count, const char** paths)
+{
+	AppContext* context = (AppContext*)glfwGetWindowUserPointer(window);
+	if (context && context->points && context->pointsMutex)
+	{
+		for (int i = 0; i < count; i++)
+		{
+			std::ifstream file(paths[i]);
+			if (file.is_open())
+			{
+				std::stringstream buffer;
+				buffer << file.rdbuf();
+				LoadTrackFromData(buffer.str(), *context->points, *context->pointsMutex);
+				std::cout << "Loaded file: " << paths[i] << std::endl;
+                
+                if (context->ui)
+                {
+                    context->ui->CloseSplash();
+                }
+			}
+			else
+			{
+				std::cerr << "Failed to open file: " << paths[i] << std::endl;
+			}
+		}
+	}
 }
 
 
@@ -164,8 +201,8 @@ int main()
 	HWND hwnd = glfwGetWin32Window(window);
 
 	// Color in the format 0x00BBGGRR (Blue, Green, Red)
-	COLORREF titleBarColor = 0x00242424; // Dark gray (almost black)
-	COLORREF borderColor = 0x00252020;   // Border color
+	COLORREF titleBarColor = 0x00262626; // Dark gray (almost black)
+	COLORREF borderColor = 0x00262626;   // Border color
 
 	// DWMWA_CAPTION_COLOR = 35, DWMWA_BORDER_COLOR = 34
 	DwmSetWindowAttribute(hwnd, 35, &titleBarColor, sizeof(titleBarColor));
@@ -279,22 +316,23 @@ int main()
 	float mapBoundX = 2.0f;  // Map border X
 	float mapBoundY = 2.0f;  // Map border Y
 
-	glfwSetWindowUserPointer(window, &cameraZoom);
-	glfwSetScrollCallback(window, scroll_callback);
-
-
-	// ========================== INPUT THREAD ==========================
-
 	std::vector<glm::vec2> points;
 	std::mutex  pointsMutex;
-	std::atomic<bool> running(true);
-	std::thread inputThread(
-		ChoseInputMode,
-	std::ref(points),
-	std::ref(pointsMutex),
-	std::ref(running)
-	);
 
+	AppContext appContext;
+	appContext.zoom = &cameraZoom;
+	appContext.points = &points;
+	appContext.pointsMutex = &pointsMutex;
+    appContext.ui = &ui;
+
+	glfwSetWindowUserPointer(window, &appContext);
+	glfwSetScrollCallback(window, scroll_callback);
+	glfwSetDropCallback(window, drop_callback);
+
+
+	// ========================== INPUT ==========================
+	
+	ui.SetTrackData(&points, &pointsMutex);
 
 	int windowswidth;
 	int windowsheight;
@@ -319,9 +357,7 @@ int main()
 		cameraPosition += cameraVelocity;  
 		cameraVelocity *= friction;
 		
-		if (!running) glfwSetWindowShouldClose(window, true); // If console closed, close the windows too
-
-		glClearColor(0.09f, 0.09f, 0.09f, 1.0f); // Set the clear color for the window (background color)
+		glClearColor(26.0f / 255.0f, 26.0f / 255.0f, 26.0f / 255.0f, 1.0f); // Set the clear color for the window (background color)
 		glClear(GL_COLOR_BUFFER_BIT); // Clear the color buffer with the specified clear color
 
 
@@ -434,8 +470,6 @@ int main()
 		
 	}
 	
-	running = false; // Signal the input thread to stop
-	
 
 	// ========================== CLEAN UP ==========================
 	ui.Shutdown();
@@ -444,12 +478,8 @@ int main()
 	glDeleteProgram(shaderProgram);
 	glfwTerminate(); // Clean up all resources allocated by GLFW and exit
 
-	inputThread.join(); // Wait for the input thread to finish
-
-
-
 	return 0;
 
-	// Uztaisit Start Stop sistemu lai pec N laiku MVP nepardoda informaciju, lai taupitu energiju
+	// Uztaisit Start Stop sistemu lai pec N laiku MVP nepardota informacija, lai taupitu energiju
 
 }
