@@ -2,25 +2,32 @@
 #include <iostream>
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
+#include <fstream>
+
 
 // === WINDOWS BORDER COLOR ===
 #define GLFW_EXPOSE_NATIVE_WIN32
 #include <GLFW/glfw3native.h>		// For glfwGetWin32Window
 #include <dwmapi.h>					// DwmSetWindowAttribute function
 #pragma comment(lib, "dwmapi.lib")  // Link with dwmapi.lib
+
 // =================================
 // === 3RD LIBRARIES ===
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
+
 // =================================
 // === PROJECTS FILES ===
 #include "../input/Input.h"
 #include "../rendering/Interpolation.h"
 #include "../../UI.h"
-#include <fstream>
+#include "../network/Server.h"
+#include "../network/Client.h"
+
 
 using namespace std;
+
 
 struct AppContext {
     float* zoom;
@@ -39,6 +46,43 @@ void processInput(GLFWwindow* window, glm::vec2& cameraPos, float& zoom, float s
 	// Close when press ESC
 	if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
 		glfwSetWindowShouldClose(window, true);
+	bool isServerKeyPressed = glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS && glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS;
+
+	if (isServerKeyPressed)
+	{
+		if (!ServerRunningStatus())
+		{
+			ContinueServerRunning();
+			thread ServerThread = thread(ServerWork);
+			ServerThread.detach();
+			ChangeServerRunningStatus();
+		}
+		else
+		{
+			ServerStop();
+			ChangeServerRunningStatus();
+		}
+		
+	}
+
+
+	bool isClientKeyPressed = glfwGetKey(window, GLFW_KEY_C) == GLFW_PRESS && glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS;
+	if (isClientKeyPressed)
+	{
+		if (!ClientRunningStatus())
+		{
+			ContinueClientRunning();
+			thread ClientThread = thread(ClientStart);
+			ClientThread.detach();
+			ChangeClientRunningStatus();
+		}
+		else
+		{
+			ClientStop();
+			ChangeClientRunningStatus();
+		}
+	}
+		
 
 	// Camera movment (W/A/S/D or Arrows)
 	if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS ||
@@ -347,6 +391,24 @@ int main()
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 	// ========================== RENDER LOOP ==========================
 
 	while (!glfwWindowShouldClose(window)) // Main loop that runs until the window is closed
@@ -473,6 +535,9 @@ int main()
 
 	// ========================== CLEAN UP ==========================
 	ui.Shutdown();
+
+	ServerStop();
+	ClientStop();
 	glDeleteVertexArrays(1, &VAO);
 	glDeleteBuffers(1, &VBO);
 	glDeleteProgram(shaderProgram);

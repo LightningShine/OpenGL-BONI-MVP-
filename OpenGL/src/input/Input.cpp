@@ -180,67 +180,80 @@ void LoadTrackFromData(const std::string& data, std::vector<glm::vec2>& points, 
 
 void CordinatesToUTM_GeographicLib(double lat_deg, double lon_deg, double& easting, double& northing)
 {
-	using namespace GeographicLib;
+	try {
+		using namespace GeographicLib;
 
-	int zone;
-	bool northp;
+		int zone;
+		bool northp;
 
-	// Cordinate converter
-	UTMUPS::Forward(lat_deg, lon_deg, zone, northp, easting, northing);
+		// Cordinate converter
+		UTMUPS::Forward(lat_deg, lon_deg, zone, northp, easting, northing);
 
-	// 2Getting the char of zone
-	char zone_letter;
-	if (lat_deg >= 84 || lat_deg < -80) {
-		zone_letter = (northp) ? 'Z' : 'A';
-	}
-	else {
-		// Стандартные UTM зоны
-		if (lat_deg >= 72) zone_letter = 'X';
-		else if (lat_deg >= 64) zone_letter = 'W';
-		else if (lat_deg >= 56) zone_letter = 'V';
-		else if (lat_deg >= 48) zone_letter = 'U';
-		else if (lat_deg >= 40) zone_letter = 'T';
-		else if (lat_deg >= 32) zone_letter = 'S';
-		else if (lat_deg >= 24) zone_letter = 'R';
-		else if (lat_deg >= 16) zone_letter = 'Q';
-		else if (lat_deg >= 8) zone_letter = 'P';
-		else if (lat_deg >= 0) zone_letter = 'N';
-		else if (lat_deg >= -8) zone_letter = 'M';
-		else if (lat_deg >= -16) zone_letter = 'L';
-		else if (lat_deg >= -24) zone_letter = 'K';
-		else if (lat_deg >= -32) zone_letter = 'J';
-		else if (lat_deg >= -40) zone_letter = 'H';
-		else if (lat_deg >= -48) zone_letter = 'G';
-		else if (lat_deg >= -56) zone_letter = 'F';
-		else if (lat_deg >= -64) zone_letter = 'E';
-		else zone_letter = 'D'; // -80 to -64
-	}
+		// 2Getting the char of zone
+		char zone_letter;
+		if (lat_deg >= 84 || lat_deg < -80) {
+			zone_letter = (northp) ? 'Z' : 'A';
+		}
+		else {
+			// Стандартные UTM зоны
+			if (lat_deg >= 72) zone_letter = 'X';
+			else if (lat_deg >= 64) zone_letter = 'W';
+			else if (lat_deg >= 56) zone_letter = 'V';
+			else if (lat_deg >= 48) zone_letter = 'U';
+			else if (lat_deg >= 40) zone_letter = 'T';
+			else if (lat_deg >= 32) zone_letter = 'S';
+			else if (lat_deg >= 24) zone_letter = 'R';
+			else if (lat_deg >= 16) zone_letter = 'Q';
+			else if (lat_deg >= 8) zone_letter = 'P';
+			else if (lat_deg >= 0) zone_letter = 'N';
+			else if (lat_deg >= -8) zone_letter = 'M';
+			else if (lat_deg >= -16) zone_letter = 'L';
+			else if (lat_deg >= -24) zone_letter = 'K';
+			else if (lat_deg >= -32) zone_letter = 'J';
+			else if (lat_deg >= -40) zone_letter = 'H';
+			else if (lat_deg >= -48) zone_letter = 'G';
+			else if (lat_deg >= -56) zone_letter = 'F';
+			else if (lat_deg >= -64) zone_letter = 'E';
+			else zone_letter = 'D'; // -80 to -64
+		}
 
-	std::cout << "UTM Coordinates: \n";
-	std::cout << "  Easting (X): " << easting << " m\n";
-	std::cout << "  Northing (Y): " << northing << " m\n";
-	std::cout << "  Zone: " << zone << zone_letter << "\n"; 
+		std::cout << "UTM Coordinates: \n";
+		std::cout << "  Easting (X): " << easting << " m\n";
+		std::cout << "  Northing (Y): " << northing << " m\n";
+		std::cout << "  Zone: " << zone << zone_letter << "\n"; 
 
 	
-	jsonClass.input_latitude = lat_deg;
-	jsonClass.input_longitude = lon_deg;
-	jsonClass.easting = easting;
-	jsonClass.northing = northing;
-	jsonClass.zone = zone;
-	jsonClass.zone_letter = zone_letter;
-
+		jsonClass.input_latitude = lat_deg;
+		jsonClass.input_longitude = lon_deg;
+		jsonClass.easting = easting;
+		jsonClass.northing = northing;
+		jsonClass.zone = zone;
+		jsonClass.zone_letter = zone_letter;
+	}
+	catch (const std::exception& e) {
+		std::cerr << "GeographicLib Error: " << e.what() << std::endl;
+		// Initialize with default values to prevent crash
+		easting = 0;
+		northing = 0;
+	}
 }
 
 void CordinateToMetersUTM(double lat_deg, double lon_deg, double &easting, double &northing)
 {
-	using namespace GeographicLib;
+	try {
+		using namespace GeographicLib;
 
+		int zone;
+		bool northp;
 
-	int zone;
-	bool northp;
-
-	// Cordinate converter
-	UTMUPS::Forward(lat_deg, lon_deg, zone, northp, easting, northing);
+		// Cordinate converter
+		UTMUPS::Forward(lat_deg, lon_deg, zone, northp, easting, northing);
+	}
+	catch (const std::exception& e) {
+		std::cerr << "GeographicLib Error: " << e.what() << std::endl;
+		easting = 0;
+		northing = 0;
+	}
 
 }
 

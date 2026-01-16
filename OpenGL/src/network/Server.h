@@ -1,36 +1,34 @@
 #pragma once
 
 #include <cstdint>
-#include <string>
+#include <iostream>
+#include <GameNetworkingSockets/steam/steamnetworkingsockets.h>
+#include <GameNetworkingSockets/steam/isteamnetworkingsockets.h>
+#include <GameNetworkingSockets/steam/isteamnetworkingutils.h>
+#include <vector>
+#include <thread>
+#include <random>
 
-// GPS fix types
-enum class GpsFixType : uint8_t
-{
-    None = 0,
-    Fix2D = 2,
-    Fix3D = 3,
-    RTK_Fixed = 4,
-    RTK_Float = 5
+#pragma pack(push, 1) 
+struct TelemetryPacket {
+	int32_t lat;			// latitude degree * 1e7
+	int32_t lon;			// longitude degree * 1e7
+	uint32_t time;			// time in milliseconds
+	uint32_t speed;			// speed in km/h * 100
+	uint32_t acceleration;	// acceleration * 100
+	uint16_t gForceX;		// g-force X * 100
+	uint16_t gForceY;		// g-force Y * 100
+	int16_t fixtype;		    // 0=none, 4=RTK_FIXED, etc.
+	int32_t ID;			    // vehicle ID
 };
+#pragma pack(pop)
 
-// Parsed telemetry with real values
-struct ParsedTelemetry
-{
-    std::string deviceId;
-    double latitude;        // decimal degrees
-    double longitude;       // decimal degrees
-    double altitude;        // meters
-    uint64_t timestamp;     // milliseconds UTC
-    double speed;           // m/s
-    double course;          // degrees
-    GpsFixType fixType;
-    uint8_t satellites;
-    double acceleration;    // m/s^2
-    bool accelerationValid;
-};
+int ServerWork();
 
-class VenchileManager;
+bool ServerRunningStatus();
 
-bool StartGlobalHttpServer(VenchileManager* manager, uint16_t port = 8080);
-void StopGlobalHttpServer();
-bool IsGlobalHttpServerRunning();
+void ChangeServerRunningStatus();
+
+void ServerStop();
+
+void ContinueServerRunning();
