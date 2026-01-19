@@ -24,6 +24,7 @@
 #include "../../UI.h"
 #include "../network/Server.h"
 #include "../network/Client.h"
+#include "../network/ESP32_Code.h"
 
 
 using namespace std;
@@ -400,7 +401,7 @@ int main()
 
 
 
-
+	Test_Serial();
 
 
 

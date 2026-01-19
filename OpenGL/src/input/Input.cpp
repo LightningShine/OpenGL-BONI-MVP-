@@ -2,7 +2,7 @@
 #include "Input.h"
 #include "../rendering/Interpolation.h"
 
-JsonInput jsonClass;
+MapDate mapOrigin;
 
 void ChoseInputMode(std::vector<glm::vec2>& points, std::mutex& pointsMutex, std::atomic<bool>& running)
 {
@@ -30,8 +30,8 @@ void ChoseInputMode(std::vector<glm::vec2>& points, std::mutex& pointsMutex, std
 					break;
 				}
 				CordinatesToDecimalFormat(line, dec_lat_deg, dec_lon_deg);
-				CordinateToMetersUTM(dec_lat_deg, dec_lon_deg, easting, northing);
-				CordinateDifirenceFromOrigin(easting, northing, 100.0, normalized_x, normalized_y);
+				DDToMetr(dec_lat_deg, dec_lon_deg, easting, northing);
+				CordinateDifirenceFromOrigin(easting, northing, normalized_x, normalized_y);
 				InputDatainCode(points, pointsMutex, running, normalized_x, normalized_y);
 
 				{
@@ -102,9 +102,10 @@ void InputOrigin()
 		double dec_lat_deg, dec_lon_deg;
 		CordinatesToDecimalFormat(cordinate, dec_lat_deg, dec_lon_deg);
 		double easting, northing;
-		CordinatesToUTM_GeographicLib(dec_lat_deg, dec_lon_deg, easting, northing);
-	
+		CreateOriginDD(dec_lat_deg, dec_lon_deg, easting, northing);
 };
+
+
 
 void CordinatesToDecimalFormat(std::string line, double &dec_lat_deg, double& dec_lon_deg)
 {
@@ -159,16 +160,17 @@ void LoadTrackFromData(const std::string& data, std::vector<glm::vec2>& points, 
 		double easting, northing;
 		if (firstPoint)
 		{
-			CordinatesToUTM_GeographicLib(dec_lat_deg, dec_lon_deg, easting, northing);
+			CreateOriginDD(dec_lat_deg, dec_lon_deg, easting, northing);
 			firstPoint = false;
 		}
 		else
 		{
-			CordinateToMetersUTM(dec_lat_deg, dec_lon_deg, easting, northing);
+			DDToMetr(dec_lat_deg, dec_lon_deg, easting, northing);
 		}
 
 		double normalized_x, normalized_y;
-		CordinateDifirenceFromOrigin(easting, northing, 100.0, normalized_x, normalized_y);
+		mapOrigin.origin_mapsize = 100;
+		CordinateDifirenceFromOrigin(easting, northing, normalized_x, normalized_y);
 
 		{
 			std::lock_guard<std::mutex> lock(pointsMutex);
@@ -178,7 +180,7 @@ void LoadTrackFromData(const std::string& data, std::vector<glm::vec2>& points, 
 	std::cout << "Track loaded with " << points.size() << " points." << std::endl;
 }
 
-void CordinatesToUTM_GeographicLib(double lat_deg, double lon_deg, double& easting, double& northing)
+void CreateOriginDD(double lat_deg, double lon_deg, double& easting, double& northing)
 {
 	try {
 		using namespace GeographicLib;
@@ -222,23 +224,22 @@ void CordinatesToUTM_GeographicLib(double lat_deg, double lon_deg, double& easti
 		std::cout << "  Northing (Y): " << northing << " m\n";
 		std::cout << "  Zone: " << zone << zone_letter << "\n"; 
 
-	
-		jsonClass.input_latitude = lat_deg;
-		jsonClass.input_longitude = lon_deg;
-		jsonClass.easting = easting;
-		jsonClass.northing = northing;
-		jsonClass.zone = zone;
-		jsonClass.zone_letter = zone_letter;
+		
+		mapOrigin.originDD_lat = lat_deg;
+		mapOrigin.originDD_lon = lon_deg;
+		mapOrigin.originMetr_est = easting;
+		mapOrigin.originMetr_nort = northing;
+		mapOrigin.originZone_int = zone;
+		mapOrigin.originZone_char = zone_letter;
 	}
 	catch (const std::exception& e) {
 		std::cerr << "GeographicLib Error: " << e.what() << std::endl;
-		// Initialize with default values to prevent crash
 		easting = 0;
 		northing = 0;
 	}
 }
 
-void CordinateToMetersUTM(double lat_deg, double lon_deg, double &easting, double &northing)
+void DDToMetr(double DDlat, double DDlon, double &MetrCord_est, double &MetrCord_north)
 {
 	try {
 		using namespace GeographicLib;
@@ -247,24 +248,24 @@ void CordinateToMetersUTM(double lat_deg, double lon_deg, double &easting, doubl
 		bool northp;
 
 		// Cordinate converter
-		UTMUPS::Forward(lat_deg, lon_deg, zone, northp, easting, northing);
+		UTMUPS::Forward(DDlat, DDlon, zone, northp, MetrCord_est, MetrCord_north);
 	}
 	catch (const std::exception& e) {
 		std::cerr << "GeographicLib Error: " << e.what() << std::endl;
-		easting = 0;
-		northing = 0;
+		MetrCord_est = 0;
+		MetrCord_north = 0;
 	}
 
 }
 
-void CordinateDifirenceFromOrigin(double CordiateX, double CordinateY, double MAP_SIZE, double &normalized_x, double &normalized_y)
+void CordinateDifirenceFromOrigin(double Metr_est, double Metr_north, double &normalized_x, double &normalized_y)
 {
 
-	double diff_easting = CordiateX - jsonClass.easting;
-	double diff_northing = CordinateY - jsonClass.northing;
+	double diff_easting = Metr_est - mapOrigin.originMetr_est;
+	double diff_northing = Metr_north - mapOrigin.originMetr_nort;
 
-	normalized_x = (diff_easting / MAP_SIZE);
-	normalized_y = (diff_northing / MAP_SIZE);
+	normalized_x = (diff_easting / mapOrigin.origin_mapsize);
+	normalized_y = (diff_northing / mapOrigin.origin_mapsize);
 
 }
 

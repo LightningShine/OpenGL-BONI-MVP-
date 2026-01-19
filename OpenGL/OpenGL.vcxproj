@@ -21,9 +21,9 @@
   <PropertyGroup Label="Globals">
     <VCProjectVersion>17.0</VCProjectVersion>
     <Keyword>Win32Proj</Keyword>
-    <ProjectGuid>{dedd56ac-6b82-4080-9127-79726a50afd0}</ProjectGuid>
+    <ProjectGuid>{DEDD56AC-6B82-4080-9127-79726A50AFD0}</ProjectGuid>
     <RootNamespace>OpenGL</RootNamespace>
-    <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+    <WindowsTargetPlatformVersion>10.0.26100.0</WindowsTargetPlatformVersion>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
@@ -71,14 +71,20 @@
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <IncludePath>libraries\include\imgui;libraries\include\imgui\backends;C:\Users\gamer\source\repos\OpenGL\OpenGL\libraries\include\GeographicLib;C:\Users\gamer\source\repos\OpenGL\OpenGL\libraries\include;$(IncludePath)</IncludePath>
+    <IncludePath>C:\Users\gamer\source\repos\OpenGL\OpenGL\libraries\include;libraries\include\imgui;libraries\include\imgui\backends;C:\Users\gamer\source\repos\OpenGL\OpenGL\libraries\include\GeographicLib;C:\Users\gamer\source\repos\OpenGL\OpenGL\libraries\include;$(IncludePath)</IncludePath>
     <ExternalIncludePath>$(ExternalIncludePath)</ExternalIncludePath>
     <LibraryPath>C:\Users\gamer\source\repos\OpenGL\OpenGL\libraries\lib;$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
-    <IncludePath>libraries\include\imgui;libraries\include\imgui\backends;C:\Users\gamer\source\repos\OpenGL\OpenGL\libraries\include\GeographicLib;C:\Users\gamer\source\repos\OpenGL\OpenGL\libraries\include;$(IncludePath)</IncludePath>
+    <IncludePath>C:\Users\gamer\source\repos\OpenGL\OpenGL\libraries\include;libraries\include\imgui;libraries\include\imgui\backends;C:\Users\gamer\source\repos\OpenGL\OpenGL\libraries\include\GeographicLib;C:\Users\gamer\source\repos\OpenGL\OpenGL\libraries\include;$(IncludePath)</IncludePath>
     <ExternalIncludePath>$(ExternalIncludePath)</ExternalIncludePath>
     <LibraryPath>C:\Users\gamer\source\repos\OpenGL\OpenGL\libraries\lib;$(LibraryPath)</LibraryPath>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
+    <IncludePath>C:\Users\gamer\source\repos\OpenGL\OpenGL\libraries\include;$(VC_IncludePath);$(WindowsSDK_IncludePath);</IncludePath>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
+    <IncludePath>C:\Users\gamer\source\repos\OpenGL\OpenGL\libraries\include;$(VC_IncludePath);$(WindowsSDK_IncludePath);</IncludePath>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <ClCompile>
@@ -87,6 +93,7 @@
       <PreprocessorDefinitions>WIN32;_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <AdditionalIncludeDirectories>$(ProjectDir)src\network;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -102,6 +109,7 @@
       <PreprocessorDefinitions>WIN32;NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <AdditionalIncludeDirectories>$(ProjectDir)src\network;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -146,6 +154,7 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="Client.cpp" />
+    <ClCompile Include="libraries\include\serialib\serialib.cpp" />
     <ClCompile Include="src\core\main.cpp" />
     <ClCompile Include="src\input\Input.cpp" />
     <ClCompile Include="src\network\ESP32_Code.cpp" />
@@ -163,6 +172,7 @@
     <ClCompile Include="libraries\include\imgui\backends\imgui_impl_opengl3.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="libraries\include\serialib\serialib.h" />
     <ClInclude Include="libraries\include\stb_image.h" />
     <ClInclude Include="src\input\Input.h" />
     <ClInclude Include="src\network\Client.h" />

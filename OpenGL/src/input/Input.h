@@ -22,11 +22,11 @@ void InputDataOpenGL(
 
 void CordinatesToDecimalFormat(std::string line, double& dec_lat_deg, double& dec_lon_deg);
 
-void CordinatesToUTM_GeographicLib(double lat_deg, double lon_deg, double& easting, double& northing);
+void CreateOriginDD(double lat_deg, double lon_deg, double& easting, double& northing);
 
-void CordinateToMetersUTM(double lat_deg, double lon_deg, double& easting, double& northing);
+void DDToMetr(double lat_deg, double lon_deg, double& easting, double& northing);
 
-void CordinateDifirenceFromOrigin(double CordiateX, double CordinateY, double MAP_SIZE, double& normalized_x, double& normalized_y);
+void CordinateDifirenceFromOrigin(double CordiateX, double CordinateY, double& normalized_x, double& normalized_y);
 
 void InputDatainCode(std::vector<glm::vec2>& points, std::mutex& pointsMutex, std::atomic<bool>& running, double& normalized_x, double& normalized_y);
 
@@ -34,15 +34,16 @@ void ChoseInputMode(std::vector<glm::vec2>& points, std::mutex& pointsMutex, std
 
 void LoadTrackFromData(const std::string& data, std::vector<glm::vec2>& points, std::mutex& pointsMutex);
 
-class JsonInput
+class MapDate
 {
 public:
-	double input_latitude;
-	double input_longitude;
-	double easting;
-	double northing;
-	int zone;
-	char zone_letter;
+	double originDD_lat;
+	double originDD_lon;
+	double originMetr_est;
+	double originMetr_nort;
+	int originZone_int;
+	double origin_mapsize = 100;
+	char originZone_char;
 
 };
 
