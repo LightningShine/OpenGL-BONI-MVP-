@@ -5,6 +5,8 @@
 #include <GameNetworkingSockets/steam/steamnetworkingsockets.h>
 #include <GameNetworkingSockets/steam/isteamnetworkingsockets.h>
 #include <GameNetworkingSockets/steam/isteamnetworkingutils.h>
+#include "miniupnpc/miniupnpc.h"
+#include "miniupnpc/upnpcommands.h"
 #include <vector>
 #include <thread>
 #include <random>

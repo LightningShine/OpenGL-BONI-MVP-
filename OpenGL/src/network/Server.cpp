@@ -154,7 +154,6 @@ void FrameUpdate()
 
 void RandomTelemetryData(TelemetryPacket& packet);
 
-
 bool ServerRunningStatus()
 {
 	return ServerIsRunning_b;
@@ -179,6 +178,9 @@ void ContinueServerRunning()
 	
 }
 
+void ManagePort(bool open);
+
+// SERVER MAIN FUNCTION ////////////////////////////////////
 
 int ServerWork()
 {
@@ -197,7 +199,7 @@ int ServerWork()
 	SteamNetworkingUtils()->SetDebugOutputFunction(k_ESteamNetworkingSocketsDebugOutputType_Msg, DebugOutput);
 
 	std::cout << "GNS initialized successfully." << std::endl;
-
+	ManagePort(true);
 	StartServer(777);
 
 	int counter = 0;
@@ -217,6 +219,7 @@ int ServerWork()
 		std::this_thread::sleep_for(std::chrono::milliseconds(100));
 	}
 
+	ManagePort(false);
 	GameNetworkingSockets_Kill();
 	std::cout << "Server Die" << std::endl;
 
@@ -224,7 +227,7 @@ int ServerWork()
 
 }
 
-
+/////////////////////////////////////////////////////////
 
 void RandomTelemetryData(TelemetryPacket& packet)
 {
@@ -249,5 +252,45 @@ void RandomTelemetryData(TelemetryPacket& packet)
 	packet.ID = idDist(generator);
 
 
+}
+
+void ManagePort(bool open)
+{
+	int error = 0;
+	struct UPNPDev* devlist = upnpDiscover(2000, NULL, NULL, 0, 0, 2, &error);
+	struct UPNPUrls urls;
+	struct IGDdatas data;
+	char lanaddr[64];
+	char wanaddr[64];
+	int r = UPNP_AddPortMapping(NULL, NULL,
+		"777", "777", lanaddr, NULL, "UDP", NULL, "86400");
+	int status = UPNP_GetValidIGD(devlist, &urls, &data, lanaddr, sizeof(lanaddr), wanaddr, sizeof(wanaddr));
+
+	if (UPNP_GetValidIGD(devlist, &urls, &data, lanaddr, sizeof(lanaddr), wanaddr, sizeof(wanaddr)))
+	{
+		if (open)
+		{
+			UPNP_AddPortMapping(urls.controlURL, data.first.servicetype,
+				"777", "777", lanaddr, "MyTelemetryServer", "UDP", NULL, "86400");
+			
+			if (r != UPNPCOMMAND_SUCCESS)
+			{
+				std::cout << "AddPortMapping failed with code: " << r << " GetValidID status: " << status << std::endl;
+				std::cout << "LAN IP: " << lanaddr << std::endl;
+				std::cout << "WAN IP: " << wanaddr << std::endl;
+			}
+			else
+			{
+				std::cout << "UPNP: Port 777 opened automaticaly!" << std::endl;
+			}
+		}
+		else
+		{
+			UPNP_DeletePortMapping(urls.controlURL, data.first.servicetype, "777", "UDP", NULL);
+			std::cout << "UPNP: Port 777 closed." << std::endl;
+		}
+		FreeUPNPUrls(&urls);
+	}
+	freeUPNPDevlist(devlist);
 }
 

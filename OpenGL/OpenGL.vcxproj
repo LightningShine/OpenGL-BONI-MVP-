@@ -148,6 +148,7 @@
     <ClCompile Include="Client.cpp" />
     <ClCompile Include="src\core\main.cpp" />
     <ClCompile Include="src\input\Input.cpp" />
+    <ClCompile Include="src\network\ESP32_Code.cpp" />
     <ClCompile Include="src\network\Server.cpp" />
     <ClCompile Include="src\rendering\Interpolation.cpp" />
     <ClCompile Include="src\vehicle\Vehicle.cpp" />
@@ -165,6 +166,7 @@
     <ClInclude Include="libraries\include\stb_image.h" />
     <ClInclude Include="src\input\Input.h" />
     <ClInclude Include="src\network\Client.h" />
+    <ClInclude Include="src\network\ESP32_Code.h" />
     <ClInclude Include="src\network\Server.h" />
     <ClInclude Include="src\rendering\Interpolation.h" />
     <ClInclude Include="src\vehicle\Vehicle.h" />
@@ -172,9 +174,6 @@
   </ItemGroup>
   <ItemGroup>
     <Text Include="RESTRUCTURE_SUMMARY.txt" />
-  </ItemGroup>
-  <ItemGroup>
-    <None Include="fix_release_cpp17.ps1" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
