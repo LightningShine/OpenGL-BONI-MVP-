@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include <iostream>
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
@@ -25,6 +25,7 @@
 #include "../network/Server.h"
 #include "../network/Client.h"
 #include "../network/ESP32_Code.h"
+#include "../vehicle/Vehicle.h"
 
 
 using namespace std;
@@ -83,7 +84,25 @@ void processInput(GLFWwindow* window, glm::vec2& cameraPos, float& zoom, float s
 			ChangeClientRunningStatus();
 		}
 	}
+	
+	// ✅ Тестовая кнопка для добавления машины на старте трека
+	static bool wasTPressed = false;
+	if (glfwGetKey(window, GLFW_KEY_T) == GLFW_PRESS && !wasTPressed)
+	{
+		wasTPressed = true;
 		
+		std::lock_guard<std::mutex> lock(g_VehiclesMutex);
+		
+		// ✅ ПРАВИЛЬНО: создаем машину, ПОТОМ добавляем в map
+		Venchile newVehicle;
+		g_Vehicles[newVehicle.v_ID] = newVehicle;
+		
+		std::cout << "Test vehicle #" << newVehicle.v_ID << " added at track origin" << std::endl;
+	}
+	if (glfwGetKey(window, GLFW_KEY_T) == GLFW_RELEASE)
+	{
+		wasTPressed = false;
+	}
 
 	// Camera movment (W/A/S/D or Arrows)
 	if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS ||
@@ -387,28 +406,12 @@ int main()
 	double horizontalBound = mapRange;
 	double verticalBound = mapRange;
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-	Test_Serial();
-
-
-
-
-
-
-
+	// ========================== VEHICLE SYSTEM INITIALIZATION ==========================
+	
+	// ✅ Запускаем фоновый поток VehicleLoop для обслуживания машин
+	std::thread vehicleThread(VehicleLoop);
+	vehicleThread.detach();
+	std::cout << "VehicleLoop thread started" << std::endl;
 
 	// ========================== RENDER LOOP ==========================
 
@@ -481,11 +484,7 @@ int main()
 
 			if (pointCount > 1)
 			{
-
-			//	std::vector<SplinePoint> smoothPoints = InterpolatePointsWithTangents(points, 5);
-
-			//	borderLayer = GenerateTriangleStripFromLine(smoothPoints, 0.08f);
-			//	asphaltLayer = GenerateTriangleStripFromLine(smoothPoints, 0.075f);
+				m_MapLoaded = true;
 
 				// radius: 0.02f (rounding), segments: 10 (corner smoth)
 				float CornerRadius = 0.075f;
@@ -526,8 +525,13 @@ int main()
 
 		ui.Render();
 		ui.EndFrame();
-
+		
+		// ✅ Рисуем машины только если карта загружена
+		if (m_MapLoaded) { 
+			RenderAllVehicles(shaderProgram, VAO, VBO, projection, cameraPosition, cameraZoom); 
+		}
 		// check and call events and swap the buffers
+		 
 		glfwPollEvents(); // Poll for and process events (e.g., keyboard, mouse)
 		glfwSwapBuffers(window); // Swap the front and back buffers (render image display)
 		

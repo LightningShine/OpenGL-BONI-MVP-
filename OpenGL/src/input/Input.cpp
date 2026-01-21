@@ -3,6 +3,7 @@
 #include "../rendering/Interpolation.h"
 
 MapDate mapOrigin;
+std::atomic<bool> m_MapLoaded = false; // ✅ Инициализация флага
 
 void ChoseInputMode(std::vector<glm::vec2>& points, std::mutex& pointsMutex, std::atomic<bool>& running)
 {
@@ -178,6 +179,9 @@ void LoadTrackFromData(const std::string& data, std::vector<glm::vec2>& points, 
 		}
 	}
 	std::cout << "Track loaded with " << points.size() << " points." << std::endl;
+	
+	// ✅ Устанавливаем флаг что карта загружена
+	m_MapLoaded = true;
 }
 
 void CreateOriginDD(double lat_deg, double lon_deg, double& easting, double& northing)

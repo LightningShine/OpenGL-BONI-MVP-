@@ -113,7 +113,7 @@ int ClientStart()
 
 	SteamNetworkingIPAddr serverAddr;
 	serverAddr.Clear();
-	serverAddr.ParseString("136.169.29.56:777");
+	serverAddr.ParseString("136.169.18.31:777");
 	//serverAddr.ParseString("136.169.29.56:777");
 
 	ConnectToServer(serverAddr);
