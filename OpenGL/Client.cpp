@@ -6,6 +6,7 @@ HSteamNetConnection g_hConnection;
 
 bool ClientIsRunning_b = false;
 bool ClientShouldClose_b = false;
+bool ErrnumMsg_b = false;
 
 void OnClientConnectionStatusChanged(SteamNetConnectionStatusChangedCallback_t* pInfo)
 {
@@ -53,9 +54,11 @@ void ListenMessagesFromServer()
 	ISteamNetworkingMessage* pIncomingMsg[16];
 	int numMsgs = SteamNetworkingSockets()->ReceiveMessagesOnConnection(g_hConnection, pIncomingMsg, 16);
 
-	if (numMsgs < 0) {
+	/*if (numMsgs < 0 && !ErrnumMsg_b)
+	{
+		ErrnumMsg_b = true;
 		std::cerr << "Error receiving messages from server." << std::endl;
-	}
+	}*/
 
 	for (int i = 0; i < numMsgs; ++i)
 	{
@@ -71,12 +74,8 @@ void ListenMessagesFromServer()
 			<< "  Acceleration: " << (float)pData->acceleration / 100.0f << " m/s^2" << std::endl
 			<< "  Fix Type: " << pData->fixtype << std::endl;
 
-
-		//std::string msgText((const char*)pIncomingMsg[i]->m_pData, pIncomingMsg[i]->m_cbSize);
-		//std::cout << "SERVER SAYS: " << msgText << std::endl;
-
-
 		pIncomingMsg[i]->Release();
+		ErrnumMsg_b = false;
 	}
 }
 
@@ -109,12 +108,31 @@ int ClientStart()
 {
 	std::cout << "Starting GNS Client..." << std::endl;
 	SteamDatagramErrMsg errMsg;
+	std::string serverName;
+	std::regex ipPortPattern(R"(^(\d{1,3}\.){3}\d{1,3}:\d{1,5}$)");
 	if (!GameNetworkingSockets_Init(nullptr, errMsg)) return 1;
 
 	SteamNetworkingIPAddr serverAddr;
 	serverAddr.Clear();
-	serverAddr.ParseString("136.169.18.31:777");
-	//serverAddr.ParseString("136.169.29.56:777");
+	std::getline(std::cin, serverName);
+	if (serverName == "d" || serverName == " " || serverName == "\n")
+	{
+		serverAddr.ParseString("136.169.18.31:777");
+		std::cout << "Using default server address: 136.169.18.31:777" << std::endl;
+	}
+	else if(std::regex_match(serverName, ipPortPattern))
+	{
+		serverAddr.ParseString(serverName.c_str());
+		std::cout << "Using server address: " << serverName << std::endl;
+	}
+	else
+	{
+		std::cerr << "Invalid server address format." << std::endl;
+		std::cout << "Shutting down GNS Client..." << std::endl;
+		GameNetworkingSockets_Kill();
+		return 1; 
+	}
+
 
 	ConnectToServer(serverAddr);
 	std::string message;
@@ -137,7 +155,7 @@ int ClientStart()
 			}
 			else {
 				std::cout << "Still waiting for connection... (State: " << info.m_eState << ")" << std::endl;
-				break;
+				
 			}
 			counter = 0;
 		}

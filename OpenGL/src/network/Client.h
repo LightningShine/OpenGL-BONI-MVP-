@@ -5,6 +5,7 @@
 #include <GameNetworkingSockets/steam/isteamnetworkingutils.h>
 #include "../network/Server.h"
 #include <thread>
+#include <regex>
 
 
 // CLIENT 
