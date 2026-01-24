@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include "Input.h"
 #include "../rendering/Interpolation.h"
 #include "../Config.h"
@@ -6,7 +6,7 @@
 MapDate mapOrigin;
 std::atomic<bool> m_MapLoaded = false;
 
-void ChoseInputMode(std::vector<glm::vec2>& points, std::mutex& pointsMutex, std::atomic<bool>& running)
+void ChoseInputMode(std::vector<glm::vec2>& points, std::mutex& points_mutex, std::atomic<bool>& running)
 {
 	start:
 	std::cout << "1. Create New Map" << "\n";
@@ -34,10 +34,10 @@ void ChoseInputMode(std::vector<glm::vec2>& points, std::mutex& pointsMutex, std
 				CordinatesToDecimalFormat(line, dec_lat_deg, dec_lon_deg);
 				DDToMetr(dec_lat_deg, dec_lon_deg, easting, northing);
 				CordinateDifirenceFromOrigin(easting, northing, normalized_x, normalized_y);
-				InputDatainCode(points, pointsMutex, running, normalized_x, normalized_y);
+				InputDatainCode(points, points_mutex, running, normalized_x, normalized_y);
 
 				{
-					std::lock_guard<std::mutex> lock(pointsMutex); // Neded to explain
+					std::lock_guard<std::mutex> lock(points_mutex); // Neded to explain
 					if (points.back() == points.front() && points.size() != 1)
 					{
 						std::cout << "Map closed.\n";
@@ -51,7 +51,7 @@ void ChoseInputMode(std::vector<glm::vec2>& points, std::mutex& pointsMutex, std
 			std::cout << "Load Existing Map Selected\n";
 			break;
 		case 3:
-			InputDataOpenGL(points, pointsMutex, running);
+			InputDataOpenGL(points, points_mutex, running);
 			break;
 		default:
 			std::cout << "Invalid input mode selected\n";
@@ -61,7 +61,7 @@ void ChoseInputMode(std::vector<glm::vec2>& points, std::mutex& pointsMutex, std
 }
 
 
-void InputDataOpenGL(std::vector<glm::vec2>& points, std::mutex& pointsMutex, std::atomic<bool>& running)
+void InputDataOpenGL(std::vector<glm::vec2>& points, std::mutex& points_mutex, std::atomic<bool>& running)
 {
 	std::cout << "Input date is started\n";
 
@@ -82,7 +82,7 @@ void InputDataOpenGL(std::vector<glm::vec2>& points, std::mutex& pointsMutex, st
 		if (ss >> x >> y)
 		{
 			{
-				std::lock_guard<std::mutex> lock(pointsMutex);
+				std::lock_guard<std::mutex> lock(points_mutex);
 				points.push_back(glm::vec2{x, y});
 				std::cout << "Received point: (" << x << ", " << y << ")\n";
 			}
@@ -136,14 +136,14 @@ void CordinatesToDecimalFormat(std::string line, double &dec_lat_deg, double& de
 	}
 }
 
-void LoadTrackFromData(const std::string& data, std::vector<glm::vec2>& points, std::mutex& pointsMutex)
+void LoadTrackFromData(const std::string& data, std::vector<glm::vec2>& points, std::mutex& points_mutex)
 {
 	std::stringstream ss(data);
 	std::string line;
 	bool firstPoint = true;
 
 	{
-		std::lock_guard<std::mutex> lock(pointsMutex);
+		std::lock_guard<std::mutex> lock(points_mutex);
 		points.clear();
 	}
 
@@ -175,7 +175,7 @@ void LoadTrackFromData(const std::string& data, std::vector<glm::vec2>& points, 
 		CordinateDifirenceFromOrigin(easting, northing, normalized_x, normalized_y);
 
 		{
-			std::lock_guard<std::mutex> lock(pointsMutex);
+			std::lock_guard<std::mutex> lock(points_mutex);
 			points.push_back(glm::vec2(normalized_x, normalized_y));
 		}
 	}
@@ -274,10 +274,10 @@ void CordinateDifirenceFromOrigin(double Metr_est, double Metr_north, double &no
 
 }
 
-void InputDatainCode(std::vector<glm::vec2>& points, std::mutex& pointsMutex, std::atomic<bool>& running, double &normalized_x, double &normalized_y)
+void InputDatainCode(std::vector<glm::vec2>& points, std::mutex& points_mutex, std::atomic<bool>& running, double &normalized_x, double &normalized_y)
 {
 	{
-		std::lock_guard<std::mutex> lock(pointsMutex);
+		std::lock_guard<std::mutex> lock(points_mutex);
 		glm::vec2 newPoint(normalized_x, normalized_y);
 
 		if (!points.empty()) {

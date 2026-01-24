@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include <iostream>
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
@@ -35,7 +35,7 @@ using namespace std;
 struct AppContext {
     float* zoom;
     std::vector<glm::vec2>* points;
-    std::mutex* pointsMutex;
+    std::mutex* points_mutex;
     UI* ui;
 };
 
@@ -44,7 +44,7 @@ void framebuffer_size_callback(GLFWwindow* window, int width, int height)
 	glViewport(0, 0, width, height);
 }
 
-void processInput(GLFWwindow* window, glm::vec2& cameraPos, float& zoom, float speed)
+void processInput(GLFWwindow* window, glm::vec2& camera_pos, float& zoom, float speed)
 {
 	// Close when press ESC
 	if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
@@ -92,13 +92,13 @@ void processInput(GLFWwindow* window, glm::vec2& cameraPos, float& zoom, float s
 	{
 		wasTPressed = true;
 		
-		std::lock_guard<std::mutex> lock(g_VehiclesMutex);
+		std::lock_guard<std::mutex> lock(g_vehicles_mutex);
 		
 		// ✅ ПРАВИЛЬНО: создаем машину, ПОТОМ добавляем в map
-		Venchile newVehicle;
-		g_Vehicles[newVehicle.v_ID] = newVehicle;
+		Vehicle newVehicle;
+		g_vehicles[newVehicle.m_id] = newVehicle;
 		
-		std::cout << "Test vehicle #" << newVehicle.v_ID << " added at track origin" << std::endl;
+		std::cout << "Test vehicle #" << newVehicle.m_id << " added at track origin" << std::endl;
 	}
 	if (glfwGetKey(window, GLFW_KEY_T) == GLFW_RELEASE)
 	{
@@ -108,19 +108,19 @@ void processInput(GLFWwindow* window, glm::vec2& cameraPos, float& zoom, float s
 	// Camera movment (W/A/S/D or Arrows)
 	if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS ||
 		glfwGetKey(window, GLFW_KEY_UP) == GLFW_PRESS)
-		cameraPos.y += speed / zoom;  // Up
+		camera_pos.y += speed / zoom;  // Up
 
 	if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS ||
 		glfwGetKey(window, GLFW_KEY_DOWN) == GLFW_PRESS)
-		cameraPos.y -= speed / zoom;  // down
+		camera_pos.y -= speed / zoom;  // down
 
 	if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS ||
 		glfwGetKey(window, GLFW_KEY_LEFT) == GLFW_PRESS)
-		cameraPos.x -= speed / zoom;  // Left
+		camera_pos.x -= speed / zoom;  // Left
 
 	if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS ||
 		glfwGetKey(window, GLFW_KEY_RIGHT) == GLFW_PRESS)
-		cameraPos.x += speed / zoom;  // Right
+		camera_pos.x += speed / zoom;  // Right
 
 	// Zoom limits
 	if (zoom < CameraConstants::CAMERA_ZOOM_MIN) zoom = CameraConstants::CAMERA_ZOOM_MIN;
@@ -177,7 +177,7 @@ void scroll_callback(GLFWwindow* window, double xoffset, double yoffset)
 void drop_callback(GLFWwindow* window, int count, const char** paths)
 {
 	AppContext* context = (AppContext*)glfwGetWindowUserPointer(window);
-	if (context && context->points && context->pointsMutex)
+	if (context && context->points && context->points_mutex)
 	{
 		for (int i = 0; i < count; i++)
 		{
@@ -186,7 +186,7 @@ void drop_callback(GLFWwindow* window, int count, const char** paths)
 			{
 				std::stringstream buffer;
 				buffer << file.rdbuf();
-				LoadTrackFromData(buffer.str(), *context->points, *context->pointsMutex);
+				LoadTrackFromData(buffer.str(), *context->points, *context->points_mutex);
 				std::cout << "Loaded file: " << paths[i] << std::endl;
                 
                 if (context->ui)
@@ -294,15 +294,15 @@ int main()
 	glfwMaximizeWindow(window);
 
 
-	GLuint VAO, VBO, EBO;
-	glGenVertexArrays(1, &VAO);
-	glGenBuffers(1, &VBO);
+	GLuint vao, vbo, EBO;
+	glGenVertexArrays(1, &vao);
+	glGenBuffers(1, &vbo);
 	glGenBuffers(1, &EBO);
 
 	// Vertex Buffer Object
-	glBindVertexArray(VAO);
+	glBindVertexArray(vao);
 	
-	glBindBuffer(GL_ARRAY_BUFFER, VBO);
+	glBindBuffer(GL_ARRAY_BUFFER, vbo);
 
 	//Index Buffer Object
 	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
@@ -359,12 +359,12 @@ int main()
 
 	// =================== Create Shader Program ===================
 
-	GLuint shaderProgram = glCreateProgram();
+	GLuint shader_program = glCreateProgram();
 
-	glAttachShader(shaderProgram, vertexShader);
-	glAttachShader(shaderProgram, fragmentShader);
+	glAttachShader(shader_program, vertexShader);
+	glAttachShader(shader_program, fragmentShader);
 
-	glLinkProgram(shaderProgram);
+	glLinkProgram(shader_program);
 
 	glDeleteShader(vertexShader);
 	glDeleteShader(fragmentShader);
@@ -372,21 +372,21 @@ int main()
 	glEnable(GL_PROGRAM_POINT_SIZE);
 
 	// ========================== Process Input ==========================
-	glm::vec2 cameraPosition(0.0f, 0.0f);
-	float cameraZoom = 1.0f;
-	float cameraMoveSpeed = CameraConstants::CAMERA_MOVE_SPEED;
-	glm::vec2 cameraVelocity(0.0f, 0.0f);
+	glm::vec2 camera_position(0.0f, 0.0f);
+	float camera_zoom = 1.0f;
+	float camera_move_speed = CameraConstants::CAMERA_MOVE_SPEED;
+	glm::vec2 camera_velocity(0.0f, 0.0f);
 	float friction = CameraConstants::CAMERA_FRICTION;
-	float mapBoundX = MapConstants::MAP_BOUND_X;
-	float mapBoundY = MapConstants::MAP_BOUND_Y;
+	float map_bound_x = MapConstants::MAP_BOUND_X;
+	float map_bound_y = MapConstants::MAP_BOUND_Y;
 
 	std::vector<glm::vec2> points;
-	std::mutex  pointsMutex;
+	std::mutex  points_mutex;
 
 	AppContext appContext;
-	appContext.zoom = &cameraZoom;
+	appContext.zoom = &camera_zoom;
 	appContext.points = &points;
-	appContext.pointsMutex = &pointsMutex;
+	appContext.points_mutex = &points_mutex;
     appContext.ui = &ui;
 
 	glfwSetWindowUserPointer(window, &appContext);
@@ -396,7 +396,7 @@ int main()
 
 	// ========================== INPUT ==========================
 	
-	ui.SetTrackData(&points, &pointsMutex);
+	ui.SetTrackData(&points, &points_mutex);
 
 	int windowswidth;
 	int windowsheight;
@@ -408,10 +408,10 @@ int main()
 
 	// ========================== VEHICLE SYSTEM INITIALIZATION ==========================
 	
-	// ✅ Запускаем фоновый поток VehicleLoop для обслуживания машин
-	std::thread vehicleThread(VehicleLoop);
+	// ✅ Запускаем фоновый поток vehicleLoop для обслуживания машин
+	std::thread vehicleThread(vehicleLoop);
 	vehicleThread.detach();
-	std::cout << "VehicleLoop thread started" << std::endl;
+	std::cout << "vehicleLoop thread started" << std::endl;
 
 	// ========================== RENDER LOOP ==========================
 
@@ -419,9 +419,9 @@ int main()
 	{
 		ui.BeginFrame();
 
-		processInput(window, cameraPosition, cameraZoom, cameraMoveSpeed); // Process user input with camera
-		cameraPosition += cameraVelocity;  
-		cameraVelocity *= friction;
+		processInput(window, camera_position, camera_zoom, camera_move_speed); // Process user input with camera
+		camera_position += camera_velocity;  
+		camera_velocity *= friction;
 		
 		glClearColor(26.0f / 255.0f, 26.0f / 255.0f, 26.0f / 255.0f, 1.0f); // Set the clear color for the window (background color)
 		glClear(GL_COLOR_BUFFER_BIT); // Clear the color buffer with the specified clear color
@@ -448,30 +448,30 @@ int main()
 		}
 		
 		// Apply zoom (devide border on zoom)
-		float zoomedHorizontal = (float)horizontalBound / (float)cameraZoom;
-		float zoomedVertical = (float)verticalBound / (float)cameraZoom;
+		float zoomedHorizontal = (float)horizontalBound / (float)camera_zoom;
+		float zoomedVertical = (float)verticalBound / (float)camera_zoom;
 
-		cameraPosition.x = glm::clamp(cameraPosition.x, -mapBoundX, mapBoundX);
-		cameraPosition.y = glm::clamp(cameraPosition.y, -mapBoundY, mapBoundY);
+		camera_position.x = glm::clamp(camera_position.x, -map_bound_x, map_bound_x);
+		camera_position.y = glm::clamp(camera_position.y, -map_bound_y, map_bound_y);
 
 		// Creating orthographic projection matrix with camera
 		glm::mat4 projection = glm::ortho(
-			-zoomedHorizontal + cameraPosition.x,  // left
-			zoomedHorizontal + cameraPosition.x,  // right
-			-zoomedVertical + cameraPosition.y,    // bottom
-			zoomedVertical + cameraPosition.y,    // top
+			-zoomedHorizontal + camera_position.x,  // left
+			zoomedHorizontal + camera_position.x,  // right
+			-zoomedVertical + camera_position.y,    // bottom
+			zoomedVertical + camera_position.y,    // top
 			-1.0f, 1.0f
 		);
 
 		// Track creation and drawing
-		glUseProgram(shaderProgram);
+		glUseProgram(shader_program);
 
-		GLint projLoc = glGetUniformLocation(shaderProgram, "projection");
+		GLint projLoc = glGetUniformLocation(shader_program, "projection");
 		glUniformMatrix4fv(projLoc, 1, GL_FALSE, glm::value_ptr(projection));
 
-		GLint colorLoc = glGetUniformLocation(shaderProgram, "uColor");
+		GLint colorLoc = glGetUniformLocation(shader_program, "uColor");
 
-		glBindVertexArray(VAO);
+		glBindVertexArray(vao);
 
 		std::vector<glm::vec2> borderLayer;
 		std::vector<glm::vec2> asphaltLayer;
@@ -479,7 +479,7 @@ int main()
 		size_t pointCount = 0;
 		std::vector<glm::vec2> triangleStripPoints;
 		{
-			std::lock_guard<std::mutex> lock(pointsMutex);
+			std::lock_guard<std::mutex> lock(points_mutex);
 			pointCount = points.size();
 
 			if (pointCount > 1)
@@ -511,7 +511,7 @@ int main()
 
 		if (borderLayer.size() > 0)
 		{
-			glBindBuffer(GL_ARRAY_BUFFER, VBO);
+			glBindBuffer(GL_ARRAY_BUFFER, vbo);
 			glBufferData(GL_ARRAY_BUFFER, borderLayer.size() * sizeof(glm::vec2), borderLayer.data(), GL_DYNAMIC_DRAW);
 
 			glUniform3f(colorLoc, 1.0f, 1.0f, 1.0f); // White color for border
@@ -520,7 +520,7 @@ int main()
 
 		if (asphaltLayer.size() > 0)
 		{
-			glBindBuffer(GL_ARRAY_BUFFER, VBO);
+			glBindBuffer(GL_ARRAY_BUFFER, vbo);
 			glBufferData(GL_ARRAY_BUFFER, asphaltLayer.size() * sizeof(glm::vec2), asphaltLayer.data(), GL_DYNAMIC_DRAW);
 
 			glUniform3f(colorLoc, 0.3f, 0.3f, 0.3f); // Grey color for asphalt
@@ -532,7 +532,7 @@ int main()
 		
 		// ✅ Рисуем машины только если карта загружена
 		if (m_MapLoaded) { 
-			RenderAllVehicles(shaderProgram, VAO, VBO, projection, cameraPosition, cameraZoom); 
+			renderAllVehicles(shader_program, vao, vbo, projection, camera_position, camera_zoom); 
 		}
 		// check and call events and swap the buffers
 		 
@@ -547,9 +547,9 @@ int main()
 
 	ServerStop();
 	ClientStop();
-	glDeleteVertexArrays(1, &VAO);
-	glDeleteBuffers(1, &VBO);
-	glDeleteProgram(shaderProgram);
+	glDeleteVertexArrays(1, &vao);
+	glDeleteBuffers(1, &vbo);
+	glDeleteProgram(shader_program);
 	glfwTerminate(); // Clean up all resources allocated by GLFW and exit
 
 	return 0;

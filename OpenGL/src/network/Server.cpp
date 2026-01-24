@@ -237,7 +237,7 @@ void RandomTelemetryData(TelemetryPacket& packet)
 	std::uniform_int_distribution<uint32_t> timeDist(0, 86400000);			 // milliseconds in a day
 	std::uniform_int_distribution<uint32_t> speedDist(0, 300000);		     // 0 to 300 km/h (speed implies magnitude usually, but int is fine if strictly int32)
 	std::uniform_int_distribution<int32_t> gForceDist(-500, 500);			 // -5g to 5g. User had uint32_t with negative range?
-	std::uniform_int_distribution<int32_t> accelDist(-10000, 10000);		 // -10 to 10 m/s². User had uint32_t with negative range?
+	std::uniform_int_distribution<int32_t> accelDist(-10000, 10000);		 // -10 to 10 m/sï¿½. User had uint32_t with negative range?
 	std::uniform_int_distribution<int16_t> fixTypeDist(0, 5);		 // fix types. uniform_int_distribution does not support char/uint8_t
 	std::uniform_int_distribution<int32_t> idDist(1, 1000000);				 // vehicle IDs
 

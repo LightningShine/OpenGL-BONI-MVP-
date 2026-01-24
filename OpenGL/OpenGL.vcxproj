@@ -181,11 +181,13 @@
     <ClInclude Include="src\network\Server.h" />
     <ClInclude Include="src\rendering\Interpolation.h" />
     <ClInclude Include="src\vehicle\Vehicle.h" />
-    <ClInclude Include="src\vehicle\Vehicle_Refactored.h" />
     <ClInclude Include="UI.h" />
   </ItemGroup>
   <ItemGroup>
     <Text Include="RESTRUCTURE_SUMMARY.txt" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="..\code_writing_guide.md" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

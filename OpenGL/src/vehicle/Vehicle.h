@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include "../input/Input.h"
 #include "../network/Server.h"
 #include <map>
@@ -8,49 +8,49 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/type_ptr.hpp>
 
-class Venchile
+class Vehicle
 {
 public:
-	Venchile(); // Конструктор по умолчанию (создает машину на origin трека)
-	Venchile(const TelemetryPacket &packet); // Конструктор из пакета ESP32
+	Vehicle();
+	Vehicle(const TelemetryPacket& packet);
 	
-	double v_latDD;
-	double v_lonDD;
-	double v_metr_easting = 0;
-	double v_metr_north = 0;
-	double v_norX = 0;
-	double v_norY = 0;
-	double v_speedKPH;
-	double v_acceleration;
-	double v_gForceX;
-	double v_gForceY;
-	int16_t v_fixtype;
-	int32_t v_ID;
+	double m_lat_dd;
+	double m_lon_dd;
+	double m_meters_easting = 0;
+	double m_meters_northing = 0;
+	double m_normalized_x = 0;
+	double m_normalized_y = 0;
+	double m_speed_kph;
+	double m_acceleration;
+	double m_g_force_x;
+	double m_g_force_y;
+	int16_t m_fix_type;
+	int32_t m_id;
 	std::string name = "Unknown";
-	std::chrono::steady_clock::time_point lastUpdateTime = std::chrono::steady_clock::now();
-	glm::vec3 cachedColor; // ✅ Кешируем цвет при создании
+	std::chrono::steady_clock::time_point m_last_update_time = std::chrono::steady_clock::now();
+	glm::vec3 m_cached_color; // ✅ Кешируем цвет при создании
 
-	glm::vec3 GetColor() const;	
+	glm::vec3 getColor() const;	
 };
 
 
-extern std::map<int32_t, Venchile> g_Vehicles; 
-extern std::mutex g_VehiclesMutex;   
-extern std::atomic<bool> g_VehiclesActive;
+extern std::map<int32_t, Vehicle> g_vehicles; 
+extern std::mutex g_vehicles_mutex;   
+extern std::atomic<bool> g_is_vehicles_active;
 
 // ✅ Генератор уникальных ID для машин
-int32_t GenerateVehicleID();
+int32_t generateVehicleID();
 
 // === ФУНКЦИИ ===
-void VehicleLoop(); // Главный цикл обновления машин
+void vehicleLoop(); // Главный цикл обновления машин
 
-std::vector<glm::vec2> GenerateCircle(float radius, int segments = 16);
+std::vector<glm::vec2> generateCircle(float radius, int segments = 16);
 
-void RenderVehicle(GLuint shaderProgram, GLuint VAO, GLuint VBO,
-	const Venchile& vehicle, const glm::mat4& projection);
+void renderVehicle(GLuint shader_program, GLuint vao, GLuint vbo,
+	const Vehicle& vehicle, const glm::mat4& projection);
 
-void RenderAllVehicles(GLuint shaderProgram, GLuint VAO, GLuint VBO,
+void renderAllVehicles(GLuint shader_program, GLuint vao, GLuint vbo,
 	const glm::mat4& projection,
-	const glm::vec2& cameraPos, float cameraZoom);
+	const glm::vec2& camera_pos, float camera_zoom);
 
-void VehicleClose();
+void vehicleClose();

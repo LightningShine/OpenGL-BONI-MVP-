@@ -1,4 +1,4 @@
-﻿#include "../network/ESP32_Code.h"
+#include "../network/ESP32_Code.h"
 
 
 serialib serial;

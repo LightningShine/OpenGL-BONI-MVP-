@@ -1,4 +1,4 @@
-﻿#include "../vehicle/Vehicle.h"
+#include "../vehicle/Vehicle.h"
 #include "../input/Input.h"
 #include "../Config.h"
 #include <cmath>
@@ -6,18 +6,18 @@
 #include <thread>
 
 // === ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ===
-std::map<int32_t, Venchile> g_Vehicles;
-std::mutex g_VehiclesMutex;
-std::atomic<bool> g_VehiclesActive = false;
+std::map<int32_t, Vehicle> g_vehicles;
+std::mutex g_vehicles_mutex;
+std::atomic<bool> g_is_vehicles_active = false;
 
 // ✅ Генератор уникальных ID
-int32_t GenerateVehicleID()
+int32_t generateVehicleID()
 {
     static std::atomic<int32_t> nextID(1);
     return nextID++;
 }
 
-Venchile::Venchile()
+Vehicle::Vehicle()
 {
     // ✅ Проверяем что карта загружена
     if (!m_MapLoaded)
@@ -27,48 +27,48 @@ Venchile::Venchile()
     }
     
     // ✅ Используем координаты origin трека (первая точка)
-    v_latDD = mapOrigin.originDD_lat;
-    v_lonDD = mapOrigin.originDD_lon;
-    v_speedKPH = 0.0;
-    v_acceleration = 0.0;
-    v_gForceX = 0.0;
-    v_gForceY = 0.0;
-    v_fixtype = 1;
-    v_ID = GenerateVehicleID(); // ✅ Автоматическая генерация ID
+    m_lat_dd = mapOrigin.originDD_lat;
+    m_lon_dd = mapOrigin.originDD_lon;
+    m_speed_kph = 0.0;
+    m_acceleration = 0.0;
+    m_g_force_x = 0.0;
+    m_g_force_y = 0.0;
+    m_fix_type = 1;
+    m_id = generateVehicleID(); // ✅ Автоматическая генерация ID
     
-    DDToMetr(v_latDD, v_lonDD, v_metr_easting, v_metr_north);
-    CordinateDifirenceFromOrigin(v_metr_easting, v_metr_north, v_norX, v_norY);
+    DDToMetr(m_lat_dd, m_lon_dd, m_meters_easting, m_meters_northing);
+    CordinateDifirenceFromOrigin(m_meters_easting, m_meters_northing, m_normalized_x, m_normalized_y);
     
-    lastUpdateTime = std::chrono::steady_clock::now();
-    
-    // ✅ Вычисляем цвет ОДИН раз при создании
-    cachedColor = GetColor();
-    
-    std::cout << "Vehicle #" << v_ID << " created at origin: (" << v_latDD << ", " << v_lonDD << ")" << std::endl;
-}
-
-Venchile::Venchile(const TelemetryPacket& packet)
-{
-    v_latDD = packet.lat / 1e7;
-    v_lonDD = packet.lon / 1e7;
-    v_speedKPH = packet.speed / 100.0;
-    v_acceleration = packet.acceleration / 100.0;
-    v_gForceX = packet.gForceX / 100.0;
-    v_gForceY = packet.gForceY / 100.0;
-    v_fixtype = packet.fixtype;
-    v_ID = packet.ID;
-    DDToMetr(v_latDD, v_lonDD, v_metr_easting, v_metr_north);
-    CordinateDifirenceFromOrigin(v_metr_easting, v_metr_north, v_norX, v_norY);
-
-    lastUpdateTime = std::chrono::steady_clock::now();
+    m_last_update_time = std::chrono::steady_clock::now();
     
     // ✅ Вычисляем цвет ОДИН раз при создании
-    cachedColor = GetColor();
+    m_cached_color = getColor();
+    
+    std::cout << "Vehicle #" << m_id << " created at origin: (" << m_lat_dd << ", " << m_lon_dd << ")" << std::endl;
 }
 
-glm::vec3 Venchile::GetColor() const
+Vehicle::Vehicle(const TelemetryPacket& packet)
 {
-    uint32_t hash = static_cast<uint32_t>(v_ID);
+    m_lat_dd = packet.lat / 1e7;
+    m_lon_dd = packet.lon / 1e7;
+    m_speed_kph = packet.speed / 100.0;
+    m_acceleration = packet.acceleration / 100.0;
+    m_g_force_x = packet.gForceX / 100.0;
+    m_g_force_y = packet.gForceY / 100.0;
+    m_fix_type = packet.fixtype;
+    m_id = packet.ID;
+    DDToMetr(m_lat_dd, m_lon_dd, m_meters_easting, m_meters_northing);
+    CordinateDifirenceFromOrigin(m_meters_easting, m_meters_northing, m_normalized_x, m_normalized_y);
+
+    m_last_update_time = std::chrono::steady_clock::now();
+    
+    // ✅ Вычисляем цвет ОДИН раз при создании
+    m_cached_color = getColor();
+}
+
+glm::vec3 Vehicle::getColor() const
+{
+    uint32_t hash = static_cast<uint32_t>(m_id);
     hash = ((hash >> 16) ^ hash) * 0x45d9f3b;
     hash = ((hash >> 16) ^ hash) * 0x45d9f3b;
     hash = (hash >> 16) ^ hash;
@@ -80,26 +80,26 @@ glm::vec3 Venchile::GetColor() const
     return glm::vec3(r, g, b);
 }
 
-void VehicleLoop()
+void vehicleLoop()
 {
-    g_VehiclesActive = true; // ✅ Используем ГЛОБАЛЬНУЮ переменную
-    std::cout << "VehicleLoop started" << std::endl;
+    g_is_vehicles_active = true; // ✅ Используем ГЛОБАЛЬНУЮ переменную
+    std::cout << "vehicleLoop started" << std::endl;
     
-    while (g_VehiclesActive) 
+    while (g_is_vehicles_active) 
     {
 		auto now = std::chrono::steady_clock::now();
 
         {
-        std::lock_guard<std::mutex> lock(g_VehiclesMutex);
-        if (!g_Vehicles.empty())
+        std::lock_guard<std::mutex> lock(g_vehicles_mutex);
+        if (!g_vehicles.empty())
         {
-                for (auto it = g_Vehicles.begin(); it != g_Vehicles.end();)
+                for (auto it = g_vehicles.begin(); it != g_vehicles.end();)
                 {
-					auto timeSinceLastUpdate = std::chrono::duration_cast<std::chrono::milliseconds>(now - it->second.lastUpdateTime).count();
+					auto timeSinceLastUpdate = std::chrono::duration_cast<std::chrono::milliseconds>(now - it->second.m_last_update_time).count();
                     if (timeSinceLastUpdate >= VehicleConstants::VEHICLE_TIMEOUT_MS)
                     {
-                        std::cout << "Vehicle ID " << it->second.v_ID << " removed due to timeout." << std::endl;
-                        it = g_Vehicles.erase(it); // ✅ erase возвращает следующий итератор
+                        std::cout << "Vehicle ID " << it->second.m_id << " removed due to timeout." << std::endl;
+                        it = g_vehicles.erase(it); // ✅ erase возвращает следующий итератор
                     }
                     else
                     {
@@ -111,10 +111,10 @@ void VehicleLoop()
         std::this_thread::sleep_for(std::chrono::milliseconds(33));
     }
     
-    std::cout << "VehicleLoop stopped" << std::endl;
+    std::cout << "vehicleLoop stopped" << std::endl;
 }
 
-std::vector<glm::vec2> GenerateCircle(float radius, int segments)
+std::vector<glm::vec2> generateCircle(float radius, int segments)
 {
     std::vector<glm::vec2> vertices;
     vertices.reserve(segments + 2);
@@ -127,39 +127,39 @@ std::vector<glm::vec2> GenerateCircle(float radius, int segments)
     return vertices;
 }
 
-void RenderVehicle(GLuint shaderProgram, GLuint VAO, GLuint VBO,
-    const Venchile& vehicle, const glm::mat4& projection)
+void renderVehicle(GLuint shader_program, GLuint vao, GLuint vbo,
+    const Vehicle& vehicle, const glm::mat4& projection)
 {
-    static std::vector<glm::vec2> circleOutline = GenerateCircle(
+    static std::vector<glm::vec2> circleOutline = generateCircle(
         VehicleConstants::VEHICLE_OUTLINE_RADIUS, 
         VehicleConstants::VEHICLE_CIRCLE_SEGMENTS
     );
-    static std::vector<glm::vec2> circleBody = GenerateCircle(
+    static std::vector<glm::vec2> circleBody = generateCircle(
         VehicleConstants::VEHICLE_BODY_RADIUS, 
         VehicleConstants::VEHICLE_CIRCLE_SEGMENTS
     );
     
     // ✅ Кешируем uniform location (вычисляется только один раз)
-    static GLint colorLoc = glGetUniformLocation(shaderProgram, "uColor");
+    static GLint colorLoc = glGetUniformLocation(shader_program, "uColor");
 
     // === РИСУЕМ БЕЛУЮ ОБВОДКУ ===
     std::vector<glm::vec2> outlineVertices;
     outlineVertices.reserve(circleOutline.size());
     for (const auto& vertex : circleOutline) {
         outlineVertices.push_back(glm::vec2(
-            vertex.x + static_cast<float>(vehicle.v_norX),
-            vertex.y + static_cast<float>(vehicle.v_norY)
+            vertex.x + static_cast<float>(vehicle.m_normalized_x),
+            vertex.y + static_cast<float>(vehicle.m_normalized_y)
         ));
     }
 
-    glBindBuffer(GL_ARRAY_BUFFER, VBO);
+    glBindBuffer(GL_ARRAY_BUFFER, vbo);
     glBufferData(GL_ARRAY_BUFFER, outlineVertices.size() * sizeof(glm::vec2),
         outlineVertices.data(), GL_DYNAMIC_DRAW);
 
     // Белый цвет обводки
     glUniform3f(colorLoc, 1.0f, 1.0f, 1.0f);
 
-    glBindVertexArray(VAO);
+    glBindVertexArray(vao);
     glDrawArrays(GL_TRIANGLE_FAN, 0, static_cast<GLsizei>(outlineVertices.size()));
 
     // === РИСУЕМ ЦВЕТНОЕ ТЕЛО МАШИНЫ ===
@@ -167,24 +167,24 @@ void RenderVehicle(GLuint shaderProgram, GLuint VAO, GLuint VBO,
     bodyVertices.reserve(circleBody.size());
     for (const auto& vertex : circleBody) {
         bodyVertices.push_back(glm::vec2(
-            vertex.x + static_cast<float>(vehicle.v_norX),
-            vertex.y + static_cast<float>(vehicle.v_norY)
+            vertex.x + static_cast<float>(vehicle.m_normalized_x),
+            vertex.y + static_cast<float>(vehicle.m_normalized_y)
         ));
     }
 
-    glBindBuffer(GL_ARRAY_BUFFER, VBO);
+    glBindBuffer(GL_ARRAY_BUFFER, vbo);
     glBufferData(GL_ARRAY_BUFFER, bodyVertices.size() * sizeof(glm::vec2),
         bodyVertices.data(), GL_DYNAMIC_DRAW);
 
     // ✅ Используем кешированный цвет машины
-    glUniform3f(colorLoc, vehicle.cachedColor.r, vehicle.cachedColor.g, vehicle.cachedColor.b);
+    glUniform3f(colorLoc, vehicle.m_cached_color.r, vehicle.m_cached_color.g, vehicle.m_cached_color.b);
 
-    glBindVertexArray(VAO);
+    glBindVertexArray(vao);
     glDrawArrays(GL_TRIANGLE_FAN, 0, static_cast<GLsizei>(bodyVertices.size()));
 }
 
-void RenderAllVehicles(GLuint shaderProgram, GLuint VAO, GLuint VBO,
-    const glm::mat4& projection, const glm::vec2& cameraPos, float cameraZoom)
+void renderAllVehicles(GLuint shader_program, GLuint vao, GLuint vbo,
+    const glm::mat4& projection, const glm::vec2& camera_pos, float camera_zoom)
 {
     // ✅ Проверяем что карта загружена
     if (!m_MapLoaded) {
@@ -192,25 +192,25 @@ void RenderAllVehicles(GLuint shaderProgram, GLuint VAO, GLuint VBO,
     }
     
     // ✅ Не нужно вызывать glUseProgram и устанавливать projection
-    // Это уже сделано в main.cpp перед вызовом RenderAllVehicles
+    // Это уже сделано в main.cpp перед вызовом renderAllVehicles
 
     // Вычисляем границы видимости
-    float visibleWidth = 1.0f / cameraZoom * 2.0f;
-    float visibleHeight = 1.0f / cameraZoom * 2.0f;
-    float minX = cameraPos.x - visibleWidth;
-    float maxX = cameraPos.x + visibleWidth;
-    float minY = cameraPos.y - visibleHeight;
-    float maxY = cameraPos.y + visibleHeight;
+    float visibleWidth = 1.0f / camera_zoom * 2.0f;
+    float visibleHeight = 1.0f / camera_zoom * 2.0f;
+    float minX = camera_pos.x - visibleWidth;
+    float maxX = camera_pos.x + visibleWidth;
+    float minY = camera_pos.y - visibleHeight;
+    float maxY = camera_pos.y + visibleHeight;
 
     // ✅ БЫСТРОЕ копирование под мьютексом (~0.1ms)
-    std::vector<Venchile> vehiclesToRender;
+    std::vector<Vehicle> vehiclesToRender;
     {
-        std::lock_guard<std::mutex> lock(g_VehiclesMutex);
-        vehiclesToRender.reserve(g_Vehicles.size());
+        std::lock_guard<std::mutex> lock(g_vehicles_mutex);
+        vehiclesToRender.reserve(g_vehicles.size());
         
-        for (const auto& [id, vehicle] : g_Vehicles) {
-            float vX = static_cast<float>(vehicle.v_norX);
-            float vY = static_cast<float>(vehicle.v_norY);
+        for (const auto& [id, vehicle] : g_vehicles) {
+            float vX = static_cast<float>(vehicle.m_normalized_x);
+            float vY = static_cast<float>(vehicle.m_normalized_y);
 
             // Копируем только видимые машины
             if (vX >= minX && vX <= maxX && vY >= minY && vY <= maxY) {
@@ -221,11 +221,11 @@ void RenderAllVehicles(GLuint shaderProgram, GLuint VAO, GLuint VBO,
 
     // ✅ Рендеринг БЕЗ блокировки (может занять 10-20ms)
     for (const auto& vehicle : vehiclesToRender) {
-        RenderVehicle(shaderProgram, VAO, VBO, vehicle, projection);
+        renderVehicle(shader_program, vao, vbo, vehicle, projection);
     }
 }
 
-void VehicleClose()
+void vehicleClose()
 {
-	g_VehiclesActive = false;
+	g_is_vehicles_active = false;
 }

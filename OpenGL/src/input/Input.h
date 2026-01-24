@@ -16,7 +16,7 @@ void InputOrigin();
 
 void InputDataOpenGL(
     std::vector<glm::vec2>& points,
-    std::mutex& pointsMutex,
+    std::mutex& points_mutex,
     std::atomic<bool>& running
 );
 
@@ -28,11 +28,11 @@ void DDToMetr(double lat_deg, double lon_deg, double& easting, double& northing)
 
 void CordinateDifirenceFromOrigin(double CordiateX, double CordinateY, double& normalized_x, double& normalized_y);
 
-void InputDatainCode(std::vector<glm::vec2>& points, std::mutex& pointsMutex, std::atomic<bool>& running, double& normalized_x, double& normalized_y);
+void InputDatainCode(std::vector<glm::vec2>& points, std::mutex& points_mutex, std::atomic<bool>& running, double& normalized_x, double& normalized_y);
 
-void ChoseInputMode(std::vector<glm::vec2>& points, std::mutex& pointsMutex, std::atomic<bool>& running);
+void ChoseInputMode(std::vector<glm::vec2>& points, std::mutex& points_mutex, std::atomic<bool>& running);
 
-void LoadTrackFromData(const std::string& data, std::vector<glm::vec2>& points, std::mutex& pointsMutex);
+void LoadTrackFromData(const std::string& data, std::vector<glm::vec2>& points, std::mutex& points_mutex);
 
 class MapDate
 {
