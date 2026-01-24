@@ -1,14 +1,14 @@
-#include "../network/Client.h"
+﻿#include "../network/Client.h"
 
 // CLIENT 
 
-HSteamNetConnection g_hConnection;
+HSteamNetConnection g_connection_handle;
 
-bool ClientIsRunning_b = false;
-bool ClientShouldClose_b = false;
+bool g_is_client_running = false;
+bool g_should_close_client = false;
 bool ErrnumMsg_b = false;
 
-void OnClientConnectionStatusChanged(SteamNetConnectionStatusChangedCallback_t* pInfo)
+void onClientConnectionStatusChanged(SteamNetConnectionStatusChangedCallback_t* pInfo)
 {
 	switch (pInfo->m_info.m_eState)
 	{
@@ -20,17 +20,17 @@ void OnClientConnectionStatusChanged(SteamNetConnectionStatusChangedCallback_t* 
 	case k_ESteamNetworkingConnectionState_ProblemDetectedLocally:
 		std::cout << "LOST: Connection lost. Reason: " << pInfo->m_info.m_szEndDebug << std::endl;
 		SteamNetworkingSockets()->CloseConnection(pInfo->m_hConn, 0, nullptr, false);
-		g_hConnection = k_HSteamNetConnection_Invalid;
+		g_connection_handle = k_HSteamNetConnection_Invalid;
 	}
 }
 
-void ConnectToServer(const SteamNetworkingIPAddr& serverAddr)
+void connectToServer(const SteamNetworkingIPAddr& server_address)
 {
 	SteamNetworkingConfigValue_t opt;
-	opt.SetPtr(k_ESteamNetworkingConfig_Callback_ConnectionStatusChanged, (void*)OnClientConnectionStatusChanged);
-	g_hConnection = SteamNetworkingSockets()->ConnectByIPAddress(serverAddr, 1, &opt);
+	opt.SetPtr(k_ESteamNetworkingConfig_Callback_ConnectionStatusChanged, (void*)onClientConnectionStatusChanged);
+	g_connection_handle = SteamNetworkingSockets()->ConnectByIPAddress(server_address, 1, &opt);
 
-	if (g_hConnection == k_HSteamNetConnection_Invalid)
+	if (g_connection_handle == k_HSteamNetConnection_Invalid)
 	{
 		std::cerr << "Failed to initiate connection to server." << std::endl;
 		return;
@@ -38,10 +38,10 @@ void ConnectToServer(const SteamNetworkingIPAddr& serverAddr)
 }
 
 
-void SendClientMessage(const char* text)
+void sendClientMessage(const char* text)
 {
 	SteamNetworkingSockets()->SendMessageToConnection(
-		g_hConnection,
+		g_connection_handle,
 		text,
 		(uint32)strlen(text),
 		k_nSteamNetworkingSend_Reliable,
@@ -49,10 +49,10 @@ void SendClientMessage(const char* text)
 	);
 }
 
-void ListenMessagesFromServer()
+void listenMessagesFromServer()
 {
 	ISteamNetworkingMessage* pIncomingMsg[16];
-	int numMsgs = SteamNetworkingSockets()->ReceiveMessagesOnConnection(g_hConnection, pIncomingMsg, 16);
+	int numMsgs = SteamNetworkingSockets()->ReceiveMessagesOnConnection(g_connection_handle, pIncomingMsg, 16);
 
 	/*if (numMsgs < 0 && !ErrnumMsg_b)
 	{
@@ -80,50 +80,50 @@ void ListenMessagesFromServer()
 }
 
 
-bool ClientRunningStatus()
+bool isClientRunning()
 {
-	return ClientIsRunning_b;
+	return g_is_client_running;
 
 }
 
-void ChangeClientRunningStatus()
+void toggleClientRunning()
 {
-	ClientIsRunning_b = !ClientIsRunning_b;
+	g_is_client_running = !g_is_client_running;
 	std::this_thread::sleep_for(std::chrono::milliseconds(100));
 }
 
-void ClientStop()
+void clientStop()
 {
-	ClientShouldClose_b = true;
+	g_should_close_client = true;
 	std::this_thread::sleep_for(std::chrono::milliseconds(100));
 }
 
-void ContinueClientRunning()
+void continueClientRunning()
 {
-	ClientShouldClose_b = false;
+	g_should_close_client = false;
 	std::this_thread::sleep_for(std::chrono::milliseconds(100));
 }
 
-int ClientStart()
+int clientStart()
 {
 	std::cout << "Starting GNS Client..." << std::endl;
-	SteamDatagramErrMsg errMsg;
-	std::string serverName;
-	std::regex ipPortPattern(R"(^(\d{1,3}\.){3}\d{1,3}:\d{1,5}$)");
-	if (!GameNetworkingSockets_Init(nullptr, errMsg)) return 1;
+	SteamDatagramErrMsg error_message;
+	std::string server_name;
+	std::regex ip_port_pattern(R"(^(\d{1,3}\.){3}\d{1,3}:\d{1,5}$)");
+	if (!GameNetworkingSockets_Init(nullptr, error_message)) return 1;
 
-	SteamNetworkingIPAddr serverAddr;
-	serverAddr.Clear();
-	std::getline(std::cin, serverName);
-	if (serverName == "d" || serverName == " " || serverName == "\n")
+	SteamNetworkingIPAddr server_address;
+	server_address.Clear();
+	std::getline(std::cin, server_name);
+	if (server_name == "d" || server_name == " " || server_name == "\n")
 	{
-		serverAddr.ParseString("136.169.18.31:777");
+		server_address.ParseString("136.169.18.31:777");
 		std::cout << "Using default server address: 136.169.18.31:777" << std::endl;
 	}
-	else if(std::regex_match(serverName, ipPortPattern))
+	else if(std::regex_match(server_name, ip_port_pattern))
 	{
-		serverAddr.ParseString(serverName.c_str());
-		std::cout << "Using server address: " << serverName << std::endl;
+		server_address.ParseString(server_name.c_str());
+		std::cout << "Using server address: " << server_name << std::endl;
 	}
 	else
 	{
@@ -134,24 +134,24 @@ int ClientStart()
 	}
 
 
-	ConnectToServer(serverAddr);
+	connectToServer(server_address);
 	std::string message;
 	int counter = 400;
-	while (!ClientShouldClose_b)
+	while (!g_should_close_client)
 	{
 
 		SteamNetworkingSockets()->RunCallbacks();
 
-		ListenMessagesFromServer();
+		listenMessagesFromServer();
 
 		if (counter >= 600)
 		{
 			SteamNetConnectionInfo_t info;
-			SteamNetworkingSockets()->GetConnectionInfo(g_hConnection, &info);
+			SteamNetworkingSockets()->GetConnectionInfo(g_connection_handle, &info);
 
 			if (info.m_eState == k_ESteamNetworkingConnectionState_Connected) {
 				std::cout << "Sending message to server..." << std::endl;
-				SendClientMessage("Hello Server");
+				sendClientMessage("Hello Server");
 			}
 			else {
 				std::cout << "Still waiting for connection... (State: " << info.m_eState << ")" << std::endl;

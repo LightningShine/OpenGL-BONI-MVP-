@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include <cstdint>
 #include <iostream>
@@ -27,12 +27,12 @@ struct TelemetryPacket
 };
 #pragma pack(pop)
 
-int ServerWork();
+int serverWork();
 
-bool ServerRunningStatus();
+bool isServerRunning();
 
-void ChangeServerRunningStatus();
+void ChangeisServerRunning();
 
-void ServerStop();
+void serverStop();
 
-void ContinueServerRunning();
+void continueServerRunning();

@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include "../network/Server.h"
 #include "../serialib/serialib.h"
 
@@ -10,5 +10,5 @@ enum class PacketType : uint32_t {
 	ALERT     = 0x4552520A   // Error in Packet
 };
 
-void Test_Serial();
-bool OpenCOMPort(const std::string& portName);
+void testSerial();
+bool openCOMPort(const std::string& port_name);

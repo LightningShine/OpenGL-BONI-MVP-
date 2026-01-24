@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include <iostream>
 #include <GameNetworkingSockets/steam/steamnetworkingsockets.h>
 #include <GameNetworkingSockets/steam/isteamnetworkingsockets.h>
@@ -9,13 +9,13 @@
 
 
 // CLIENT 
-int ClientStart();
+int clientStart();
 
 
-bool ClientRunningStatus();
+bool isClientRunning();
 
-void ChangeClientRunningStatus();
+void toggleClientRunning();
 
-void ClientStop();
+void clientStop();
 
-void ContinueClientRunning();
+void continueClientRunning();

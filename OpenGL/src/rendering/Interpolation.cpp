@@ -7,7 +7,7 @@
 
 
 // Helper: Calculates the time knot (unchanged)
-float GetT(float t, const glm::vec2& p0, const glm::vec2& p1, float alpha)
+float getTimeKnot(float t, const glm::vec2& p0, const glm::vec2& p1, float alpha)
 {
     float a = std::pow((p1.x - p0.x), 2.0f) + std::pow((p1.y - p0.y), 2.0f);
     float b = std::pow(a, 0.5f);
@@ -17,21 +17,21 @@ float GetT(float t, const glm::vec2& p0, const glm::vec2& p1, float alpha)
 }
 
 // Helper: Standard Linear Interpolation (unchanged)
-glm::vec2 Lerp(const glm::vec2& p0, const glm::vec2& p1, float t, float t0, float t1)
+glm::vec2 lerp(const glm::vec2& p0, const glm::vec2& p1, float t, float t0, float t1)
 {
     if (std::abs(t1 - t0) < 1e-5f) return p0;
     return (p0 * (t1 - t) + p1 * (t - t0)) / (t1 - t0);
 }
 
-// NEW FUNCTION: Calculates derivative (velocity) for Lerp
+// NEW FUNCTION: Calculates derivative (velocity) for lerp
 // v0, v1 - velocities (derivatives) at points p0 and p1
-glm::vec2 LerpDerivative(const glm::vec2& p0, const glm::vec2& p1,
+glm::vec2 lerpDerivative(const glm::vec2& p0, const glm::vec2& p1,
     const glm::vec2& v0, const glm::vec2& v1,
     float t, float t0, float t1)
 {
     float dt = t1 - t0;
     if (std::abs(dt) < 1e-5f) return glm::vec2(0.0f);
-    // Derivative formula for recursive Lerp
+    // Derivative formula for recursive lerp
     return ((p1 - p0) + v0 * (t1 - t) + v1 * (t - t0)) / dt;
 }
 
@@ -39,147 +39,147 @@ glm::vec2 LerpDerivative(const glm::vec2& p0, const glm::vec2& p1,
 
 
 // Change return type to std::vector<SplinePoint>
-std::vector<SplinePoint> InterpolatePointsWithTangents(const std::vector<glm::vec2>& originalPoints, int pointsPerSegment, float alpha)
+std::vector<SplinePoint> interpolatePointsWithTangents(const std::vector<glm::vec2>& original_points, int points_per_segment, float alpha)
 {
-    std::vector<SplinePoint> resultPath;
-    if (originalPoints.size() < 2) return resultPath;
+    std::vector<SplinePoint> result_path;
+    if (original_points.size() < 2) return result_path;
 
-    for (size_t i = 0; i < originalPoints.size() - 1; i++)
+    for (size_t i = 0; i < original_points.size() - 1; i++)
     {
         glm::vec2 p0, p1, p2, p3;
-        p1 = originalPoints[i];
-        p2 = originalPoints[i + 1];
+        p1 = original_points[i];
+        p2 = original_points[i + 1];
 
-        if (i == 0) p0 = p1 - (p2 - p1); else p0 = originalPoints[i - 1];
-        if (i + 2 < originalPoints.size()) p3 = originalPoints[i + 2]; else p3 = p2 + (p2 - p1);
+        if (i == 0) p0 = p1 - (p2 - p1); else p0 = original_points[i - 1];
+        if (i + 2 < original_points.size()) p3 = original_points[i + 2]; else p3 = p2 + (p2 - p1);
 
         float t0 = 0.0f;
-        float t1 = GetT(t0, p0, p1, alpha);
-        float t2 = GetT(t1, p1, p2, alpha);
-        float t3 = GetT(t2, p2, p3, alpha);
+        float t1 = getTimeKnot(t0, p0, p1, alpha);
+        float t2 = getTimeKnot(t1, p1, p2, alpha);
+        float t3 = getTimeKnot(t2, p2, p3, alpha);
 
-        for (int j = 0; j < pointsPerSegment; j++)
+        for (int j = 0; j < points_per_segment; j++)
         {
-            float t = t1 + ((t2 - t1) * ((float)j / (float)pointsPerSegment));
+            float t = t1 + ((t2 - t1) * ((float)j / (float)points_per_segment));
 
             // --- Position (as before) ---
-            glm::vec2 A1 = Lerp(p0, p1, t, t0, t1);
-            glm::vec2 A2 = Lerp(p1, p2, t, t1, t2);
-            glm::vec2 A3 = Lerp(p2, p3, t, t2, t3);
-            glm::vec2 B1 = Lerp(A1, A2, t, t0, t2);
-            glm::vec2 B2 = Lerp(A2, A3, t, t1, t3);
-            glm::vec2 C = Lerp(B1, B2, t, t1, t2); // Final position
+            glm::vec2 A1 = lerp(p0, p1, t, t0, t1);
+            glm::vec2 A2 = lerp(p1, p2, t, t1, t2);
+            glm::vec2 A3 = lerp(p2, p3, t, t2, t3);
+            glm::vec2 B1 = lerp(A1, A2, t, t0, t2);
+            glm::vec2 B2 = lerp(A2, A3, t, t1, t3);
+            glm::vec2 C = lerp(B1, B2, t, t1, t2); // Final position
 
-            // --- ANALYTICAL TANGENT (New) ---
+            // --- ANALYTICAL tangent (New) ---
             // Velocities of base points are 0, as they are constants
-            glm::vec2 zeroV(0.0f);
+            glm::vec2 zero_velocity(0.0f);
 
             // Level 1 derivatives (velocities between control points)
-            glm::vec2 VA1 = LerpDerivative(p0, p1, zeroV, zeroV, t, t0, t1);
-            glm::vec2 VA2 = LerpDerivative(p1, p2, zeroV, zeroV, t, t1, t2);
-            glm::vec2 VA3 = LerpDerivative(p2, p3, zeroV, zeroV, t, t2, t3);
+            glm::vec2 VA1 = lerpDerivative(p0, p1, zero_velocity, zero_velocity, t, t0, t1);
+            glm::vec2 VA2 = lerpDerivative(p1, p2, zero_velocity, zero_velocity, t, t1, t2);
+            glm::vec2 VA3 = lerpDerivative(p2, p3, zero_velocity, zero_velocity, t, t2, t3);
 
             // Level 2 derivatives
-            glm::vec2 VB1 = LerpDerivative(A1, A2, VA1, VA2, t, t0, t2);
-            glm::vec2 VB2 = LerpDerivative(A2, A3, VA2, VA3, t, t1, t3);
+            glm::vec2 VB1 = lerpDerivative(A1, A2, VA1, VA2, t, t0, t2);
+            glm::vec2 VB2 = lerpDerivative(A2, A3, VA2, VA3, t, t1, t3);
 
             // Level 3 derivative (Final tangent/velocity)
-            glm::vec2 Tangent = LerpDerivative(B1, B2, VB1, VB2, t, t1, t2);
+            glm::vec2 tangent = lerpDerivative(B1, B2, VB1, VB2, t, t1, t2);
 
             SplinePoint sp;
             sp.position = C;
             // Important: normalize the tangent! If length is 0, take the previous or default one.
-            if (glm::length(Tangent) > 1e-6f) {
-                sp.tangent = glm::normalize(Tangent);
+            if (glm::length(tangent) > 1e-6f) {
+                sp.tangent = glm::normalize(tangent);
             }
-            else if (!resultPath.empty()) {
-                sp.tangent = resultPath.back().tangent;
+            else if (!result_path.empty()) {
+                sp.tangent = result_path.back().tangent;
             }
             else {
                 sp.tangent = glm::vec2(1, 0); // In case of the first point with zero velocity
             }
 
-            resultPath.push_back(sp);
+            result_path.push_back(sp);
         }
     }
 
     // Add the very last point.
     // Its tangent will be the same as the previous calculated point.
-    if (!resultPath.empty()) {
-        SplinePoint lastSP;
-        lastSP.position = originalPoints.back();
-        lastSP.tangent = resultPath.back().tangent;
-        resultPath.push_back(lastSP);
+    if (!result_path.empty()) {
+        SplinePoint last_point;
+        last_point.position = original_points.back();
+        last_point.tangent = result_path.back().tangent;
+        result_path.push_back(last_point);
     }
 
-    return resultPath;
+    return result_path;
 }
 
-std::vector<glm::vec2> GenerateTriangleStripFromLine(const std::vector<SplinePoint>& splinePoints, float width)
+std::vector<glm::vec2> generateTriangleStripFromLine(const std::vector<SplinePoint>& spline_points, float width)
 {
-    std::vector<glm::vec2> triangleStripPoints;
-    if (splinePoints.size() < 2) return triangleStripPoints;
+    std::vector<glm::vec2> triangle_strip_points;
+    if (spline_points.size() < 2) return triangle_strip_points;
 
-    float halfWidth = width * 0.5f;
+    float half_width = width * 0.5f;
 
-    for (size_t i = 0; i < splinePoints.size(); i++)
+    for (size_t i = 0; i < spline_points.size(); i++)
     {
-        glm::vec2 tangent = splinePoints[i].tangent;
+        glm::vec2 tangent = spline_points[i].tangent;
         glm::vec2 normal(-tangent.y, tangent.x); // Standard perpendicular
 
         // --- MITER LIMIT LOGIC ---
         // If this is a point inside the path, calculate the average normal between the current and previous segment
-        if (i > 0 && i < splinePoints.size() - 1) {
-            glm::vec2 prevNormal(-splinePoints[i - 1].tangent.y, splinePoints[i - 1].tangent.x);
-            glm::vec2 miter = glm::normalize(prevNormal + normal);
+        if (i > 0 && i < spline_points.size() - 1) {
+            glm::vec2 prev_normal(-spline_points[i - 1].tangent.y, spline_points[i - 1].tangent.x);
+            glm::vec2 miter = glm::normalize(prev_normal + normal);
 
             // Correction length: 1 / cos(angle/2)
             float dot = glm::dot(miter, normal);
-            float length = halfWidth / std::max(0.1f, dot); // Protection against division by 0
+            float length = half_width / std::max(0.1f, dot); // Protection against division by 0
 
             // Limit the length (to avoid infinite spikes)
-            if (length > halfWidth * 2.0f) length = halfWidth * 2.0f;
+            if (length > half_width * 2.0f) length = half_width * 2.0f;
 
-            normal = miter * (length / halfWidth); // Update normal considering the length
+            normal = miter * (length / half_width); // Update normal considering the length
         }
 
-        glm::vec2 leftPoint = splinePoints[i].position + normal * halfWidth;
-        glm::vec2 rightPoint = splinePoints[i].position - normal * halfWidth;
+        glm::vec2 left_point = spline_points[i].position + normal * half_width;
+        glm::vec2 right_point = spline_points[i].position - normal * half_width;
 
-        triangleStripPoints.push_back(leftPoint);
-        triangleStripPoints.push_back(rightPoint);
+        triangle_strip_points.push_back(left_point);
+        triangle_strip_points.push_back(right_point);
     }
-    return triangleStripPoints;
+    return triangle_strip_points;
 }
 
 
-std::vector<glm::vec2> SmoothPath(const std::vector<glm::vec2>& rawPoints, int windowSize) {
-    if (rawPoints.size() < windowSize) return rawPoints;
-    std::vector<glm::vec2> smoothed;
+std::vector<glm::vec2> smoothPath(const std::vector<glm::vec2>& raw_points, int window_size) {
+    if (raw_points.size() < window_size) return raw_points;
+    std::vector<glm::vec2> smoothed_points;
 
-    for (size_t i = 0; i < rawPoints.size(); i++) {
-        glm::vec2 avg(0.0f);
+    for (size_t i = 0; i < raw_points.size(); i++) {
+        glm::vec2 average(0.0f);
         int count = 0;
-        for (int j = -windowSize / 2; j <= windowSize / 2; j++) {
+        for (int j = -window_size / 2; j <= window_size / 2; j++) {
             int idx = (int)i + j;
-            if (idx >= 0 && idx < (int)rawPoints.size()) {
-                avg += rawPoints[idx];
+            if (idx >= 0 && idx < (int)raw_points.size()) {
+                average += raw_points[idx];
                 count++;
             }
         }
-        smoothed.push_back(avg / (float)count);
+        smoothed_points.push_back(average / (float)count);
     }
-    return smoothed;
+    return smoothed_points;
 }
 
 // --- SIMPLIFICATION ALGORITHMS ---
 
-std::vector<glm::vec2> FilterPointsByDistance(const std::vector<glm::vec2>& points, float minDistance) {
+std::vector<glm::vec2> filterPointsByDistance(const std::vector<glm::vec2>& points, float min_distance) {
     if (points.empty()) return points;
     std::vector<glm::vec2> result;
     result.push_back(points[0]);
     for (size_t i = 1; i < points.size(); i++) {
-        if (glm::distance(points[i], result.back()) >= minDistance) {
+        if (glm::distance(points[i], result.back()) >= min_distance) {
             result.push_back(points[i]);
         }
     }
@@ -187,43 +187,43 @@ std::vector<glm::vec2> FilterPointsByDistance(const std::vector<glm::vec2>& poin
 }
 
 // Helper for Douglas-Peucker
-static float PerpendicularDistance(const glm::vec2& p, const glm::vec2& lineStart, const glm::vec2& lineEnd) {
-    float dx = lineEnd.x - lineStart.x;
-    float dy = lineEnd.y - lineStart.y;
-    float mag = std::sqrt(dx * dx + dy * dy);
-    if (mag < 1e-6f) {
-        return glm::distance(p, lineStart);
+static float perpendicularDistance(const glm::vec2& p, const glm::vec2& line_start, const glm::vec2& line_end) {
+    float dx = line_end.x - line_start.x;
+    float dy = line_end.y - line_start.y;
+    float magnitude = std::sqrt(dx * dx + dy * dy);
+    if (magnitude < 1e-6f) {
+        return glm::distance(p, line_start);
     }
-    return std::abs(dy * p.x - dx * p.y + lineEnd.x * lineStart.y - lineEnd.y * lineStart.x) / mag;
+    return std::abs(dy * p.x - dx * p.y + line_end.x * line_start.y - line_end.y * line_start.x) / magnitude;
 }
 
-static void DouglasPeuckerRecursive(const std::vector<glm::vec2>& points, int first, int last, float tolerance, std::vector<bool>& keep) {
-    float maxDist = 0.0f;
-    int index = 0;
+static void douglasPeuckerRecursive(const std::vector<glm::vec2>& points, int first, int last, float tolerance, std::vector<bool>& keep) {
+    float max_distance = 0.0f;
+    int point_index = 0;
 
     for (int i = first + 1; i < last; i++) {
-        float dist = PerpendicularDistance(points[i], points[first], points[last]);
-        if (dist > maxDist) {
-            maxDist = dist;
-            index = i;
+        float dist = perpendicularDistance(points[i], points[first], points[last]);
+        if (dist > max_distance) {
+            max_distance = dist;
+            point_index = i;
         }
     }
 
-    if (maxDist > tolerance) {
-        keep[index] = true;
-        DouglasPeuckerRecursive(points, first, index, tolerance, keep);
-        DouglasPeuckerRecursive(points, index, last, tolerance, keep);
+    if (max_distance > tolerance) {
+        keep[point_index] = true;
+        douglasPeuckerRecursive(points, first, point_index, tolerance, keep);
+        douglasPeuckerRecursive(points, point_index, last, tolerance, keep);
     }
 }
 
-std::vector<glm::vec2> SimplifyPath(const std::vector<glm::vec2>& points, float tolerance) {
+std::vector<glm::vec2> simplifyPath(const std::vector<glm::vec2>& points, float tolerance) {
     if (points.size() < 3) return points;
 
     std::vector<bool> keep(points.size(), false);
     keep[0] = true;
     keep[points.size() - 1] = true;
 
-    DouglasPeuckerRecursive(points, 0, (int)points.size() - 1, tolerance, keep);
+    douglasPeuckerRecursive(points, 0, (int)points.size() - 1, tolerance, keep);
 
     std::vector<glm::vec2> result;
     for (size_t i = 0; i < points.size(); i++) {
@@ -235,7 +235,7 @@ std::vector<glm::vec2> SimplifyPath(const std::vector<glm::vec2>& points, float 
 }
 
 // New algorithm 
-std::vector<SplinePoint> InterpolateRoundedPolyline(const std::vector<glm::vec2>& points, float radius, int segmentsPerCorner)
+std::vector<SplinePoint> interpolateRoundedPolyline(const std::vector<glm::vec2>& points, float radius, int segments_per_corner)
 {
 
     std::vector<SplinePoint> result;
@@ -243,8 +243,8 @@ std::vector<SplinePoint> InterpolateRoundedPolyline(const std::vector<glm::vec2>
 
     size_t n = points.size();
     // Check for closed loop
-    bool isClosed = (glm::distance(points.front(), points.back()) < 1e-4f);
-    size_t count = isClosed ? n - 1 : n;
+    bool is_closed = (glm::distance(points.front(), points.back()) < 1e-4f);
+    size_t count = is_closed ? n - 1 : n;
 
     for (size_t i = 0; i < count; i++) {
         glm::vec2 p1 = points[i];
@@ -267,24 +267,24 @@ std::vector<SplinePoint> InterpolateRoundedPolyline(const std::vector<glm::vec2>
         // Distance to rounding points (must not exceed half the segment length)
         float d1 = glm::distance(p0, p1);
         float d2 = glm::distance(p1, p2);
-        float actualRadius = std::min({ radius, d1 * 0.5f, d2 * 0.5f });
+        float actual_radius = std::min({ radius, d1 * 0.5f, d2 * 0.5f });
 
         // Start and end points of rounding
-        glm::vec2 startPoint = p1 + v1 * actualRadius;
-        glm::vec2 endPoint = p1 + v2 * actualRadius;
+        glm::vec2 start_point = p1 + v1 * actual_radius;
+        glm::vec2 end_point = p1 + v2 * actual_radius;
 
         // Build Quadratic Bezier curve for the corner
-        for (int j = 0; j <= segmentsPerCorner; j++) {
-            float t = (float)j / (float)segmentsPerCorner;
+        for (int j = 0; j <= segments_per_corner; j++) {
+            float t = (float)j / (float)segments_per_corner;
 
             // Bezier formula: (1-t)^2*P0 + 2(1-t)t*P1 + t^2*P2
-            glm::vec2 pos = std::pow(1.0f - t, 2.0f) * startPoint +
+            glm::vec2 pos = std::pow(1.0f - t, 2.0f) * start_point +
                 2.0f * (1.0f - t) * t * p1 +
-                std::pow(t, 2.0f) * endPoint;
+                std::pow(t, 2.0f) * end_point;
 
             // Derivative (tangent) for correct track thickness
-            glm::vec2 tangent = 2.0f * (1.0f - t) * (p1 - startPoint) +
-                2.0f * t * (endPoint - p1);
+            glm::vec2 tangent = 2.0f * (1.0f - t) * (p1 - start_point) +
+                2.0f * t * (end_point - p1);
 
             SplinePoint sp;
             sp.position = pos;
@@ -293,6 +293,6 @@ std::vector<SplinePoint> InterpolateRoundedPolyline(const std::vector<glm::vec2>
         }
     }
 
-    if (isClosed) result.push_back(result.front());
+    if (is_closed) result.push_back(result.front());
     return result;
 }

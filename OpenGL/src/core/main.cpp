@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include <iostream>
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
@@ -53,17 +53,17 @@ void processInput(GLFWwindow* window, glm::vec2& camera_pos, float& zoom, float 
 
 	if (isServerKeyPressed)
 	{
-		if (!ServerRunningStatus())
+		if (!isServerRunning())
 		{
-			ContinueServerRunning();
-			thread ServerThread = thread(ServerWork);
+			continueServerRunning();
+			thread ServerThread = thread(serverWork);
 			ServerThread.detach();
-			ChangeServerRunningStatus();
+			ChangeisServerRunning();
 		}
 		else
 		{
-			ServerStop();
-			ChangeServerRunningStatus();
+			serverStop();
+			ChangeisServerRunning();
 		}
 		
 	}
@@ -72,17 +72,17 @@ void processInput(GLFWwindow* window, glm::vec2& camera_pos, float& zoom, float 
 	bool isClientKeyPressed = glfwGetKey(window, GLFW_KEY_C) == GLFW_PRESS && glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS;
 	if (isClientKeyPressed)
 	{
-		if (!ClientRunningStatus())
+		if (!isClientRunning())
 		{
-			ContinueClientRunning();
-			thread ClientThread = thread(ClientStart);
+			continueClientRunning();
+			thread ClientThread = thread(clientStart);
 			ClientThread.detach();
-			ChangeClientRunningStatus();
+			toggleClientRunning();
 		}
 		else
 		{
-			ClientStop();
-			ChangeClientRunningStatus();
+			clientStop();
+			toggleClientRunning();
 		}
 	}
 	
@@ -186,7 +186,7 @@ void drop_callback(GLFWwindow* window, int count, const char** paths)
 			{
 				std::stringstream buffer;
 				buffer << file.rdbuf();
-				LoadTrackFromData(buffer.str(), *context->points, *context->points_mutex);
+				loadTrackFromData(buffer.str(), *context->points, *context->points_mutex);
 				std::cout << "Loaded file: " << paths[i] << std::endl;
                 
                 if (context->ui)
@@ -484,26 +484,26 @@ int main()
 
 			if (pointCount > 1)
 			{
-				m_MapLoaded = true;
+				g_is_map_loaded = true;
 
 				// radius: 0.02f (rounding), segments: 10 (corner smoth)
 				float CornerRadius = TrackConstants::TRACK_CORNER_RADIUS;
 
 				// 1. Filter noise (points too close)
-				std::vector<glm::vec2> filteredPoints = FilterPointsByDistance(points, 0.05f);
+				std::vector<glm::vec2> filteredPoints = filterPointsByDistance(points, 0.05f);
 
 				// 2. Simplify path (remove wavy lines on straights)
-				std::vector<glm::vec2> simplifiedPoints = SimplifyPath(filteredPoints, 0.02f);
+				std::vector<glm::vec2> simplifiedPoints = simplifyPath(filteredPoints, 0.02f);
 
 				// 3. Generate rounded corners
-				std::vector<SplinePoint> smoothPoints = InterpolateRoundedPolyline(
+				std::vector<SplinePoint> smoothPoints = interpolateRoundedPolyline(
 					simplifiedPoints, 
 					CornerRadius, 
 					TrackConstants::TRACK_CORNER_SEGMENTS
 				);
 
-				borderLayer = GenerateTriangleStripFromLine(smoothPoints, TrackConstants::TRACK_BORDER_WIDTH);
-				asphaltLayer = GenerateTriangleStripFromLine(smoothPoints, TrackConstants::TRACK_ASPHALT_WIDTH);
+				borderLayer = generateTriangleStripFromLine(smoothPoints, TrackConstants::TRACK_BORDER_WIDTH);
+				asphaltLayer = generateTriangleStripFromLine(smoothPoints, TrackConstants::TRACK_ASPHALT_WIDTH);
 
 
 			}
@@ -531,7 +531,7 @@ int main()
 		ui.EndFrame();
 		
 		// ✅ Рисуем машины только если карта загружена
-		if (m_MapLoaded) { 
+		if (g_is_map_loaded) { 
 			renderAllVehicles(shader_program, vao, vbo, projection, camera_position, camera_zoom); 
 		}
 		// check and call events and swap the buffers
@@ -545,8 +545,8 @@ int main()
 	// ========================== CLEAN UP ==========================
 	ui.Shutdown();
 
-	ServerStop();
-	ClientStop();
+	serverStop();
+	clientStop();
 	glDeleteVertexArrays(1, &vao);
 	glDeleteBuffers(1, &vbo);
 	glDeleteProgram(shader_program);

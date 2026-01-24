@@ -1,4 +1,4 @@
-#include "../vehicle/Vehicle.h"
+﻿#include "../vehicle/Vehicle.h"
 #include "../input/Input.h"
 #include "../Config.h"
 #include <cmath>
@@ -20,15 +20,15 @@ int32_t generateVehicleID()
 Vehicle::Vehicle()
 {
     // ✅ Проверяем что карта загружена
-    if (!m_MapLoaded)
+    if (!g_is_map_loaded)
     {
         std::cerr << "Error: Cannot create vehicle - map not loaded!" << std::endl;
         return;
     }
     
     // ✅ Используем координаты origin трека (первая точка)
-    m_lat_dd = mapOrigin.originDD_lat;
-    m_lon_dd = mapOrigin.originDD_lon;
+    m_lat_dd = g_map_origin.m_origin_lat_dd;
+    m_lon_dd = g_map_origin.m_origin_lon_dd;
     m_speed_kph = 0.0;
     m_acceleration = 0.0;
     m_g_force_x = 0.0;
@@ -36,8 +36,8 @@ Vehicle::Vehicle()
     m_fix_type = 1;
     m_id = generateVehicleID(); // ✅ Автоматическая генерация ID
     
-    DDToMetr(m_lat_dd, m_lon_dd, m_meters_easting, m_meters_northing);
-    CordinateDifirenceFromOrigin(m_meters_easting, m_meters_northing, m_normalized_x, m_normalized_y);
+    coordinatesToMeters(m_lat_dd, m_lon_dd, m_meters_easting, m_meters_northing);
+    getCoordinateDifferenceFromOrigin(m_meters_easting, m_meters_northing, m_normalized_x, m_normalized_y);
     
     m_last_update_time = std::chrono::steady_clock::now();
     
@@ -57,8 +57,8 @@ Vehicle::Vehicle(const TelemetryPacket& packet)
     m_g_force_y = packet.gForceY / 100.0;
     m_fix_type = packet.fixtype;
     m_id = packet.ID;
-    DDToMetr(m_lat_dd, m_lon_dd, m_meters_easting, m_meters_northing);
-    CordinateDifirenceFromOrigin(m_meters_easting, m_meters_northing, m_normalized_x, m_normalized_y);
+    coordinatesToMeters(m_lat_dd, m_lon_dd, m_meters_easting, m_meters_northing);
+    getCoordinateDifferenceFromOrigin(m_meters_easting, m_meters_northing, m_normalized_x, m_normalized_y);
 
     m_last_update_time = std::chrono::steady_clock::now();
     
@@ -187,7 +187,7 @@ void renderAllVehicles(GLuint shader_program, GLuint vao, GLuint vbo,
     const glm::mat4& projection, const glm::vec2& camera_pos, float camera_zoom)
 {
     // ✅ Проверяем что карта загружена
-    if (!m_MapLoaded) {
+    if (!g_is_map_loaded) {
         return; // Не рисуем машины если нет трека
     }
     

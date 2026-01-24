@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include <vector>
 #include <mutex>
 #include <atomic>
@@ -12,46 +12,44 @@
 
 
 
-void InputOrigin();
+void inputOrigin();
 
-void InputDataOpenGL(
+void inputDataOpenGL(
     std::vector<glm::vec2>& points,
     std::mutex& points_mutex,
     std::atomic<bool>& running
 );
 
-void CordinatesToDecimalFormat(std::string line, double& dec_lat_deg, double& dec_lon_deg);
+void coordinatesToDecimalFormat(std::string line, double& decimal_lat_deg, double& decimal_lon_deg);
 
-void CreateOriginDD(double lat_deg, double lon_deg, double& easting, double& northing);
+void createOriginDD(double lat_deg, double lon_deg, double& easting_meters, double& northing_meters);
 
-void DDToMetr(double lat_deg, double lon_deg, double& easting, double& northing);
+void coordinatesToMeters(double lat_deg, double lon_deg, double& easting_meters, double& northing_meters);
 
-void CordinateDifirenceFromOrigin(double CordiateX, double CordinateY, double& normalized_x, double& normalized_y);
+void getCoordinateDifferenceFromOrigin(double CordiateX, double CordinateY, double& normalized_x, double& normalized_y);
 
-void InputDatainCode(std::vector<glm::vec2>& points, std::mutex& points_mutex, std::atomic<bool>& running, double& normalized_x, double& normalized_y);
+void inputDataInCode(std::vector<glm::vec2>& points, std::mutex& points_mutex, std::atomic<bool>& running, double& normalized_x, double& normalized_y);
 
-void ChoseInputMode(std::vector<glm::vec2>& points, std::mutex& points_mutex, std::atomic<bool>& running);
+void chooseInputMode(std::vector<glm::vec2>& points, std::mutex& points_mutex, std::atomic<bool>& running);
 
-void LoadTrackFromData(const std::string& data, std::vector<glm::vec2>& points, std::mutex& points_mutex);
+void loadTrackFromData(const std::string& data, std::vector<glm::vec2>& points, std::mutex& points_mutex);
 
-class MapDate
+class MapOrigin
 {
 public:
-	double originDD_lat;
-	double originDD_lon;
-	double originMetr_est;
-	double originMetr_nort;
-	int originZone_int;
-	double origin_mapsize = 100;
-	char originZone_char;
+	double m_origin_lat_dd;
+	double m_origin_lon_dd;
+	double m_origin_meters_easting;
+	double m_origin_meters_northing;
+	int m_origin_zone_int;
+	double m_map_size = 100;
+	char m_origin_zone_char;
 
 };
 
-// ? ???????????? ?????????? origin ??? ????????????? ? Vehicle
-extern MapDate mapOrigin;
+extern MapOrigin g_map_origin;
 
-// ? ???? ???????? ?????
-extern std::atomic<bool> m_MapLoaded;
+extern std::atomic<bool> g_is_map_loaded;
 
 
 

@@ -1,4 +1,4 @@
-#include "../network/Server.h"
+﻿#include "../network/Server.h"
 
 
 // SERVER 
@@ -7,7 +7,7 @@ HSteamListenSocket g_hListenSocket;
 HSteamNetPollGroup g_hPollGroup;
 std::vector<HSteamNetConnection> g_hConnections;
 
-bool ServerIsRunning_b = false;
+bool g_is_server_running = false;
 bool ServerNeedStop_b = false;
 
 
@@ -154,24 +154,24 @@ void FrameUpdate()
 
 void RandomTelemetryData(TelemetryPacket& packet);
 
-bool ServerRunningStatus()
+bool isServerRunning()
 {
-	return ServerIsRunning_b;
+	return g_is_server_running;
 }
 
-void ChangeServerRunningStatus()
+void ChangeisServerRunning()
 {
-	ServerIsRunning_b = !ServerIsRunning_b;
+	g_is_server_running = !g_is_server_running;
 	std::this_thread::sleep_for(std::chrono::milliseconds(100));
 }
 
-void ServerStop()
+void serverStop()
 {
 	ServerNeedStop_b = true;
 	std::this_thread::sleep_for(std::chrono::milliseconds(100));
 }
 
-void ContinueServerRunning()
+void continueServerRunning()
 {
 	ServerNeedStop_b = false;
 	std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -182,7 +182,7 @@ void ManagePort(bool open);
 
 // SERVER MAIN FUNCTION ////////////////////////////////////
 
-int ServerWork()
+int serverWork()
 {
 
 	std::cout << "Starting GNS Server..." << std::endl;

@@ -1,14 +1,14 @@
-#include "../network/ESP32_Code.h"
+﻿#include "../network/ESP32_Code.h"
 
 
 serialib serial;
 
-bool OpenCOMPort(const std::string& portName)
+bool openCOMPort(const std::string& port_name)
 {
-    int result = serial.openDevice(portName.c_str(), 115200);
+    int result = serial.openDevice(port_name.c_str(), 115200);
 
     if (result == 1) {
-        std::cout << "Successfully opened " << portName << std::endl;
+        std::cout << "Successfully opened " << port_name << std::endl;
 
         serial.flushReceiver();
 
@@ -16,7 +16,7 @@ bool OpenCOMPort(const std::string& portName)
     }
 
     switch (result) {
-    case -1: std::cerr << "Error: Device not found: " << portName << std::endl; break;
+    case -1: std::cerr << "Error: Device not found: " << port_name << std::endl; break;
     case -2: std::cerr << "Error: Error while setting port parameters." << std::endl; break;
     case -3: std::cerr << "Error: Another program is already using this port!" << std::endl; break;
     default: std::cerr << "Error: Unknown error opening port." << std::endl; break;
@@ -25,7 +25,7 @@ bool OpenCOMPort(const std::string& portName)
 }
 
 
-void ReadingFromCOM()
+void readFromCOM()
 {
     uint32_t header = 0;
     uint8_t byte;
@@ -44,9 +44,9 @@ void ReadingFromCOM()
 }
 
 
-void Test_Serial()
+void testSerial()
 {
-    if (OpenCOMPort("COM1"))
+    if (openCOMPort("COM1"))
     {
         std::cout << "Connection established. Ready to receive data." << std::endl;
 

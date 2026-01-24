@@ -8,18 +8,18 @@ struct SplinePoint {
     glm::vec2 tangent; // Нормализованный вектор направления
 };
 
-glm::vec2 LerpDerivative(const glm::vec2& p0, const glm::vec2& p1,
+glm::vec2 lerpDerivative(const glm::vec2& p0, const glm::vec2& p1,
     const glm::vec2& v0, const glm::vec2& v1,
     float t, float t0, float t1);
 
-std::vector<SplinePoint> InterpolatePointsWithTangents(const std::vector<glm::vec2>& originalPoints, int pointsPerSegment, float alpha =0.5f);
+std::vector<SplinePoint> interpolatePointsWithTangents(const std::vector<glm::vec2>& original_points, int points_per_segment, float alpha =0.5f);
 
-std::vector<SplinePoint> InterpolateRoundedPolyline(const std::vector<glm::vec2>& points, float radius, int segmentsPerCorner);
+std::vector<SplinePoint> interpolateRoundedPolyline(const std::vector<glm::vec2>& points, float radius, int segments_per_corner);
 
-std::vector<glm::vec2> SmoothPath(const std::vector<glm::vec2>& rawPoints, int windowSize = 3);
+std::vector<glm::vec2> smoothPath(const std::vector<glm::vec2>& raw_points, int window_size = 3);
 
-std::vector<glm::vec2> SimplifyPath(const std::vector<glm::vec2>& points, float tolerance);
+std::vector<glm::vec2> simplifyPath(const std::vector<glm::vec2>& points, float tolerance);
 
-std::vector<glm::vec2> FilterPointsByDistance(const std::vector<glm::vec2>& points, float minDistance);
+std::vector<glm::vec2> filterPointsByDistance(const std::vector<glm::vec2>& points, float min_distance);
 
-std::vector<glm::vec2> GenerateTriangleStripFromLine(const std::vector<SplinePoint>& splinePoints, float width);
+std::vector<glm::vec2> generateTriangleStripFromLine(const std::vector<SplinePoint>& spline_points, float width);

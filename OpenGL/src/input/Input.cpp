@@ -1,12 +1,12 @@
-#pragma once
+﻿#pragma once
 #include "Input.h"
 #include "../rendering/Interpolation.h"
 #include "../Config.h"
 
-MapDate mapOrigin;
-std::atomic<bool> m_MapLoaded = false;
+MapOrigin g_map_origin;
+std::atomic<bool> g_is_map_loaded = false;
 
-void ChoseInputMode(std::vector<glm::vec2>& points, std::mutex& points_mutex, std::atomic<bool>& running)
+void chooseInputMode(std::vector<glm::vec2>& points, std::mutex& points_mutex, std::atomic<bool>& running)
 {
 	start:
 	std::cout << "1. Create New Map" << "\n";
@@ -17,13 +17,13 @@ void ChoseInputMode(std::vector<glm::vec2>& points, std::mutex& points_mutex, st
 	std::cin.clear();
 	std::cin >> input_mode;
 	std::string line;
-	double dec_lat_deg, dec_lon_deg, easting, northing, normalized_x, normalized_y;
+	double decimal_lat_deg, decimal_lon_deg, easting_meters, northing_meters, normalized_x, normalized_y;
 	std::vector<glm::vec2> smoothedData;
 	switch (input_mode)
 	{
 		case 1:
 			std::cout << "Create New Map Started ( Input your cordibate in DMS format )\n";
-			InputOrigin();
+			inputOrigin();
 			while (true)
 			{
 				std::getline(std::cin, line);
@@ -31,10 +31,10 @@ void ChoseInputMode(std::vector<glm::vec2>& points, std::mutex& points_mutex, st
 				{
 					break;
 				}
-				CordinatesToDecimalFormat(line, dec_lat_deg, dec_lon_deg);
-				DDToMetr(dec_lat_deg, dec_lon_deg, easting, northing);
-				CordinateDifirenceFromOrigin(easting, northing, normalized_x, normalized_y);
-				InputDatainCode(points, points_mutex, running, normalized_x, normalized_y);
+				coordinatesToDecimalFormat(line, decimal_lat_deg, decimal_lon_deg);
+				coordinatesToMeters(decimal_lat_deg, decimal_lon_deg, easting_meters, northing_meters);
+				getCoordinateDifferenceFromOrigin(easting_meters, northing_meters, normalized_x, normalized_y);
+				inputDataInCode(points, points_mutex, running, normalized_x, normalized_y);
 
 				{
 					std::lock_guard<std::mutex> lock(points_mutex); // Neded to explain
@@ -51,7 +51,7 @@ void ChoseInputMode(std::vector<glm::vec2>& points, std::mutex& points_mutex, st
 			std::cout << "Load Existing Map Selected\n";
 			break;
 		case 3:
-			InputDataOpenGL(points, points_mutex, running);
+			inputDataOpenGL(points, points_mutex, running);
 			break;
 		default:
 			std::cout << "Invalid input mode selected\n";
@@ -61,7 +61,7 @@ void ChoseInputMode(std::vector<glm::vec2>& points, std::mutex& points_mutex, st
 }
 
 
-void InputDataOpenGL(std::vector<glm::vec2>& points, std::mutex& points_mutex, std::atomic<bool>& running)
+void inputDataOpenGL(std::vector<glm::vec2>& points, std::mutex& points_mutex, std::atomic<bool>& running)
 {
 	std::cout << "Input date is started\n";
 
@@ -96,20 +96,20 @@ void InputDataOpenGL(std::vector<glm::vec2>& points, std::mutex& points_mutex, s
 
 }
 
-void InputOrigin()
+void inputOrigin()
 {
 		std::string cordinate;
 		std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');  // Очищаем буфер
 		std::getline(std::cin, cordinate); // Ingonoring it
-		double dec_lat_deg, dec_lon_deg;
-		CordinatesToDecimalFormat(cordinate, dec_lat_deg, dec_lon_deg);
-		double easting, northing;
-		CreateOriginDD(dec_lat_deg, dec_lon_deg, easting, northing);
+		double decimal_lat_deg, decimal_lon_deg;
+		coordinatesToDecimalFormat(cordinate, decimal_lat_deg, decimal_lon_deg);
+		double easting_meters, northing_meters;
+		createOriginDD(decimal_lat_deg, decimal_lon_deg, easting_meters, northing_meters);
 };
 
 
 
-void CordinatesToDecimalFormat(std::string line, double &dec_lat_deg, double& dec_lon_deg)
+void coordinatesToDecimalFormat(std::string line, double &decimal_lat_deg, double& decimal_lon_deg)
 {
 	int lat_deg, lat_min, lon_deg, lon_min;
 	double lat_sec, lon_sec;
@@ -125,18 +125,18 @@ void CordinatesToDecimalFormat(std::string line, double &dec_lat_deg, double& de
 	std::stringstream ss(tempLine);
 	if (ss >> lat_deg >> lat_min >> lat_sec >> lon_deg >> lon_min >> lon_sec)
 	{
-		dec_lat_deg = lat_deg + (lat_min / 60.0f) + (lat_sec / 3600.0f);
-		dec_lon_deg = lon_deg + (lon_min / 60.0f) + (lon_sec / 3600.0f);
+		decimal_lat_deg = lat_deg + (lat_min / 60.0f) + (lat_sec / 3600.0f);
+		decimal_lon_deg = lon_deg + (lon_min / 60.0f) + (lon_sec / 3600.0f);
 	}
 	else
 	{
 		// Fallback or error handling
-		dec_lat_deg = 0;
-		dec_lon_deg = 0;
+		decimal_lat_deg = 0;
+		decimal_lon_deg = 0;
 	}
 }
 
-void LoadTrackFromData(const std::string& data, std::vector<glm::vec2>& points, std::mutex& points_mutex)
+void loadTrackFromData(const std::string& data, std::vector<glm::vec2>& points, std::mutex& points_mutex)
 {
 	std::stringstream ss(data);
 	std::string line;
@@ -156,23 +156,23 @@ void LoadTrackFromData(const std::string& data, std::vector<glm::vec2>& points, 
 		for (char c : line) { if (isdigit(c)) { hasDigit = true; break; } }
 		if (!hasDigit) continue;
 
-		double dec_lat_deg, dec_lon_deg;
-		CordinatesToDecimalFormat(line, dec_lat_deg, dec_lon_deg);
+		double decimal_lat_deg, decimal_lon_deg;
+		coordinatesToDecimalFormat(line, decimal_lat_deg, decimal_lon_deg);
 
-		double easting, northing;
+		double easting_meters, northing_meters;
 		if (firstPoint)
 		{
-			CreateOriginDD(dec_lat_deg, dec_lon_deg, easting, northing);
+			createOriginDD(decimal_lat_deg, decimal_lon_deg, easting_meters, northing_meters);
 			firstPoint = false;
 		}
 		else
 		{
-			DDToMetr(dec_lat_deg, dec_lon_deg, easting, northing);
+			coordinatesToMeters(decimal_lat_deg, decimal_lon_deg, easting_meters, northing_meters);
 		}
 
 		double normalized_x, normalized_y;
-		mapOrigin.origin_mapsize = MapConstants::MAP_SIZE;
-		CordinateDifirenceFromOrigin(easting, northing, normalized_x, normalized_y);
+		g_map_origin.m_map_size = MapConstants::MAP_SIZE;
+		getCoordinateDifferenceFromOrigin(easting_meters, northing_meters, normalized_x, normalized_y);
 
 		{
 			std::lock_guard<std::mutex> lock(points_mutex);
@@ -182,10 +182,10 @@ void LoadTrackFromData(const std::string& data, std::vector<glm::vec2>& points, 
 	std::cout << "Track loaded with " << points.size() << " points." << std::endl;
 	
 	// ✅ Устанавливаем флаг что карта загружена
-	m_MapLoaded = true;
+	g_is_map_loaded = true;
 }
 
-void CreateOriginDD(double lat_deg, double lon_deg, double& easting, double& northing)
+void createOriginDD(double lat_deg, double lon_deg, double& easting_meters, double& northing_meters)
 {
 	try {
 		using namespace GeographicLib;
@@ -194,7 +194,7 @@ void CreateOriginDD(double lat_deg, double lon_deg, double& easting, double& nor
 		bool northp;
 
 		// Cordinate converter
-		UTMUPS::Forward(lat_deg, lon_deg, zone, northp, easting, northing);
+		UTMUPS::Forward(lat_deg, lon_deg, zone, northp, easting_meters, northing_meters);
 
 		// 2Getting the char of zone
 		char zone_letter;
@@ -225,26 +225,26 @@ void CreateOriginDD(double lat_deg, double lon_deg, double& easting, double& nor
 		}
 
 		std::cout << "UTM Coordinates: \n";
-		std::cout << "  Easting (X): " << easting << " m\n";
-		std::cout << "  Northing (Y): " << northing << " m\n";
+		std::cout << "  easting_meters (X): " << easting_meters << " m\n";
+		std::cout << "  northing_meters (Y): " << northing_meters << " m\n";
 		std::cout << "  Zone: " << zone << zone_letter << "\n"; 
 
 		
-		mapOrigin.originDD_lat = lat_deg;
-		mapOrigin.originDD_lon = lon_deg;
-		mapOrigin.originMetr_est = easting;
-		mapOrigin.originMetr_nort = northing;
-		mapOrigin.originZone_int = zone;
-		mapOrigin.originZone_char = zone_letter;
+		g_map_origin.m_origin_lat_dd = lat_deg;
+		g_map_origin.m_origin_lon_dd = lon_deg;
+		g_map_origin.m_origin_meters_easting = easting_meters;
+		g_map_origin.m_origin_meters_northing = northing_meters;
+		g_map_origin.m_origin_zone_int = zone;
+		g_map_origin.m_origin_zone_char = zone_letter;
 	}
 	catch (const std::exception& e) {
 		std::cerr << "GeographicLib Error: " << e.what() << std::endl;
-		easting = 0;
-		northing = 0;
+		easting_meters = 0;
+		northing_meters = 0;
 	}
 }
 
-void DDToMetr(double DDlat, double DDlon, double &MetrCord_est, double &MetrCord_north)
+void coordinatesToMeters(double DDlat, double DDlon, double &MetrCord_est, double &MetrCord_north)
 {
 	try {
 		using namespace GeographicLib;
@@ -263,18 +263,18 @@ void DDToMetr(double DDlat, double DDlon, double &MetrCord_est, double &MetrCord
 
 }
 
-void CordinateDifirenceFromOrigin(double Metr_est, double Metr_north, double &normalized_x, double &normalized_y)
+void getCoordinateDifferenceFromOrigin(double Metr_est, double Metr_north, double &normalized_x, double &normalized_y)
 {
 
-	double diff_easting = Metr_est - mapOrigin.originMetr_est;
-	double diff_northing = Metr_north - mapOrigin.originMetr_nort;
+	double diff_easting = Metr_est - g_map_origin.m_origin_meters_easting;
+	double diff_northing = Metr_north - g_map_origin.m_origin_meters_northing;
 
-	normalized_x = (diff_easting / mapOrigin.origin_mapsize);
-	normalized_y = (diff_northing / mapOrigin.origin_mapsize);
+	normalized_x = (diff_easting / g_map_origin.m_map_size);
+	normalized_y = (diff_northing / g_map_origin.m_map_size);
 
 }
 
-void InputDatainCode(std::vector<glm::vec2>& points, std::mutex& points_mutex, std::atomic<bool>& running, double &normalized_x, double &normalized_y)
+void inputDataInCode(std::vector<glm::vec2>& points, std::mutex& points_mutex, std::atomic<bool>& running, double &normalized_x, double &normalized_y)
 {
 	{
 		std::lock_guard<std::mutex> lock(points_mutex);

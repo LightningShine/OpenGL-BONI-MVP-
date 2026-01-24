@@ -235,7 +235,7 @@ void UI::RenderSplashWindow()
         const char* clipboard = glfwGetClipboardString(m_window);
         if (clipboard && m_points && m_pointsMutex)
         {
-            LoadTrackFromData(std::string(clipboard), *m_points, *m_pointsMutex);
+            loadTrackFromData(std::string(clipboard), *m_points, *m_pointsMutex);
             m_showSplash = false;
             m_closeSplash = true;
         }
