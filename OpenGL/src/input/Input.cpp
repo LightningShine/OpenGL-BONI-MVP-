@@ -1,9 +1,10 @@
 ﻿#pragma once
 #include "Input.h"
 #include "../rendering/Interpolation.h"
+#include "../Config.h"
 
 MapDate mapOrigin;
-std::atomic<bool> m_MapLoaded = false; // ✅ Инициализация флага
+std::atomic<bool> m_MapLoaded = false;
 
 void ChoseInputMode(std::vector<glm::vec2>& points, std::mutex& pointsMutex, std::atomic<bool>& running)
 {
@@ -170,7 +171,7 @@ void LoadTrackFromData(const std::string& data, std::vector<glm::vec2>& points, 
 		}
 
 		double normalized_x, normalized_y;
-		mapOrigin.origin_mapsize = 100;
+		mapOrigin.origin_mapsize = MapConstants::MAP_SIZE;
 		CordinateDifirenceFromOrigin(easting, northing, normalized_x, normalized_y);
 
 		{

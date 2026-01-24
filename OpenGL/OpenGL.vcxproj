@@ -174,12 +174,14 @@
   <ItemGroup>
     <ClInclude Include="libraries\include\serialib\serialib.h" />
     <ClInclude Include="libraries\include\stb_image.h" />
+    <ClInclude Include="src\Config.h" />
     <ClInclude Include="src\input\Input.h" />
     <ClInclude Include="src\network\Client.h" />
     <ClInclude Include="src\network\ESP32_Code.h" />
     <ClInclude Include="src\network\Server.h" />
     <ClInclude Include="src\rendering\Interpolation.h" />
     <ClInclude Include="src\vehicle\Vehicle.h" />
+    <ClInclude Include="src\vehicle\Vehicle_Refactored.h" />
     <ClInclude Include="UI.h" />
   </ItemGroup>
   <ItemGroup>

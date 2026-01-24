@@ -19,6 +19,7 @@
 
 // =================================
 // === PROJECTS FILES ===
+#include "../Config.h"
 #include "../input/Input.h"
 #include "../rendering/Interpolation.h"
 #include "../../UI.h"
@@ -122,8 +123,8 @@ void processInput(GLFWwindow* window, glm::vec2& cameraPos, float& zoom, float s
 		cameraPos.x += speed / zoom;  // Right
 
 	// Zoom limits
-	if (zoom < 0.1f) zoom = 0.1f;   // Minimum
-	if (zoom > 10.0f) zoom = 10.0f; // Maximum
+	if (zoom < CameraConstants::CAMERA_ZOOM_MIN) zoom = CameraConstants::CAMERA_ZOOM_MIN;
+	if (zoom > CameraConstants::CAMERA_ZOOM_MAX) zoom = CameraConstants::CAMERA_ZOOM_MAX;
 
 
 	static bool wasF11Pressed = false;
@@ -168,8 +169,8 @@ void scroll_callback(GLFWwindow* window, double xoffset, double yoffset)
 		float* zoom = context->zoom;
 		*zoom *= (float)(1.0f + yoffset * 0.1f);  // Aspect of zoom change
 
-		if (*zoom < 0.1f) *zoom = 0.1f;
-		if (*zoom > 10.0f) *zoom = 10.0f;
+		if (*zoom < CameraConstants::CAMERA_ZOOM_MIN) *zoom = CameraConstants::CAMERA_ZOOM_MIN;
+		if (*zoom > CameraConstants::CAMERA_ZOOM_MAX) *zoom = CameraConstants::CAMERA_ZOOM_MAX;
 	}
 }
 
@@ -371,14 +372,13 @@ int main()
 	glEnable(GL_PROGRAM_POINT_SIZE);
 
 	// ========================== Process Input ==========================
-	glm::vec2 cameraPosition(0.0f, 0.0f);  // Camera Position (X, Y)
-	float cameraZoom = 1.0f;                // Zoom (1.0 = Normal, >1 = Zoom)
-	float cameraMoveSpeed = 0.001f;          // Camera movment speed
-	//float cameraZoomSpeed = 0.1f;           // Zoom speed
-	glm::vec2 cameraVelocity(0.0f, 0.0f);  // Velocity
-	float friction = 0.85f;                 // Friction
-	float mapBoundX = 2.0f;  // Map border X
-	float mapBoundY = 2.0f;  // Map border Y
+	glm::vec2 cameraPosition(0.0f, 0.0f);
+	float cameraZoom = 1.0f;
+	float cameraMoveSpeed = CameraConstants::CAMERA_MOVE_SPEED;
+	glm::vec2 cameraVelocity(0.0f, 0.0f);
+	float friction = CameraConstants::CAMERA_FRICTION;
+	float mapBoundX = MapConstants::MAP_BOUND_X;
+	float mapBoundY = MapConstants::MAP_BOUND_Y;
 
 	std::vector<glm::vec2> points;
 	std::mutex  pointsMutex;
@@ -487,7 +487,7 @@ int main()
 				m_MapLoaded = true;
 
 				// radius: 0.02f (rounding), segments: 10 (corner smoth)
-				float CornerRadius = 0.075f;
+				float CornerRadius = TrackConstants::TRACK_CORNER_RADIUS;
 
 				// 1. Filter noise (points too close)
 				std::vector<glm::vec2> filteredPoints = FilterPointsByDistance(points, 0.05f);
@@ -496,10 +496,14 @@ int main()
 				std::vector<glm::vec2> simplifiedPoints = SimplifyPath(filteredPoints, 0.02f);
 
 				// 3. Generate rounded corners
-				std::vector<SplinePoint> smoothPoints = InterpolateRoundedPolyline(simplifiedPoints, CornerRadius, 10);
+				std::vector<SplinePoint> smoothPoints = InterpolateRoundedPolyline(
+					simplifiedPoints, 
+					CornerRadius, 
+					TrackConstants::TRACK_CORNER_SEGMENTS
+				);
 
-				borderLayer = GenerateTriangleStripFromLine(smoothPoints, 0.085f);
-				asphaltLayer = GenerateTriangleStripFromLine(smoothPoints, 0.075f);
+				borderLayer = GenerateTriangleStripFromLine(smoothPoints, TrackConstants::TRACK_BORDER_WIDTH);
+				asphaltLayer = GenerateTriangleStripFromLine(smoothPoints, TrackConstants::TRACK_ASPHALT_WIDTH);
 
 
 			}

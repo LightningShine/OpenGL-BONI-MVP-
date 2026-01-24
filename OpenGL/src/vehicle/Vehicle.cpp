@@ -1,5 +1,6 @@
 ﻿#include "../vehicle/Vehicle.h"
-#include "../input/Input.h" // ✅ Для доступа к mapOrigin
+#include "../input/Input.h"
+#include "../Config.h"
 #include <cmath>
 #include <iostream>
 #include <thread>
@@ -95,7 +96,7 @@ void VehicleLoop()
                 for (auto it = g_Vehicles.begin(); it != g_Vehicles.end();)
                 {
 					auto timeSinceLastUpdate = std::chrono::duration_cast<std::chrono::milliseconds>(now - it->second.lastUpdateTime).count();
-                    if (timeSinceLastUpdate >= 30000)
+                    if (timeSinceLastUpdate >= VehicleConstants::VEHICLE_TIMEOUT_MS)
                     {
                         std::cout << "Vehicle ID " << it->second.v_ID << " removed due to timeout." << std::endl;
                         it = g_Vehicles.erase(it); // ✅ erase возвращает следующий итератор
@@ -129,10 +130,14 @@ std::vector<glm::vec2> GenerateCircle(float radius, int segments)
 void RenderVehicle(GLuint shaderProgram, GLuint VAO, GLuint VBO,
     const Venchile& vehicle, const glm::mat4& projection)
 {
-    // ✅ Размер машины зависит от MAP_SIZE (100 метров = 1.0 в OpenGL)
-    // 5 метров машина = 0.05 в OpenGL координатах
-    static std::vector<glm::vec2> circleOutline = GenerateCircle(0.055f, 20); // Белая обводка
-    static std::vector<glm::vec2> circleBody = GenerateCircle(0.05f, 20);      // Тело машины
+    static std::vector<glm::vec2> circleOutline = GenerateCircle(
+        VehicleConstants::VEHICLE_OUTLINE_RADIUS, 
+        VehicleConstants::VEHICLE_CIRCLE_SEGMENTS
+    );
+    static std::vector<glm::vec2> circleBody = GenerateCircle(
+        VehicleConstants::VEHICLE_BODY_RADIUS, 
+        VehicleConstants::VEHICLE_CIRCLE_SEGMENTS
+    );
     
     // ✅ Кешируем uniform location (вычисляется только один раз)
     static GLint colorLoc = glGetUniformLocation(shaderProgram, "uColor");

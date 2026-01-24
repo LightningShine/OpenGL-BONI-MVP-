@@ -103,6 +103,8 @@
     <ClInclude Include="libraries\include\serialib\serialib.h">
       <Filter>libaries\include\serialib</Filter>
     </ClInclude>
+    <ClInclude Include="src\vehicle\Vehicle_Refactored.h" />
+    <ClInclude Include="src\Config.h" />
   </ItemGroup>
   <ItemGroup>
     <Text Include="RESTRUCTURE_SUMMARY.txt" />
