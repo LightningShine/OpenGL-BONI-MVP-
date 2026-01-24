@@ -23,3 +23,5 @@ std::vector<glm::vec2> simplifyPath(const std::vector<glm::vec2>& points, float 
 std::vector<glm::vec2> filterPointsByDistance(const std::vector<glm::vec2>& points, float min_distance);
 
 std::vector<glm::vec2> generateTriangleStripFromLine(const std::vector<SplinePoint>& spline_points, float width);
+
+// Just comment to make snippet not empty
