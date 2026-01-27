@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include <iostream>
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
@@ -44,7 +44,8 @@ void framebuffer_size_callback(GLFWwindow* window, int width, int height)
 	glViewport(0, 0, width, height);
 }
 
-void processInput(GLFWwindow* window, glm::vec2& camera_pos, float& zoom, float speed)
+void processInput(GLFWwindow* window, glm::vec2& camera_pos, float& zoom, float speed, 
+const std::vector<SplinePoint>* smooth_track = nullptr)
 {
 	// Close when press ESC
 	if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
@@ -86,24 +87,38 @@ void processInput(GLFWwindow* window, glm::vec2& camera_pos, float& zoom, float 
 		}
 	}
 	
-	// ✅ Тестовая кнопка для добавления машины на старте трека
+
 	static bool wasTPressed = false;
 	if (glfwGetKey(window, GLFW_KEY_T) == GLFW_PRESS && !wasTPressed)
 	{
 		wasTPressed = true;
 		
-		std::lock_guard<std::mutex> lock(g_vehicles_mutex);
-		
-		// ✅ ПРАВИЛЬНО: создаем машину, ПОТОМ добавляем в map
-		Vehicle newVehicle;
-		g_vehicles[newVehicle.m_id] = newVehicle;
-		
-		std::cout << "Test vehicle #" << newVehicle.m_id << " added at track origin" << std::endl;
+		// Guard clauses
+		if (!g_is_map_loaded) {
+			std::cout << "Cannot create vehicle - map not loaded!" << std::endl;
+		} else if (smooth_track->empty()) {
+			std::cout << "Cannot create vehicle - track not interpolated!" << std::endl;
+		} else {
+			// Create vehicle at origin
+			Vehicle new_vehicle;
+			int vehicle_id = new_vehicle.m_id;
+			
+			{
+				std::lock_guard<std::mutex> lock(g_vehicles_mutex);
+				g_vehicles[vehicle_id] = new_vehicle;
+			}
+			
+			std::cout << "Vehicle #" << vehicle_id << " created - starting simulation" << std::endl;
+			
+			// Start automatic simulation along track
+			simulateVehicleMovement(vehicle_id, *smooth_track);
+		}
 	}
 	if (glfwGetKey(window, GLFW_KEY_T) == GLFW_RELEASE)
 	{
 		wasTPressed = false;
 	}
+
 
 	// Camera movment (W/A/S/D or Arrows)
 	if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS ||
@@ -382,6 +397,9 @@ int main()
 
 	std::vector<glm::vec2> points;
 	std::mutex  points_mutex;
+	
+	// Store smooth track for vehicle simulation
+	std::vector<SplinePoint> g_smooth_track_points;
 
 	AppContext appContext;
 	appContext.zoom = &camera_zoom;
@@ -419,7 +437,7 @@ int main()
 	{
 		ui.BeginFrame();
 
-		processInput(window, camera_position, camera_zoom, camera_move_speed); // Process user input with camera
+		processInput(window, camera_position, camera_zoom, camera_move_speed, &g_smooth_track_points);
 		camera_position += camera_velocity;  
 		camera_velocity *= friction;
 		
@@ -501,6 +519,9 @@ int main()
 					CornerRadius, 
 					TrackConstants::TRACK_CORNER_SEGMENTS
 				);
+				
+				// Store for vehicle simulation
+				g_smooth_track_points = smoothPoints;
 
 				borderLayer = generateTriangleStripFromLine(smoothPoints, TrackConstants::TRACK_BORDER_WIDTH);
 				asphaltLayer = generateTriangleStripFromLine(smoothPoints, TrackConstants::TRACK_ASPHALT_WIDTH);
@@ -526,6 +547,12 @@ int main()
 			glUniform3f(colorLoc, 0.3f, 0.3f, 0.3f); // Grey color for asphalt
 			glDrawArrays(GL_TRIANGLE_STRIP, 0, (GLsizei)asphaltLayer.size());
 		}
+
+		// M key removed - use T to create vehicles with automatic simulation
+
+
+
+		// ========================== UI RENDERING ==========================
 
 		ui.Render();
 		ui.EndFrame();

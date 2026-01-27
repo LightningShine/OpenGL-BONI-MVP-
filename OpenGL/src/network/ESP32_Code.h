@@ -1,6 +1,13 @@
 ﻿#pragma once
 #include "../network/Server.h"
 #include "../serialib/serialib.h"
+#include "../input/Input.h"
+#include "../rendering/Interpolation.h"
+#include "./Config.h"
+#include <thread>
+#include <chrono>
+#include <mutex>
+#include <glm/glm.hpp>
 
 
 enum class PacketType : uint32_t {
@@ -11,4 +18,10 @@ enum class PacketType : uint32_t {
 };
 
 void testSerial();
+bool openCOMPort(const std::string& port_name);
+void readFromCOM();
+
+// Simulate vehicle movement along pre-interpolated track
+void simulateVehicleMovement(int vehicle_id, 
+                             const std::vector<SplinePoint>& smooth_track_points);
 bool openCOMPort(const std::string& port_name);
