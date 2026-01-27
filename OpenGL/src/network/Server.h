@@ -8,6 +8,7 @@
 #include "miniupnpc/miniupnpc.h"
 #include "miniupnpc/upnpcommands.h"
 #include "../Config.h"
+#include "windows.h"
 #include <vector>
 #include <thread>
 #include <random>
@@ -35,6 +36,13 @@ struct TelemetryPacket
 struct AuthPacket {
 	uint32_t magic_marker;  // 0x41555448 ('AUTH')
 	char password[64];
+};
+
+struct AuthResponsePacket {
+	uint32_t magic_marker;  // 0x52455350 ('RESP')
+	bool is_authenticated;
+	int attempts_remaining;
+	char message[128];
 };
 #pragma pack(pop)
 

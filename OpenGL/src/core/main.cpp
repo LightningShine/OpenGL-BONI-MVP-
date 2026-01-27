@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include <iostream>
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
@@ -142,37 +142,38 @@ const std::vector<SplinePoint>* smooth_track = nullptr)
 	if (zoom > CameraConstants::CAMERA_ZOOM_MAX) zoom = CameraConstants::CAMERA_ZOOM_MAX;
 
 
-	static bool wasF11Pressed = false;
-	if (glfwGetKey(window, GLFW_KEY_F11) == GLFW_PRESS && !wasF11Pressed)
+	static bool was_f11_pressed = false;
+	static bool is_fullscreen = false;
+	
+	if (glfwGetKey(window, GLFW_KEY_F11) == GLFW_PRESS && !was_f11_pressed)
 	{
-		wasF11Pressed = true;
-
-		GLFWmonitor* currentMonitor = glfwGetWindowMonitor(window);
-
-		if (currentMonitor == NULL)
+		was_f11_pressed = true;
+		
+		if (!is_fullscreen)
 		{
-			//GLFWmonitor* monitor = glfwGetPrimaryMonitor();
-			//const GLFWvidmode* mode = glfwGetVideoMode(monitor);
-			//glfwSetWindowMonitor(window, NULL, 0, 0, mode->width, mode->height, mode->refreshRate);
+			// Go fullscreen (maximized)
 			glfwMaximizeWindow(window);
+			is_fullscreen = true;
 		}
 		else
 		{
-
-			//glfwSetWindowMonitor(window, NULL, 100, 100, 1280, 720, GLFW_DONT_CARE);
+			// Restore to 500x500 centered window
 			glfwRestoreWindow(window);
-			glfwSetWindowAttrib(window, GLFW_DECORATED, GLFW_TRUE);
-			glfwSetWindowPos(window, 100, 100);
-			glfwSetWindowSize(window, 1280, 720);
-
 			
-
+			// Center 500x500 window on screen
+			GLFWmonitor* monitor = glfwGetPrimaryMonitor();
+			const GLFWvidmode* mode = glfwGetVideoMode(monitor);
+			int center_x = (mode->width - 500) / 2;
+			int center_y = (mode->height - 500) / 2;
+			
+			glfwSetWindowSize(window, 500, 500);
+			glfwSetWindowPos(window, center_x, center_y);
+			is_fullscreen = false;
 		}
 	}
 	if (glfwGetKey(window, GLFW_KEY_F11) == GLFW_RELEASE)
 	{
-		wasF11Pressed = false;
-		
+		was_f11_pressed = false;
 	}
 }
 

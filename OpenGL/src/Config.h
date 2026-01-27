@@ -27,13 +27,15 @@ namespace CameraConstants {
 namespace NetworkConstants {
     static constexpr int DEFAULT_SERVER_PORT = 777;
     static constexpr const char* DEFAULT_SERVER_IP = "136.169.18.31";
+    static constexpr const char* DEFAULT_LOCAL_SERVER_IP = "127.0.0.1";
     static constexpr const char* SERVER_PASSWORD = "mypassword123";  
     static constexpr int MAX_AUTH_ATTEMPTS = 10;
 }
 
 namespace PacketMagic {
-    static constexpr uint32_t AUTH = 0x41555448;
-    static constexpr uint32_t DATA = 0x44415441;
+    static constexpr uint32_t AUTH = 0x41555448;  // 'AUTH'
+    static constexpr uint32_t RESP = 0x52455350;  // 'RESP'
+    static constexpr uint32_t DATA = 0x44415441;  // 'DATA'
 }
 
 // Track rendering constants
@@ -53,13 +55,14 @@ namespace SimulationConstants {
     static constexpr double MIN_SPEED_KPH = 50.0;
     static constexpr double SPEED_VARIATION_KPH = 30.0;
     static constexpr double TWO_PI = 6.28318530718;
-    static constexpr int PROGRESS_LOG_INTERVAL = 30; // Log every second (30 updates)
+    static constexpr int PROGRESS_LOG_INTERVAL = 30;
 }
-namespace SimulationConstants
-{
-	constexpr float duration_seconds = 60.0f; // Total simulation duration
-    constexpr float update_rate_hz = 30.0f; // 30 updates per second
-    constexpr float update_interval_ms = 1000.0f / update_rate_hz;
-    constexpr int total_updates = static_cast<int>(duration_seconds * update_rate_hz);
+
+// Console colors
+namespace ConsoleColors {
+   static constexpr int CONSOLE_COLOR_GREEN = 10;
+   static constexpr int CONSOLE_COLOR_YELLOW = 14;
+   static constexpr int CONSOLE_COLOR_RED = 12;
+   static constexpr int CONSOLE_DEFAULT = 7;
 }
 
