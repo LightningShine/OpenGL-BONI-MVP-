@@ -87,32 +87,39 @@ void vehicleLoop()
     
     while (g_is_vehicles_active) 
     {
-		auto now = std::chrono::steady_clock::now();
+        removeVehicles();
 
-        {
-        std::lock_guard<std::mutex> lock(g_vehicles_mutex);
-        if (!g_vehicles.empty())
-        {
-                for (auto it = g_vehicles.begin(); it != g_vehicles.end();)
-                {
-					auto timeSinceLastUpdate = std::chrono::duration_cast<std::chrono::milliseconds>(now - it->second.m_last_update_time).count();
-                    if (timeSinceLastUpdate >= VehicleConstants::VEHICLE_TIMEOUT_MS)
-                    {
-                        std::cout << "Vehicle ID " << it->second.m_id << " removed due to timeout." << std::endl;
-                        it = g_vehicles.erase(it); // ✅ erase возвращает следующий итератор
-                    }
-                    else
-                    {
-                        ++it; // ✅ Инкремент ТОЛЬКО если НЕ удалили
-                    }
-                }           
-        }
-        }
         std::this_thread::sleep_for(std::chrono::milliseconds(33));
     }
     
     std::cout << "vehicleLoop stopped" << std::endl;
 }
+
+void removeVehicles()
+{
+    auto now = std::chrono::steady_clock::now();
+    {
+        std::lock_guard<std::mutex> lock(g_vehicles_mutex);
+        if (!g_vehicles.empty())
+        {
+            for (auto it = g_vehicles.begin(); it != g_vehicles.end();)
+            {
+                auto timeSinceLastUpdate = std::chrono::duration_cast<std::chrono::milliseconds>(now - it->second.m_last_update_time).count();
+                if (timeSinceLastUpdate >= VehicleConstants::VEHICLE_TIMEOUT_MS)
+                {
+                    std::cout << "Vehicle ID " << it->second.m_id << " removed due to timeout." << std::endl;
+                    it = g_vehicles.erase(it); // ✅ erase возвращает следующий итератор
+                }
+                else
+                {
+                    ++it; // ✅ Инкремент ТОЛЬКО если НЕ удалили
+                }
+            }
+        }
+        
+    }
+}
+
 
 std::vector<glm::vec2> generateCircle(float radius, int segments)
 {

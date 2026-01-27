@@ -53,4 +53,6 @@ void renderAllVehicles(GLuint shader_program, GLuint vao, GLuint vbo,
 	const glm::mat4& projection,
 	const glm::vec2& camera_pos, float camera_zoom);
 
+void removeVehicles();
+
 void vehicleClose();

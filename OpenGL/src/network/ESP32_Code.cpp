@@ -159,12 +159,12 @@ static void simulationThreadWorker(int vehicle_id, std::vector<SplinePoint> smoo
         }
 
         // Progress indicator
-        if (step % SimulationConstants::PROGRESS_LOG_INTERVAL == 0) {
-            std::cout << "Vehicle #" << vehicle_id << " progress: " 
-                      << static_cast<int>(progress * 100) 
-                      << "% (distance: " << target_distance << "/" << total_path_length << ")" 
-                      << std::endl;
-        }
+        //if (step % SimulationConstants::PROGRESS_LOG_INTERVAL == 0) {
+        //    std::cout << "Vehicle #" << vehicle_id << " progress: " 
+        //              << static_cast<int>(progress * 100) 
+        //              << "% (distance: " << target_distance << "/" << total_path_length << ")" 
+        //              << std::endl;
+        //}
 
         // Sleep until next update
         if (step < total_updates) {
@@ -173,6 +173,7 @@ static void simulationThreadWorker(int vehicle_id, std::vector<SplinePoint> smoo
     }
 
     std::cout << "Simulation complete for vehicle #" << vehicle_id << std::endl;
+	removeVehicles();
 }
 
 void simulateVehicleMovement(int vehicle_id, const std::vector<SplinePoint>& smooth_track_points)

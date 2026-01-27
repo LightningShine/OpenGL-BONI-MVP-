@@ -12,7 +12,7 @@ namespace VehicleConstants {
     static constexpr float VEHICLE_BODY_RADIUS = 0.05f;      // 5 meters
     static constexpr float VEHICLE_OUTLINE_RADIUS = 0.055f;  // White outline
     static constexpr int VEHICLE_CIRCLE_SEGMENTS = 20;
-    static constexpr int VEHICLE_TIMEOUT_MS = 30000;         // 30 seconds
+    static constexpr int VEHICLE_TIMEOUT_MS = 300;         // 30 seconds
 }
 
 // Camera constants
