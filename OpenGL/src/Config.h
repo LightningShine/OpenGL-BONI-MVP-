@@ -27,6 +27,13 @@ namespace CameraConstants {
 namespace NetworkConstants {
     static constexpr int DEFAULT_SERVER_PORT = 777;
     static constexpr const char* DEFAULT_SERVER_IP = "136.169.18.31";
+    static constexpr const char* SERVER_PASSWORD = "mypassword123";  
+    static constexpr int MAX_AUTH_ATTEMPTS = 10;
+}
+
+namespace PacketMagic {
+    static constexpr uint32_t AUTH = 0x41555448;
+    static constexpr uint32_t DATA = 0x44415441;
 }
 
 // Track rendering constants

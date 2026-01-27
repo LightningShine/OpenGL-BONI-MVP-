@@ -1,11 +1,13 @@
 ﻿#include "../network/Server.h"
 
 
+
 // SERVER 
 
 HSteamListenSocket g_hListenSocket;
 HSteamNetPollGroup g_hPollGroup;
 std::vector<HSteamNetConnection> g_hConnections;
+static std::map<HSteamNetConnection, bool> g_authenticated_connections;
 
 bool g_is_server_running = false;
 bool ServerNeedStop_b = false;
@@ -200,7 +202,7 @@ int serverWork()
 
 	std::cout << "GNS initialized successfully." << std::endl;
 	ManagePort(true);
-	StartServer(777);
+	StartServer(NetworkConstants::DEFAULT_SERVER_PORT);
 
 	int counter = 0;
 	while (!ServerNeedStop_b)
@@ -252,6 +254,17 @@ void RandomTelemetryData(TelemetryPacket& packet)
 	packet.ID = idDist(generator);
 
 
+}
+
+static bool authenticateConnection(HSteamNetConnection connection, const char* password) {
+	if (strcmp(password, NetworkConstants::SERVER_PASSWORD) == 0) {
+		std::cerr << "✅ Client " << connection << " authenticated" << std::endl;
+		g_authenticated_connections[connection] = true;
+		return true;
+	}
+
+	std::cerr << "❌ Client " << connection << " auth failed" << std::endl;
+	return false;
 }
 
 void ManagePort(bool open)

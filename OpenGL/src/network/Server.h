@@ -7,9 +7,13 @@
 #include <GameNetworkingSockets/steam/isteamnetworkingutils.h>
 #include "miniupnpc/miniupnpc.h"
 #include "miniupnpc/upnpcommands.h"
+#include "../Config.h"
 #include <vector>
 #include <thread>
 #include <random>
+#include <algorithm>
+#include <map>
+
 
 #pragma pack(push, 1) 
 struct TelemetryPacket 
@@ -24,6 +28,13 @@ struct TelemetryPacket
 	uint16_t gForceY;		// g-force Y * 100
 	int16_t fixtype;		// 0=none, 4=RTK_FIXED, etc.
 	int32_t ID;			    // vehicle ID
+};
+#pragma pack(pop)
+
+#pragma pack(push, 1)
+struct AuthPacket {
+	uint32_t magic_marker;  // 0x41555448 ('AUTH')
+	char password[64];
 };
 #pragma pack(pop)
 

@@ -6,6 +6,7 @@
 #include "../network/Server.h"
 #include <thread>
 #include <regex>
+#include "../Config.h"
 
 
 // CLIENT 

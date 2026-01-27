@@ -117,8 +117,10 @@ int clientStart()
 	std::getline(std::cin, server_name);
 	if (server_name == "d" || server_name == " " || server_name == "\n")
 	{
-		server_address.ParseString("136.169.18.31:777");
-		std::cout << "Using default server address: 136.169.18.31:777" << std::endl;
+		//std::string ip = NetworkConstants::DEFAULT_SERVER_IP;
+		std::string default_address = std::string(NetworkConstants::DEFAULT_SERVER_IP) + ":" + std::to_string(NetworkConstants::DEFAULT_SERVER_PORT);
+		server_address.ParseString(default_address.c_str());
+		std::cout << "Using default server address: " << default_address << std::endl;
 	}
 	else if(std::regex_match(server_name, ip_port_pattern))
 	{
