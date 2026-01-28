@@ -236,15 +236,100 @@ const char* vertexShaderSource = R"(
 const char* fragmentShaderSource = R"(
     #version 460 core
     out vec4 FragColor;
-    
     uniform vec3 uColor;
+    uniform float uAlpha;
     
     void main()
     {
-        FragColor = vec4(uColor, 1.0f); 
+        FragColor = vec4(uColor, uAlpha); 
     }
 )";
 
+// Render grid function
+void renderGrid(GLuint shader_program, glm::vec2 camera_position, float camera_zoom, int window_width, int window_height)
+{
+    // Calculate view bounds in world coordinates
+    float view_width = MapConstants::MAP_BOUND_X * 2.0f / camera_zoom;
+    float view_height = MapConstants::MAP_BOUND_Y * 2.0f / camera_zoom;
+    
+    float world_left = camera_position.x - view_width / 2.0f;
+    float world_right = camera_position.x + view_width / 2.0f;
+    float world_bottom = camera_position.y - view_height / 2.0f;
+    float world_top = camera_position.y + view_height / 2.0f;
+    
+    // Convert grid cell size to OpenGL coordinates
+    float cell_size_opengl = GridConstants::GRID_CELL_SIZE / MapConstants::MAP_SIZE;
+    
+    // Calculate grid start/end aligned to cell_size
+    float grid_start_x = std::floor(world_left / cell_size_opengl) * cell_size_opengl;
+    float grid_end_x = std::ceil(world_right / cell_size_opengl) * cell_size_opengl;
+    float grid_start_y = std::floor(world_bottom / cell_size_opengl) * cell_size_opengl;
+    float grid_end_y = std::ceil(world_top / cell_size_opengl) * cell_size_opengl;
+    
+    // Prepare line vertices
+    std::vector<float> grid_vertices;
+    
+    // Vertical lines
+    for (float x = grid_start_x; x <= grid_end_x; x += cell_size_opengl)
+    {
+        grid_vertices.push_back(x);
+        grid_vertices.push_back(grid_start_y);
+        
+        grid_vertices.push_back(x);
+        grid_vertices.push_back(grid_end_y);
+    }
+    
+    // Horizontal lines
+    for (float y = grid_start_y; y <= grid_end_y; y += cell_size_opengl)
+    {
+        grid_vertices.push_back(grid_start_x);
+        grid_vertices.push_back(y);
+        
+        grid_vertices.push_back(grid_end_x);
+        grid_vertices.push_back(y);
+    }
+    
+    if (grid_vertices.empty()) return;
+    
+    // Create and bind VAO/VBO for grid
+    GLuint grid_vao, grid_vbo;
+    glGenVertexArrays(1, &grid_vao);
+    glGenBuffers(1, &grid_vbo);
+    
+    glBindVertexArray(grid_vao);
+    glBindBuffer(GL_ARRAY_BUFFER, grid_vbo);
+    glBufferData(GL_ARRAY_BUFFER, grid_vertices.size() * sizeof(float), grid_vertices.data(), GL_DYNAMIC_DRAW);
+    
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(0);
+    
+    // Draw grid with transparency
+    glUseProgram(shader_program);
+    
+    GLint color_loc = glGetUniformLocation(shader_program, "uColor");
+    GLint alpha_loc = glGetUniformLocation(shader_program, "uAlpha");
+    
+    glUniform3f(color_loc, 
+                GridConstants::GRID_COLOR_R, 
+                GridConstants::GRID_COLOR_G, 
+                GridConstants::GRID_COLOR_B);
+    glUniform1f(alpha_loc, GridConstants::GRID_LINE_ALPHA);
+    
+    // Enable blending for transparency
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    
+    // Use line width 1.0
+    glLineWidth(1.0f);
+    
+    glDrawArrays(GL_LINES, 0, static_cast<GLsizei>(grid_vertices.size() / 2));
+    
+    glDisable(GL_BLEND);
+    
+    // Cleanup
+    glDeleteBuffers(1, &grid_vbo);
+    glDeleteVertexArrays(1, &grid_vao);
+}
 
 int main()
 {
@@ -437,6 +522,8 @@ int main()
 	while (!glfwWindowShouldClose(window)) // Main loop that runs until the window is closed
 	{
 		ui.BeginFrame();
+		ui.Render();
+		
 
 		processInput(window, camera_position, camera_zoom, camera_move_speed, &g_smooth_track_points);
 		camera_position += camera_velocity;  
@@ -489,8 +576,12 @@ int main()
 		glUniformMatrix4fv(projLoc, 1, GL_FALSE, glm::value_ptr(projection));
 
 		GLint colorLoc = glGetUniformLocation(shader_program, "uColor");
+		GLint alphaLoc = glGetUniformLocation(shader_program, "uAlpha");
 
 		glBindVertexArray(vao);
+		
+		// Render grid (always, even without track)
+		renderGrid(shader_program, camera_position, camera_zoom, Width, Height);
 
 		std::vector<glm::vec2> borderLayer;
 		std::vector<glm::vec2> asphaltLayer;
@@ -537,6 +628,7 @@ int main()
 			glBufferData(GL_ARRAY_BUFFER, borderLayer.size() * sizeof(glm::vec2), borderLayer.data(), GL_DYNAMIC_DRAW);
 
 			glUniform3f(colorLoc, 1.0f, 1.0f, 1.0f); // White color for border
+			glUniform1f(alphaLoc, 1.0f); // Full opacity
 			glDrawArrays(GL_TRIANGLE_STRIP, 0, (GLsizei)borderLayer.size());
 		}
 
@@ -546,6 +638,7 @@ int main()
 			glBufferData(GL_ARRAY_BUFFER, asphaltLayer.size() * sizeof(glm::vec2), asphaltLayer.data(), GL_DYNAMIC_DRAW);
 
 			glUniform3f(colorLoc, 0.3f, 0.3f, 0.3f); // Grey color for asphalt
+			glUniform1f(alphaLoc, 1.0f); // Full opacity
 			glDrawArrays(GL_TRIANGLE_STRIP, 0, (GLsizei)asphaltLayer.size());
 		}
 
@@ -555,7 +648,6 @@ int main()
 
 		// ========================== UI RENDERING ==========================
 
-		ui.Render();
 		ui.EndFrame();
 		
 		// ✅ Рисуем машины только если карта загружена

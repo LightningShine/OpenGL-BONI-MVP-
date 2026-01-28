@@ -22,6 +22,9 @@ public:
 
     void BeginFrame();
     void Render();
+    void RenderTopMenu();
+    void RenderBottomMenu();
+    void RenderHelpModal();
     void EndFrame();
     
     bool ShouldCloseSplash() const { return m_closeSplash; }
@@ -33,6 +36,7 @@ private:
     
     bool m_showSplash;
     bool m_closeSplash;
+    bool m_show_help_modal;
     
     // Fonts
     ImFont* m_fontRegular;
