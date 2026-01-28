@@ -66,33 +66,15 @@ namespace ConsoleColors {
    static constexpr int CONSOLE_DEFAULT = 7;
 }
 
-// Application info
-namespace AppInfo {
-   static constexpr const char* APP_VERSION = "v1.0.0";
-   static constexpr const char* APP_NAME = "R.A.J.A Prime";
-}
 
 // Grid rendering constants
 namespace GridConstants {
-   static constexpr float GRID_CELL_SIZE = 10.0f;  // 10 meters per cell
-   static constexpr float GRID_LINE_ALPHA = 0.2f;  // 20% visibility (80% transparency)
-   static constexpr float GRID_COLOR_R = 1.0f;     // White
-   static constexpr float GRID_COLOR_G = 1.0f;
-   static constexpr float GRID_COLOR_B = 1.0f;
+   static constexpr float GRID_CELL_SIZE = 20.0f;  // 20 meters per cell
+   static constexpr float GRID_LINE_ALPHA = 0.12f;  // 12% visibility
+   static constexpr float GRID_COLOR_R = 225.0f / 30.0f;     // White
+   static constexpr float GRID_COLOR_G = 225.0f / 30.0f;
+   static constexpr float GRID_COLOR_B = 225.0f / 30.0f;
 }
 
-// UI colors (hex converted to float)
-namespace UIColors {
-   // Menu background #181818
-   static constexpr float MENU_BG_R = 0x18 / 255.0f;
-   static constexpr float MENU_BG_G = 0x18 / 255.0f;
-   static constexpr float MENU_BG_B = 0x18 / 255.0f;
-   
-   // Text color #F0F0F0
-   static constexpr float TEXT_R = 0xF0 / 255.0f;
-   static constexpr float TEXT_G = 0xF0 / 255.0f;
-   static constexpr float TEXT_B = 0xF0 / 255.0f;
-   
-   static constexpr float MENU_HEIGHT = 30.0f;  // pixels
-}
+
 

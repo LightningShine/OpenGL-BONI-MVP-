@@ -20,6 +20,7 @@
 // =================================
 // === PROJECTS FILES ===
 #include "../Config.h"
+#include "../ui/UI_Config.h"
 #include "../input/Input.h"
 #include "../rendering/Interpolation.h"
 #include "../../UI.h"
@@ -306,6 +307,17 @@ void renderGrid(GLuint shader_program, glm::vec2 camera_position, float camera_z
     // Draw grid with transparency
     glUseProgram(shader_program);
     
+    // Set projection matrix (it's already set in main loop, but ensure it's active)
+    GLint proj_loc = glGetUniformLocation(shader_program, "projection");
+    glm::mat4 projection = glm::ortho(
+        -MapConstants::MAP_BOUND_X / camera_zoom + camera_position.x,
+        MapConstants::MAP_BOUND_X / camera_zoom + camera_position.x,
+        -MapConstants::MAP_BOUND_Y / camera_zoom + camera_position.y,
+        MapConstants::MAP_BOUND_Y / camera_zoom + camera_position.y,
+        -1.0f, 1.0f
+    );
+    glUniformMatrix4fv(proj_loc, 1, GL_FALSE, glm::value_ptr(projection));
+    
     GLint color_loc = glGetUniformLocation(shader_program, "uColor");
     GLint alpha_loc = glGetUniformLocation(shader_program, "uAlpha");
     
@@ -329,6 +341,9 @@ void renderGrid(GLuint shader_program, glm::vec2 camera_position, float camera_z
     // Cleanup
     glDeleteBuffers(1, &grid_vbo);
     glDeleteVertexArrays(1, &grid_vao);
+    
+    // IMPORTANT: Unbind VAO to prevent interference with track rendering
+    glBindVertexArray(0);
 }
 
 int main()
@@ -353,7 +368,7 @@ int main()
 	//glfwWindowHint(GLFW_DECORATED, GLFW_FALSE); //Full mode without borders
     // Use NULL for monitor to create a windowed mode (borderless because of GLFW_DECORATED = FALSE)
     // This fixes the black screen issue on capture and cursor visibility
-	GLFWwindow* window = glfwCreateWindow(Width, Height, "RACE APP", NULL, NULL); 
+	GLFWwindow* window = glfwCreateWindow(Width, Height, UIConfig::APP_NAME, NULL, NULL); 
 	if (window == NULL)
 	{
 		cout << "Failed to create GLFW window" << endl;
@@ -367,8 +382,9 @@ int main()
 	HWND hwnd = glfwGetWin32Window(window);
 
 	// Color in the format 0x00BBGGRR (Blue, Green, Red)
-	COLORREF titleBarColor = 0x00262626; // Dark gray (almost black)
-	COLORREF borderColor = 0x00262626;   // Border color
+	// #181818 = RGB(24, 24, 24) = 0x00181818
+	COLORREF titleBarColor = 0x00181818; // Match menu background color
+	COLORREF borderColor = 0x00181818;   // Border color
 
 	// DWMWA_CAPTION_COLOR = 35, DWMWA_BORDER_COLOR = 34
 	DwmSetWindowAttribute(hwnd, 35, &titleBarColor, sizeof(titleBarColor));
@@ -377,6 +393,7 @@ int main()
 	// Force dark title bar theme
 	BOOL useDarkMode = TRUE;
 	DwmSetWindowAttribute(hwnd, 20, &useDarkMode, sizeof(useDarkMode)); // DWMWA_USE_IMMERSIVE_DARK_MODE
+
 
 	glfwMakeContextCurrent(window); // Make the window's context in current thread
     glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL); // Show the cursor
@@ -512,7 +529,7 @@ int main()
 
 	// ========================== VEHICLE SYSTEM INITIALIZATION ==========================
 	
-	// ✅ Запускаем фоновый поток vehicleLoop для обслуживания машин
+	// ? ????????? ??????? ????? vehicleLoop ??? ???????????? ?????
 	std::thread vehicleThread(vehicleLoop);
 	vehicleThread.detach();
 	std::cout << "vehicleLoop thread started" << std::endl;
@@ -522,7 +539,7 @@ int main()
 	while (!glfwWindowShouldClose(window)) // Main loop that runs until the window is closed
 	{
 		ui.BeginFrame();
-		ui.Render();
+		// NOTE: ui.Render() moved to AFTER track rendering
 		
 
 		processInput(window, camera_position, camera_zoom, camera_move_speed, &g_smooth_track_points);
@@ -574,6 +591,17 @@ int main()
 
 		GLint projLoc = glGetUniformLocation(shader_program, "projection");
 		glUniformMatrix4fv(projLoc, 1, GL_FALSE, glm::value_ptr(projection));
+		
+		// Debug projection once
+		static bool proj_debug_printed = false;
+		if (!proj_debug_printed && points.size() > 0) {
+			std::cout << "[DEBUG] Projection matrix set:" << std::endl;
+			std::cout << "  Bounds: [" << (-zoomedHorizontal + camera_position.x) << " to " << (zoomedHorizontal + camera_position.x) << "]" << std::endl;
+			std::cout << "  Camera: (" << camera_position.x << ", " << camera_position.y << ")" << std::endl;
+			std::cout << "  Zoom: " << camera_zoom << std::endl;
+			proj_debug_printed = true;
+		}
+
 
 		GLint colorLoc = glGetUniformLocation(shader_program, "uColor");
 		GLint alphaLoc = glGetUniformLocation(shader_program, "uAlpha");
@@ -582,6 +610,12 @@ int main()
 		
 		// Render grid (always, even without track)
 		renderGrid(shader_program, camera_position, camera_zoom, Width, Height);
+		
+		// CRITICAL FIX: Re-bind VAO and shader after renderGrid
+		// renderGrid creates its own VAO which overrides the track VAO
+		glBindVertexArray(vao);
+		glUseProgram(shader_program);
+		glUniformMatrix4fv(projLoc, 1, GL_FALSE, glm::value_ptr(projection));
 
 		std::vector<glm::vec2> borderLayer;
 		std::vector<glm::vec2> asphaltLayer;
@@ -618,6 +652,19 @@ int main()
 				borderLayer = generateTriangleStripFromLine(smoothPoints, TrackConstants::TRACK_BORDER_WIDTH);
 				asphaltLayer = generateTriangleStripFromLine(smoothPoints, TrackConstants::TRACK_ASPHALT_WIDTH);
 
+				// Debug output
+				static bool debug_printed = false;
+				if (!debug_printed) {
+					std::cout << "[DEBUG] Track rendering:" << std::endl;
+					std::cout << "  Points: " << pointCount << std::endl;
+					std::cout << "  Border vertices: " << borderLayer.size() << std::endl;
+					std::cout << "  Asphalt vertices: " << asphaltLayer.size() << std::endl;
+					std::cout << "  Camera: (" << camera_position.x << ", " << camera_position.y << "), zoom: " << camera_zoom << std::endl;
+					if (borderLayer.size() > 0) {
+						std::cout << "  First border vertex: (" << borderLayer[0].x << ", " << borderLayer[0].y << ")" << std::endl;
+					}
+					debug_printed = true;
+				}
 
 			}
 		}
@@ -646,14 +693,16 @@ int main()
 
 
 
-		// ========================== UI RENDERING ==========================
-
-		ui.EndFrame();
-		
-		// ✅ Рисуем машины только если карта загружена
+		// ? ?????? ?????? ?????? ???? ????? ?????????
 		if (g_is_map_loaded) { 
 			renderAllVehicles(shader_program, vao, vbo, projection, camera_position, camera_zoom); 
 		}
+
+		// ========================== UI RENDERING ==========================
+		// Render UI AFTER track and vehicles so it's on top
+		ui.Render();
+		ui.EndFrame();
+		
 		// check and call events and swap the buffers
 		 
 		glfwPollEvents(); // Poll for and process events (e.g., keyboard, mouse)
