@@ -102,8 +102,7 @@ double calculateTotal(int price, int tax) {
 Избегай вложенности. Если можно выйти из функции раньше — выходи.
 Пример:
 // ХОРОШО: Линейный код
-```
-C++
+```C++
 void saveData(Data* data) {
     if (!data) return;
     if (!data->isValid()) return;
@@ -118,10 +117,14 @@ void saveData(Data* data) {
 Макросы vs constexpr: Мы предпочитаем static constexpr вместо #define, так как они типизированы и безопасны. Макросы используй только если нужно управлять компиляцией.
 Пример:
 // ХОРОШО: Константа вверху файла или в неймспейсе
-```C++ static constexpr int MAX_RETRY_ATTEMPTS = 5; ```
+```C++
+static constexpr int MAX_RETRY_ATTEMPTS = 5;
+```
 
 // ХОРОШО: Enum class
-```C++ enum class UserRole { Admin = 1, Editor = 2, Guest = 3 }; ```
+```C++
+enum class UserRole { Admin = 1, Editor = 2, Guest = 3 };
+```
 
 
 ## 8. Современный C++ (Modern Standards)
@@ -131,8 +134,7 @@ nullptr: Никогда не используй NULL или 0.
 RAII: Ресурсы должны управляться объектами. Контейнеры (std::vector, std::string) — твои лучшие друзья.
 const: Если значение не меняется — оно обязано быть const.
 ## 9. Комментарии
-```
-C++
+```C++
 ПЛОХО: i++; // увеличиваем i
 ХОРОШО: // Используем кэширование, чтобы избежать повторных запросов к БД
 ```
