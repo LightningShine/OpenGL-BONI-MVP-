@@ -561,28 +561,59 @@ void UI::RenderTopMenu()
                                     ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_MenuBar |
                                     ImGuiWindowFlags_NoBringToFrontOnFocus;
     
-    // Push styling - fixed spacing and hover color
+    // === TOP MENU BAR STYLING ===
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
-    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10, 4));
-    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4, 0)); // 4px spacing between menu items
-    ImGui::PushStyleVar(ImGuiStyleVar_ItemInnerSpacing, ImVec2(8, 4));
-    
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(UIConfig::MENU_BG_R, UIConfig::MENU_BG_G, UIConfig::MENU_BG_B, 1.0f)); // #181818
+	ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10, 12)); // Menu bar item padding
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(6, 0)); // Spacing between File, Settings, View, etc.
+	ImGui::PushStyleVar(ImGuiStyleVar_ItemInnerSpacing, ImVec2(8, 4)); // Arrow spacing in menu bar
+
+    // Top menu bar colors
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(UIConfig::MENU_BG_R, UIConfig::MENU_BG_G, UIConfig::MENU_BG_B, 1.0f));
     ImGui::PushStyleColor(ImGuiCol_MenuBarBg, ImVec4(UIConfig::MENU_BG_R, UIConfig::MENU_BG_G, UIConfig::MENU_BG_B, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.78f, 0.78f, 0.78f, 1.0f)); // Default gray text
-    ImGui::PushStyleColor(ImGuiCol_PopupBg, ImVec4(0.12f, 0.12f, 0.12f, 0.98f));
-    ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(UIConfig::HOVER_COLOR_R, UIConfig::HOVER_COLOR_G, UIConfig::HOVER_COLOR_B, 0.3f)); // Subtle hover #565656
-    ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(UIConfig::HOVER_COLOR_R, UIConfig::HOVER_COLOR_G, UIConfig::HOVER_COLOR_B, 1.0f)); // #565656 on hover
-    ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0.4f, 0.4f, 0.4f, 1.0f));
+    
+    // Dropdown menu colors (применяем настройки из UI_Config.h)
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(UIConfig::DROPDOWN_TEXT_R, UIConfig::DROPDOWN_TEXT_G, UIConfig::DROPDOWN_TEXT_B, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_PopupBg, ImVec4(UIConfig::DROPDOWN_BG_R, UIConfig::DROPDOWN_BG_G, UIConfig::DROPDOWN_BG_B, UIConfig::DROPDOWN_BG_ALPHA));
+    ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(UIConfig::DROPDOWN_ACTIVE_R, UIConfig::DROPDOWN_ACTIVE_G, UIConfig::DROPDOWN_ACTIVE_B, 0.5f));
+    ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(UIConfig::DROPDOWN_HOVER_R, UIConfig::DROPDOWN_HOVER_G, UIConfig::DROPDOWN_HOVER_B, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(UIConfig::DROPDOWN_ACTIVE_R, UIConfig::DROPDOWN_ACTIVE_G, UIConfig::DROPDOWN_ACTIVE_B, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Separator, ImVec4(UIConfig::DROPDOWN_SEPARATOR_R, UIConfig::DROPDOWN_SEPARATOR_G, UIConfig::DROPDOWN_SEPARATOR_B, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(UIConfig::DROPDOWN_BORDER_R, UIConfig::DROPDOWN_BORDER_G, UIConfig::DROPDOWN_BORDER_B, 1.0f));
     
     ImGui::Begin("##TopMenu", nullptr, window_flags);
     
     
+    
+    
+    
     if (ImGui::BeginMenuBar())
     {
-        ImGui::PushFont(m_fontRegular); // Ubuntu Regular 12px
+        ImGui::PushFont(m_fontRegular); // Ubuntu Regular 16px
+        
+        // === ОТСТУП ПЕРВОГО ЭЛЕМЕНТА МЕНЮ ОТ ЛЕВОГО КРАЯ ===
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + UIConfig::MENU_LEFT_PADDING);
+        
+        // === DROPDOWN MENU ITEM STYLING (применяем настройки для пунктов меню) ===
+        // Временно изменяем глобальные стили для dropdown меню
+        ImGuiStyle& style = ImGui::GetStyle();
+        ImVec2 old_window_padding = style.WindowPadding;
+        ImVec2 old_window_min_size = style.WindowMinSize;
+        float old_window_rounding = style.WindowRounding;
+        float old_popup_rounding = style.PopupRounding;
+        float old_popup_border_size = style.PopupBorderSize;
+        
+        // Применяем настройки dropdown из UI_Config.h
+        style.WindowPadding = ImVec2(UIConfig::DROPDOWN_PADDING_X, UIConfig::DROPDOWN_PADDING_Y);
+        style.WindowMinSize = ImVec2(UIConfig::DROPDOWN_MIN_WIDTH, 0.0f); // ← ПРИМЕНЯЕМ МИНИМАЛЬНУЮ ШИРИНУ!
+        style.WindowRounding = UIConfig::DROPDOWN_ROUNDING;
+        style.PopupRounding = UIConfig::DROPDOWN_ROUNDING;
+        style.PopupBorderSize = UIConfig::DROPDOWN_BORDER_SIZE;
+        
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(UIConfig::DROPDOWN_ITEM_SPACING_X, UIConfig::DROPDOWN_ITEM_SPACING_Y));
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemInnerSpacing, ImVec2(UIConfig::DROPDOWN_ITEM_INNER_SPACING, 4.0f));
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(UIConfig::DROPDOWN_ITEM_PADDING_X, UIConfig::DROPDOWN_ITEM_PADDING_Y));
         
         // File menu
         if (ImGui::BeginMenu("File"))
@@ -639,13 +670,22 @@ void UI::RenderTopMenu()
             ImGui::EndMenu();
         }
         
+        ImGui::PopStyleVar(3); // Pop DROPDOWN_ITEM styles (ItemSpacing, ItemInnerSpacing, FramePadding)
+        
+        // Восстанавливаем оригинальные стили
+        style.WindowPadding = old_window_padding;
+        style.WindowMinSize = old_window_min_size;
+        style.WindowRounding = old_window_rounding;
+        style.PopupRounding = old_popup_rounding;
+        style.PopupBorderSize = old_popup_border_size;
+        
         ImGui::PopFont();
         ImGui::EndMenuBar();
     }
     
     ImGui::End();
-    ImGui::PopStyleColor(7);
-    ImGui::PopStyleVar(6);
+    ImGui::PopStyleColor(9); // Pop 9 colors
+    ImGui::PopStyleVar(6); // Pop 6 style vars (WindowPadding, WindowBorderSize, WindowRounding, FramePadding, ItemSpacing, ItemInnerSpacing)
 }
 
 void UI::RenderBottomMenu()
@@ -727,18 +767,19 @@ void UI::RenderHelpModal()
     ImGui::SetNextWindowSize(ImVec2(UIConfig::HELP_MODAL_WIDTH, UIConfig::HELP_MODAL_HEIGHT));
     ImGui::SetNextWindowFocus(); // Force focus on modal
     
-    ImGuiWindowFlags modal_flags = ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove;
+    ImGuiWindowFlags modal_flags = ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse;  // ← УБРАЛИ ТРЕУГОЛЬНИК!
     
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(20, 15));
-    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(12, 8));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(UIConfig::MODAL_PADDING_X, UIConfig::MODAL_PADDING_Y));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(UIConfig::MODAL_ITEM_SPACING_X, UIConfig::MODAL_ITEM_SPACING_Y));
     
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.11f, 0.11f, 0.11f, 0.98f));
-    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_TitleBg, ImVec4(0.08f, 0.08f, 0.08f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_TitleBgActive, ImVec4(0.12f, 0.12f, 0.12f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.25f, 0.45f, 0.75f, 0.8f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.35f, 0.55f, 0.85f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.45f, 0.65f, 0.95f, 1.0f));
+    // ПРИМЕНЯЕМ НАСТРОЙКИ ИЗ UI_CONFIG.H
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(UIConfig::MODAL_BG_R, UIConfig::MODAL_BG_G, UIConfig::MODAL_BG_B, UIConfig::MODAL_BG_ALPHA));
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(UIConfig::MODAL_TEXT_R, UIConfig::MODAL_TEXT_G, UIConfig::MODAL_TEXT_B, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_TitleBg, ImVec4(UIConfig::MODAL_TITLE_BG_R, UIConfig::MODAL_TITLE_BG_G, UIConfig::MODAL_TITLE_BG_B, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_TitleBgActive, ImVec4(UIConfig::MODAL_TITLE_ACTIVE_R, UIConfig::MODAL_TITLE_ACTIVE_G, UIConfig::MODAL_TITLE_ACTIVE_B, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(UIConfig::MODAL_BUTTON_R, UIConfig::MODAL_BUTTON_G, UIConfig::MODAL_BUTTON_B, UIConfig::MODAL_BUTTON_ALPHA));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(UIConfig::MODAL_BUTTON_HOVER_R, UIConfig::MODAL_BUTTON_HOVER_G, UIConfig::MODAL_BUTTON_HOVER_B, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(UIConfig::MODAL_BUTTON_ACTIVE_R, UIConfig::MODAL_BUTTON_ACTIVE_G, UIConfig::MODAL_BUTTON_ACTIVE_B, 1.0f));
     
     bool modal_open = true;
     if (ImGui::Begin("Keyboard Shortcuts", &modal_open, modal_flags))
@@ -840,9 +881,8 @@ void UI::RenderHelpModal()
         ImGui::Spacing();
         ImGui::Spacing();
         
-        float button_width = 120;
-        ImGui::SetCursorPosX((ImGui::GetWindowWidth() - button_width) * 0.5f);
-        if (ImGui::Button("Close", ImVec2(button_width, 30)))
+        ImGui::SetCursorPosX((ImGui::GetWindowWidth() - UIConfig::MODAL_BUTTON_WIDTH) * 0.5f);
+        if (ImGui::Button("Close", ImVec2(UIConfig::MODAL_BUTTON_WIDTH, UIConfig::MODAL_BUTTON_HEIGHT)))
         {
             m_show_help_modal = false;
         }

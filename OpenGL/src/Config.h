@@ -17,7 +17,7 @@ namespace VehicleConstants {
 
 // Camera constants
 namespace CameraConstants {
-    static constexpr float CAMERA_MOVE_SPEED = 0.001f;
+    static constexpr float CAMERA_MOVE_SPEED = 0.01f;
     static constexpr float CAMERA_ZOOM_MIN = 0.1f;
     static constexpr float CAMERA_ZOOM_MAX = 10.0f;
     static constexpr float CAMERA_FRICTION = 0.85f;
@@ -41,7 +41,7 @@ namespace PacketMagic {
 // Track rendering constants
 namespace TrackConstants {
     static constexpr float TRACK_CORNER_RADIUS = 0.075f;
-    static constexpr float TRACK_BORDER_WIDTH = 0.085f;
+    static constexpr float TRACK_BORDER_WIDTH = 0.10f;
     static constexpr float TRACK_ASPHALT_WIDTH = 0.075f;
     static constexpr int TRACK_CORNER_SEGMENTS = 10;
 }

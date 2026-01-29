@@ -23,6 +23,7 @@
 #include "../ui/UI_Config.h"
 #include "../input/Input.h"
 #include "../rendering/Interpolation.h"
+#include "../rendering/Render.h"          
 #include "../../UI.h"
 #include "../network/Server.h"
 #include "../network/Client.h"
@@ -39,6 +40,13 @@ struct AppContext {
     std::mutex* points_mutex;
     UI* ui;
 };
+
+// ============================================================================
+// GLOBAL VARIABLES FOR TRACK SIMULATION
+// ============================================================================
+// Smooth track points used for vehicle simulation (generated from raw track)
+std::vector<SplinePoint> g_smooth_track_points;
+
 
 void framebuffer_size_callback(GLFWwindow* window, int width, int height)
 {
@@ -206,6 +214,8 @@ void drop_callback(GLFWwindow* window, int count, const char** paths)
 				loadTrackFromData(buffer.str(), *context->points, *context->points_mutex);
 				std::cout << "Loaded file: " << paths[i] << std::endl;
                 
+				TrackRenderer::rebuildTrackCache(*context->points, *context->points_mutex);
+				
                 if (context->ui)
                 {
                     context->ui->CloseSplash();
@@ -247,7 +257,9 @@ const char* fragmentShaderSource = R"(
 )";
 
 // Render grid function
-void renderGrid(GLuint shader_program, glm::vec2 camera_position, float camera_zoom, int window_width, int window_height)
+void renderGrid(GLuint shader_program, GLuint grid_vao, GLuint grid_vbo,
+                glm::vec2 camera_position, float camera_zoom, 
+                int window_width, int window_height, float horizontalBound, float verticalBound)
 {
     // Calculate view bounds in world coordinates
     float view_width = MapConstants::MAP_BOUND_X * 2.0f / camera_zoom;
@@ -290,13 +302,10 @@ void renderGrid(GLuint shader_program, glm::vec2 camera_position, float camera_z
         grid_vertices.push_back(y);
     }
     
+    
     if (grid_vertices.empty()) return;
     
-    // Create and bind VAO/VBO for grid
-    GLuint grid_vao, grid_vbo;
-    glGenVertexArrays(1, &grid_vao);
-    glGenBuffers(1, &grid_vbo);
-    
+    // Bind existing VAO/VBO (created ONCE during initialization)
     glBindVertexArray(grid_vao);
     glBindBuffer(GL_ARRAY_BUFFER, grid_vbo);
     glBufferData(GL_ARRAY_BUFFER, grid_vertices.size() * sizeof(float), grid_vertices.data(), GL_DYNAMIC_DRAW);
@@ -307,13 +316,17 @@ void renderGrid(GLuint shader_program, glm::vec2 camera_position, float camera_z
     // Draw grid with transparency
     glUseProgram(shader_program);
     
-    // Set projection matrix (it's already set in main loop, but ensure it's active)
+    // Set projection matrix with correct aspect ratio
     GLint proj_loc = glGetUniformLocation(shader_program, "projection");
+    
+    float zoomedHorizontal = horizontalBound / camera_zoom;
+    float zoomedVertical = verticalBound / camera_zoom;
+    
     glm::mat4 projection = glm::ortho(
-        -MapConstants::MAP_BOUND_X / camera_zoom + camera_position.x,
-        MapConstants::MAP_BOUND_X / camera_zoom + camera_position.x,
-        -MapConstants::MAP_BOUND_Y / camera_zoom + camera_position.y,
-        MapConstants::MAP_BOUND_Y / camera_zoom + camera_position.y,
+        -zoomedHorizontal + camera_position.x,  // left
+        zoomedHorizontal + camera_position.x,   // right
+        -zoomedVertical + camera_position.y,    // bottom
+        zoomedVertical + camera_position.y,     // top
         -1.0f, 1.0f
     );
     glUniformMatrix4fv(proj_loc, 1, GL_FALSE, glm::value_ptr(projection));
@@ -337,12 +350,6 @@ void renderGrid(GLuint shader_program, glm::vec2 camera_position, float camera_z
     glDrawArrays(GL_LINES, 0, static_cast<GLsizei>(grid_vertices.size() / 2));
     
     glDisable(GL_BLEND);
-    
-    // Cleanup
-    glDeleteBuffers(1, &grid_vbo);
-    glDeleteVertexArrays(1, &grid_vao);
-    
-    // IMPORTANT: Unbind VAO to prevent interference with track rendering
     glBindVertexArray(0);
 }
 
@@ -396,7 +403,8 @@ int main()
 
 
 	glfwMakeContextCurrent(window); // Make the window's context in current thread
-    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL); // Show the cursor
+	glfwSwapInterval(1);  // Enable V-Sync (lock FPS to monitor refresh rate, e.g. 60 Hz)
+	glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL); // Show the cursor
 
 	if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress)) // Initialize GLAD before calling any OpenGL function
 	{
@@ -529,18 +537,81 @@ int main()
 
 	// ========================== VEHICLE SYSTEM INITIALIZATION ==========================
 	
-	// ? ????????? ??????? ????? vehicleLoop ??? ???????????? ?????
 	std::thread vehicleThread(vehicleLoop);
 	vehicleThread.detach();
 	std::cout << "vehicleLoop thread started" << std::endl;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+	// ========================== GRID VAO/VBO INITIALIZATION ==========================
+	// Create grid VAO/VBO ONCE before render loop (NOT every frame!)
+	GLuint grid_vao, grid_vbo;
+	glGenVertexArrays(1, &grid_vao);
+	glGenBuffers(1, &grid_vbo);
+	std::cout << "Grid VAO/VBO created (VAO: " << grid_vao << ", VBO: " << grid_vbo << ")" << std::endl;
 
 	// ========================== RENDER LOOP ==========================
 
 	while (!glfwWindowShouldClose(window)) // Main loop that runs until the window is closed
 	{
 		ui.BeginFrame();
-		// NOTE: ui.Render() moved to AFTER track rendering
-		
 
 		processInput(window, camera_position, camera_zoom, camera_move_speed, &g_smooth_track_points);
 		camera_position += camera_velocity;  
@@ -550,7 +621,6 @@ int main()
 		glClear(GL_COLOR_BUFFER_BIT); // Clear the color buffer with the specified clear color
 
 
-		// Aspect Ratio Calculation 
 		{
 			glfwGetWindowSize(window, &windowswidth, &windowsheight);
 
@@ -592,108 +662,23 @@ int main()
 		GLint projLoc = glGetUniformLocation(shader_program, "projection");
 		glUniformMatrix4fv(projLoc, 1, GL_FALSE, glm::value_ptr(projection));
 		
-		// Debug projection once
-		static bool proj_debug_printed = false;
-		if (!proj_debug_printed && points.size() > 0) {
-			std::cout << "[DEBUG] Projection matrix set:" << std::endl;
-			std::cout << "  Bounds: [" << (-zoomedHorizontal + camera_position.x) << " to " << (zoomedHorizontal + camera_position.x) << "]" << std::endl;
-			std::cout << "  Camera: (" << camera_position.x << ", " << camera_position.y << ")" << std::endl;
-			std::cout << "  Zoom: " << camera_zoom << std::endl;
-			proj_debug_printed = true;
-		}
-
 
 		GLint colorLoc = glGetUniformLocation(shader_program, "uColor");
 		GLint alphaLoc = glGetUniformLocation(shader_program, "uAlpha");
 
 		glBindVertexArray(vao);
 		
-		// Render grid (always, even without track)
-		renderGrid(shader_program, camera_position, camera_zoom, Width, Height);
+	// Render grid (always, even without track)
+	renderGrid(shader_program, grid_vao, grid_vbo, camera_position, camera_zoom, Width, Height, 
+	           (float)horizontalBound, (float)verticalBound);
 		
-		// CRITICAL FIX: Re-bind VAO and shader after renderGrid
-		// renderGrid creates its own VAO which overrides the track VAO
-		glBindVertexArray(vao);
-		glUseProgram(shader_program);
-		glUniformMatrix4fv(projLoc, 1, GL_FALSE, glm::value_ptr(projection));
-
-		std::vector<glm::vec2> borderLayer;
-		std::vector<glm::vec2> asphaltLayer;
-
-		size_t pointCount = 0;
-		std::vector<glm::vec2> triangleStripPoints;
-		{
-			std::lock_guard<std::mutex> lock(points_mutex);
-			pointCount = points.size();
-
-			if (pointCount > 1)
-			{
-				g_is_map_loaded = true;
-
-				// radius: 0.02f (rounding), segments: 10 (corner smoth)
-				float CornerRadius = TrackConstants::TRACK_CORNER_RADIUS;
-
-				// 1. Filter noise (points too close)
-				std::vector<glm::vec2> filteredPoints = filterPointsByDistance(points, 0.05f);
-
-				// 2. Simplify path (remove wavy lines on straights)
-				std::vector<glm::vec2> simplifiedPoints = simplifyPath(filteredPoints, 0.02f);
-
-				// 3. Generate rounded corners
-				std::vector<SplinePoint> smoothPoints = interpolateRoundedPolyline(
-					simplifiedPoints, 
-					CornerRadius, 
-					TrackConstants::TRACK_CORNER_SEGMENTS
-				);
-				
-				// Store for vehicle simulation
-				g_smooth_track_points = smoothPoints;
-
-				borderLayer = generateTriangleStripFromLine(smoothPoints, TrackConstants::TRACK_BORDER_WIDTH);
-				asphaltLayer = generateTriangleStripFromLine(smoothPoints, TrackConstants::TRACK_ASPHALT_WIDTH);
-
-				// Debug output
-				static bool debug_printed = false;
-				if (!debug_printed) {
-					std::cout << "[DEBUG] Track rendering:" << std::endl;
-					std::cout << "  Points: " << pointCount << std::endl;
-					std::cout << "  Border vertices: " << borderLayer.size() << std::endl;
-					std::cout << "  Asphalt vertices: " << asphaltLayer.size() << std::endl;
-					std::cout << "  Camera: (" << camera_position.x << ", " << camera_position.y << "), zoom: " << camera_zoom << std::endl;
-					if (borderLayer.size() > 0) {
-						std::cout << "  First border vertex: (" << borderLayer[0].x << ", " << borderLayer[0].y << ")" << std::endl;
-					}
-					debug_printed = true;
-				}
-
-			}
-		}
-
-		if (borderLayer.size() > 0)
-		{
-			glBindBuffer(GL_ARRAY_BUFFER, vbo);
-			glBufferData(GL_ARRAY_BUFFER, borderLayer.size() * sizeof(glm::vec2), borderLayer.data(), GL_DYNAMIC_DRAW);
-
-			glUniform3f(colorLoc, 1.0f, 1.0f, 1.0f); // White color for border
-			glUniform1f(alphaLoc, 1.0f); // Full opacity
-			glDrawArrays(GL_TRIANGLE_STRIP, 0, (GLsizei)borderLayer.size());
-		}
-
-		if (asphaltLayer.size() > 0)
-		{
-			glBindBuffer(GL_ARRAY_BUFFER, vbo);
-			glBufferData(GL_ARRAY_BUFFER, asphaltLayer.size() * sizeof(glm::vec2), asphaltLayer.data(), GL_DYNAMIC_DRAW);
-
-			glUniform3f(colorLoc, 0.3f, 0.3f, 0.3f); // Grey color for asphalt
-			glUniform1f(alphaLoc, 1.0f); // Full opacity
-			glDrawArrays(GL_TRIANGLE_STRIP, 0, (GLsizei)asphaltLayer.size());
-		}
-
-		// M key removed - use T to create vehicles with automatic simulation
+	
+	// Track rendering from GPU cache
+	glUseProgram(shader_program);
+	glUniformMatrix4fv(projLoc, 1, GL_FALSE, glm::value_ptr(projection));
+	TrackRenderer::renderCachedTrack(shader_program);
 
 
-
-		// ? ?????? ?????? ?????? ???? ????? ?????????
 		if (g_is_map_loaded) { 
 			renderAllVehicles(shader_program, vao, vbo, projection, camera_position, camera_zoom); 
 		}
@@ -716,8 +701,11 @@ int main()
 
 	serverStop();
 	clientStop();
+	TrackRenderer::clearTrackCache();  // Clear track VAO/VBO
 	glDeleteVertexArrays(1, &vao);
 	glDeleteBuffers(1, &vbo);
+	glDeleteVertexArrays(1, &grid_vao);  // Clean grid VAO/VBO
+	glDeleteBuffers(1, &grid_vbo);
 	glDeleteProgram(shader_program);
 	glfwTerminate(); // Clean up all resources allocated by GLFW and exit
 
