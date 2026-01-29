@@ -510,7 +510,7 @@ int main()
 	std::mutex  points_mutex;
 	
 	// Store smooth track for vehicle simulation
-	std::vector<SplinePoint> g_smooth_track_points;
+	// УДАЛЕНО: std::vector<SplinePoint> g_smooth_track_points; - используем глобальную версию (строка 48)
 
 	AppContext appContext;
 	appContext.zoom = &camera_zoom;
