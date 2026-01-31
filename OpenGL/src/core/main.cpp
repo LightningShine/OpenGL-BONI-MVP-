@@ -53,7 +53,7 @@ void framebuffer_size_callback(GLFWwindow* window, int width, int height)
 	glViewport(0, 0, width, height);
 }
 
-void processInput(GLFWwindow* window, glm::vec2& camera_pos, float& zoom, float speed, 
+void processInput(GLFWwindow* window, glm::vec2& camera_pos, float& zoom, float& rotation, float speed, 
 const std::vector<SplinePoint>* smooth_track = nullptr)
 {
 	// Close when press ESC
@@ -129,22 +129,55 @@ const std::vector<SplinePoint>* smooth_track = nullptr)
 	}
 
 
-	// Camera movment (W/A/S/D or Arrows)
-	if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS ||
-		glfwGetKey(window, GLFW_KEY_UP) == GLFW_PRESS)
+	// Camera movement (W/A/S/D or Arrows)
+	// Note: Arrow keys are used for rotation when R is pressed
+	bool isRotationMode = glfwGetKey(window, GLFW_KEY_R) == GLFW_PRESS;
+	
+	if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
 		camera_pos.y += speed / zoom;  // Up
 
-	if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS ||
-		glfwGetKey(window, GLFW_KEY_DOWN) == GLFW_PRESS)
-		camera_pos.y -= speed / zoom;  // down
+	if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS)
+		camera_pos.y -= speed / zoom;  // Down
 
-	if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS ||
-		glfwGetKey(window, GLFW_KEY_LEFT) == GLFW_PRESS)
+	if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS)
 		camera_pos.x -= speed / zoom;  // Left
 
-	if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS ||
-		glfwGetKey(window, GLFW_KEY_RIGHT) == GLFW_PRESS)
+	if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
 		camera_pos.x += speed / zoom;  // Right
+	
+	// Arrow keys for movement (only if R is not pressed)
+	if (!isRotationMode)
+	{
+		if (glfwGetKey(window, GLFW_KEY_UP) == GLFW_PRESS)
+			camera_pos.y += speed / zoom;
+		
+		if (glfwGetKey(window, GLFW_KEY_DOWN) == GLFW_PRESS)
+			camera_pos.y -= speed / zoom;
+		
+		if (glfwGetKey(window, GLFW_KEY_LEFT) == GLFW_PRESS)
+			camera_pos.x -= speed / zoom;
+		
+		if (glfwGetKey(window, GLFW_KEY_RIGHT) == GLFW_PRESS)
+			camera_pos.x += speed / zoom;
+	}
+	
+	// Camera rotation (R + Left/Right arrows)
+	if (isRotationMode)
+	{
+		if (glfwGetKey(window, GLFW_KEY_LEFT) == GLFW_PRESS)
+		{
+			rotation -= CameraConstants::CAMERA_ROTATION_SPEED;
+			if (rotation < CameraConstants::CAMERA_ROTATION_MIN)
+				rotation = CameraConstants::CAMERA_ROTATION_MIN;
+		}
+		
+		if (glfwGetKey(window, GLFW_KEY_RIGHT) == GLFW_PRESS)
+		{
+			rotation += CameraConstants::CAMERA_ROTATION_SPEED;
+			if (rotation > CameraConstants::CAMERA_ROTATION_MAX)
+				rotation = CameraConstants::CAMERA_ROTATION_MAX;
+		}
+	}
 
 	// Zoom limits
 	if (zoom < CameraConstants::CAMERA_ZOOM_MIN) zoom = CameraConstants::CAMERA_ZOOM_MIN;
@@ -258,8 +291,8 @@ const char* fragmentShaderSource = R"(
 
 // Render grid function
 void renderGrid(GLuint shader_program, GLuint grid_vao, GLuint grid_vbo,
-                glm::vec2 camera_position, float camera_zoom, 
-                int window_width, int window_height, float horizontalBound, float verticalBound)
+glm::vec2 camera_position, float camera_zoom, float camera_rotation,
+int window_width, int window_height, float horizontalBound, float verticalBound)
 {
     // Calculate view bounds in world coordinates
     float view_width = MapConstants::MAP_BOUND_X * 2.0f / camera_zoom;
@@ -323,13 +356,20 @@ void renderGrid(GLuint shader_program, GLuint grid_vao, GLuint grid_vbo,
     float zoomedVertical = verticalBound / camera_zoom;
     
     glm::mat4 projection = glm::ortho(
-        -zoomedHorizontal + camera_position.x,  // left
-        zoomedHorizontal + camera_position.x,   // right
-        -zoomedVertical + camera_position.y,    // bottom
-        zoomedVertical + camera_position.y,     // top
+        -zoomedHorizontal,  // left
+        zoomedHorizontal,   // right
+        -zoomedVertical,    // bottom
+        zoomedVertical,     // top
         -1.0f, 1.0f
     );
-    glUniformMatrix4fv(proj_loc, 1, GL_FALSE, glm::value_ptr(projection));
+    
+    // Apply camera transformation (position + rotation)
+    glm::mat4 view = glm::mat4(1.0f);
+    view = glm::translate(view, glm::vec3(-camera_position.x, -camera_position.y, 0.0f));
+    view = glm::rotate(view, glm::radians(camera_rotation), glm::vec3(0.0f, 0.0f, 1.0f));
+    
+    glm::mat4 viewProjection = projection * view;
+    glUniformMatrix4fv(proj_loc, 1, GL_FALSE, glm::value_ptr(viewProjection));
     
     GLint color_loc = glGetUniformLocation(shader_program, "uColor");
     GLint alpha_loc = glGetUniformLocation(shader_program, "uAlpha");
@@ -500,6 +540,7 @@ int main()
 	// ========================== Process Input ==========================
 	glm::vec2 camera_position(0.0f, 0.0f);
 	float camera_zoom = 1.0f;
+	float camera_rotation = 0.0f;  // Camera rotation in degrees (-89 to +89)
 	float camera_move_speed = CameraConstants::CAMERA_MOVE_SPEED;
 	glm::vec2 camera_velocity(0.0f, 0.0f);
 	float friction = CameraConstants::CAMERA_FRICTION;
@@ -613,7 +654,7 @@ int main()
 	{
 		ui.BeginFrame();
 
-		processInput(window, camera_position, camera_zoom, camera_move_speed, &g_smooth_track_points);
+		processInput(window, camera_position, camera_zoom, camera_rotation, camera_move_speed, &g_smooth_track_points);
 		camera_position += camera_velocity;  
 		camera_velocity *= friction;
 		
@@ -647,20 +688,28 @@ int main()
 		camera_position.x = glm::clamp(camera_position.x, -map_bound_x, map_bound_x);
 		camera_position.y = glm::clamp(camera_position.y, -map_bound_y, map_bound_y);
 
-		// Creating orthographic projection matrix with camera
+		// Creating orthographic projection matrix
 		glm::mat4 projection = glm::ortho(
-			-zoomedHorizontal + camera_position.x,  // left
-			zoomedHorizontal + camera_position.x,  // right
-			-zoomedVertical + camera_position.y,    // bottom
-			zoomedVertical + camera_position.y,    // top
+			-zoomedHorizontal,  // left
+			zoomedHorizontal,   // right
+			-zoomedVertical,    // bottom
+			zoomedVertical,     // top
 			-1.0f, 1.0f
 		);
+		
+		// Creating view matrix with camera position and rotation
+		glm::mat4 view = glm::mat4(1.0f);
+		view = glm::translate(view, glm::vec3(-camera_position.x, -camera_position.y, 0.0f));
+		view = glm::rotate(view, glm::radians(camera_rotation), glm::vec3(0.0f, 0.0f, 1.0f));
+		
+		// Combine projection and view
+		glm::mat4 viewProjection = projection * view;
 
 		// Track creation and drawing
 		glUseProgram(shader_program);
 
-		GLint projLoc = glGetUniformLocation(shader_program, "projection");
-		glUniformMatrix4fv(projLoc, 1, GL_FALSE, glm::value_ptr(projection));
+	GLint projLoc = glGetUniformLocation(shader_program, "projection");
+	glUniformMatrix4fv(projLoc, 1, GL_FALSE, glm::value_ptr(viewProjection));
 		
 
 		GLint colorLoc = glGetUniformLocation(shader_program, "uColor");
@@ -669,21 +718,22 @@ int main()
 		glBindVertexArray(vao);
 		
 	// Render grid (always, even without track)
-	renderGrid(shader_program, grid_vao, grid_vbo, camera_position, camera_zoom, Width, Height, 
+	renderGrid(shader_program, grid_vao, grid_vbo, camera_position, camera_zoom, camera_rotation, Width, Height, 
 	           (float)horizontalBound, (float)verticalBound);
 		
 	
 	// Track rendering from GPU cache
 	glUseProgram(shader_program);
-	glUniformMatrix4fv(projLoc, 1, GL_FALSE, glm::value_ptr(projection));
+	glUniformMatrix4fv(projLoc, 1, GL_FALSE, glm::value_ptr(viewProjection));
 	TrackRenderer::renderCachedTrack(shader_program);
 
 
-		if (g_is_map_loaded) { 
-			renderAllVehicles(shader_program, vao, vbo, projection, camera_position, camera_zoom); 
-		}
 
-		// ========================== UI RENDERING ==========================
+	if (g_is_map_loaded) { 
+		renderAllVehicles(shader_program, vao, vbo, viewProjection, camera_position, camera_zoom); 
+	}
+
+	// ========================== UI RENDERING ==========================
 		// Render UI AFTER track and vehicles so it's on top
 		ui.Render();
 		ui.EndFrame();
