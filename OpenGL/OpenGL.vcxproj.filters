@@ -76,6 +76,7 @@
     <ClCompile Include="libraries\include\serialib\serialib.cpp">
       <Filter>libaries\include\serialib</Filter>
     </ClCompile>
+    <ClCompile Include="src\rendering\Render.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\input\Input.h">
@@ -104,6 +105,8 @@
       <Filter>libaries\include\serialib</Filter>
     </ClInclude>
     <ClInclude Include="src\Config.h" />
+    <ClInclude Include="src\rendering\Render.h" />
+    <ClInclude Include="src\ui\UI_Config.h" />
   </ItemGroup>
   <ItemGroup>
     <Text Include="RESTRUCTURE_SUMMARY.txt" />

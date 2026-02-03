@@ -1,0 +1,3 @@
+^<ClCompile
+Include=libraries\include\imgui\misc\freetype\imgui_freetype.cpp
+/^>

@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include <iostream>
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
@@ -298,6 +298,12 @@ int window_width, int window_height, float horizontalBound, float verticalBound)
     float view_width = MapConstants::MAP_BOUND_X * 2.0f / camera_zoom;
     float view_height = MapConstants::MAP_BOUND_Y * 2.0f / camera_zoom;
     
+    // Expand bounds to account for rotation (prevent artifacts at corners)
+    float rotation_rad = glm::radians(std::abs(camera_rotation));
+    float expansion_factor = 1.0f + std::sin(rotation_rad) * 0.5f;  // Max ~1.5x at 90 degrees
+    view_width *= expansion_factor;
+    view_height *= expansion_factor;
+    
     float world_left = camera_position.x - view_width / 2.0f;
     float world_right = camera_position.x + view_width / 2.0f;
     float world_bottom = camera_position.y - view_height / 2.0f;
@@ -363,11 +369,9 @@ int window_width, int window_height, float horizontalBound, float verticalBound)
         -1.0f, 1.0f
     );
     
-    // Apply camera transformation (position + rotation)
+    // Grid is STATIC - no rotation, only position
     glm::mat4 view = glm::mat4(1.0f);
     view = glm::translate(view, glm::vec3(-camera_position.x, -camera_position.y, 0.0f));
-    view = glm::rotate(view, glm::radians(camera_rotation), glm::vec3(0.0f, 0.0f, 1.0f));
-    
     glm::mat4 viewProjection = projection * view;
     glUniformMatrix4fv(proj_loc, 1, GL_FALSE, glm::value_ptr(viewProjection));
     
@@ -395,7 +399,11 @@ int window_width, int window_height, float horizontalBound, float verticalBound)
 
 int main()
 {
+	std::cout << "[MAIN] Starting application..." << std::endl;
+	
 	glfwInit();
+	std::cout << "[MAIN] GLFW initialized" << std::endl;
+	
 	glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);  // Determine OpenGL major version OpenGL 4.X
 	glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 6);	// Determine OpenGL minor version OpenGL X.6
 	glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
@@ -406,22 +414,49 @@ int main()
 	int Width;
 	int Height;
 
+	std::cout << "[MAIN] Getting primary monitor..." << std::endl;
 	GLFWmonitor* monitor = glfwGetPrimaryMonitor();
-
+	
+	if (!monitor)
+	{
+		std::cerr << "[ERROR] Failed to get primary monitor!" << std::endl;
+		glfwTerminate();
+		return -1;
+	}
+	
+	std::cout << "[MAIN] Getting video mode..." << std::endl;
 	const GLFWvidmode* mode = glfwGetVideoMode(monitor);
+	
+	if (!mode)
+	{
+		std::cerr << "[ERROR] Failed to get video mode!" << std::endl;
+		glfwTerminate();
+		return -1;
+	}
+	
 	Width = mode->width;
 	Height = mode->height;
+	
+	std::cout << "[MAIN] Screen resolution: " << Width << "x" << Height << std::endl;
 
 	//glfwWindowHint(GLFW_DECORATED, GLFW_FALSE); //Full mode without borders
     // Use NULL for monitor to create a windowed mode (borderless because of GLFW_DECORATED = FALSE)
     // This fixes the black screen issue on capture and cursor visibility
-	GLFWwindow* window = glfwCreateWindow(Width, Height, UIConfig::APP_NAME, NULL, NULL); 
+	glfwWindowHint(GLFW_SAMPLES, 4);
+	
+	std::cout << "[MAIN] Creating window " << Width << "x" << Height << "..." << std::endl;
+	GLFWwindow* window = glfwCreateWindow(Width, Height, UIConfig::APP_NAME, NULL, NULL);
+	
+	std::cout << "[MAIN] Window created, enabling multisampling..." << std::endl;
+	
 	if (window == NULL)
 	{
-		cout << "Failed to create GLFW window" << endl;
+		cout << "[ERROR] Failed to create GLFW window" << endl;
 		glfwTerminate();
 		return -1;
 	}
+	
+	std::cout << "[MAIN] Window created successfully" << std::endl;
 
 	
 	
@@ -443,8 +478,15 @@ int main()
 
 
 	glfwMakeContextCurrent(window); // Make the window's context in current thread
+	std::cout << "[MAIN] Made context current" << std::endl;
+	
 	glfwSwapInterval(1);  // Enable V-Sync (lock FPS to monitor refresh rate, e.g. 60 Hz)
+	std::cout << "[MAIN] V-Sync enabled" << std::endl;
+	
 	glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL); // Show the cursor
+	std::cout << "[MAIN] Cursor mode set" << std::endl;
+
+	std::cout << "[MAIN] Context created, loading GLAD..." << std::endl;
 
 	if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress)) // Initialize GLAD before calling any OpenGL function
 	{
@@ -452,7 +494,13 @@ int main()
 		return -1;
 	}
 
+	std::cout << "[MAIN] GLAD loaded successfully" << std::endl;
+	
+	glEnable(GL_MULTISAMPLE);
+	std::cout << "[MAIN] Multisampling enabled" << std::endl;
+
 	glViewport(0, 0, Width, Height); // Set the OpenGL viewport to cover the whole window
+	std::cout << "[MAIN] Viewport set" << std::endl;
 
 	glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
 	// Register the callback function to adjust the viewport when the window is resized
@@ -481,9 +529,10 @@ int main()
 
 	// ================= UI Initialization ==================
 
-	glfwMakeContextCurrent(window);
-	gladLoadGLLoader((GLADloadproc)glfwGetProcAddress);
 
+
+	std::cout << "[MAIN] Initializing UI..." << std::endl;
+	
 	UI ui;
 	if (!ui.Initialize(window))
 	{
@@ -491,6 +540,8 @@ int main()
 		glfwTerminate();
 		return -1;
 	}
+	
+	std::cout << "[MAIN] UI initialized successfully" << std::endl;
 
 
 
@@ -551,7 +602,7 @@ int main()
 	std::mutex  points_mutex;
 	
 	// Store smooth track for vehicle simulation
-	// УДАЛЕНО: std::vector<SplinePoint> g_smooth_track_points; - используем глобальную версию (строка 48)
+	// ???????: std::vector<SplinePoint> g_smooth_track_points; - ?????????? ?????????? ?????? (?????? 48)
 
 	AppContext appContext;
 	appContext.zoom = &camera_zoom;
@@ -698,18 +749,20 @@ int main()
 		);
 		
 		// Creating view matrix with camera position and rotation
-		glm::mat4 view = glm::mat4(1.0f);
-		view = glm::translate(view, glm::vec3(-camera_position.x, -camera_position.y, 0.0f));
-		view = glm::rotate(view, glm::radians(camera_rotation), glm::vec3(0.0f, 0.0f, 1.0f));
+		glm::mat4 view_world = glm::mat4(1.0f); glm::mat4 view_grid = glm::mat4(1.0f);
+	view_world = glm::translate(view_world, glm::vec3(-camera_position.x, -camera_position.y, 0.0f));
+	view_world = glm::rotate(view_world, glm::radians(camera_rotation), glm::vec3(0.0f, 0.0f, 1.0f));
+	view_grid = glm::translate(view_grid, glm::vec3(-camera_position.x, -camera_position.y, 0.0f));
 		
-		// Combine projection and view
-		glm::mat4 viewProjection = projection * view;
+	
+	glm::mat4 viewProjection_world = projection * view_world;
+	glm::mat4 viewProjection_grid = projection * view_grid;
 
 		// Track creation and drawing
 		glUseProgram(shader_program);
 
 	GLint projLoc = glGetUniformLocation(shader_program, "projection");
-	glUniformMatrix4fv(projLoc, 1, GL_FALSE, glm::value_ptr(viewProjection));
+	glUniformMatrix4fv(projLoc, 1, GL_FALSE, glm::value_ptr(viewProjection_world));
 		
 
 		GLint colorLoc = glGetUniformLocation(shader_program, "uColor");
@@ -724,13 +777,14 @@ int main()
 	
 	// Track rendering from GPU cache
 	glUseProgram(shader_program);
-	glUniformMatrix4fv(projLoc, 1, GL_FALSE, glm::value_ptr(viewProjection));
+	glUniformMatrix4fv(projLoc, 1, GL_FALSE, glm::value_ptr(viewProjection_world));
 	TrackRenderer::renderCachedTrack(shader_program);
 
 
 
+
 	if (g_is_map_loaded) { 
-		renderAllVehicles(shader_program, vao, vbo, viewProjection, camera_position, camera_zoom); 
+		renderAllVehicles(shader_program, vao, vbo, viewProjection_world, camera_position, camera_zoom); 
 	}
 
 	// ========================== UI RENDERING ==========================

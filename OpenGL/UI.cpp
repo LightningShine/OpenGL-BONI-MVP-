@@ -132,27 +132,36 @@ bool UI::Initialize(GLFWwindow* window)
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     
-    // Load Fonts - use Ubuntu Regular 12px for UI
-    m_fontRegular = io.Fonts->AddFontFromFileTTF("styles/fonts/Ubuntu/Ubuntu-Regular.ttf", 16.0f);
-    m_fontTitle = io.Fonts->AddFontFromFileTTF("styles/fonts/Russo_One/RussoOne-Regular.ttf", 14.0f);
-    m_fontRace = io.Fonts->AddFontFromFileTTF(UIConfig::FONT_PATH_F1, UIConfig::FONT_SIZE_RACE);
+    // Load Fonts with oversampling for better quality
+    ImFontConfig font_config;
+    font_config.OversampleH = 3;
+    font_config.OversampleV = 3;
+    
+    m_fontRegular = io.Fonts->AddFontFromFileTTF("styles/fonts/Ubuntu/Ubuntu-Regular.ttf", 16.0f, &font_config);
+    m_fontTitle = io.Fonts->AddFontFromFileTTF("styles/fonts/Russo_One/RussoOne-Regular.ttf", 14.0f, &font_config);
+    m_fontRace = io.Fonts->AddFontFromFileTTF(UIConfig::FONT_PATH_F1, UIConfig::FONT_SIZE_RACE, &font_config);
     
     // Fallback to default font if Ubuntu not found
     if (!m_fontRegular) {
         std::cerr << "[UI] Warning: Ubuntu font not found, using default\n";
-        m_fontRegular = io.Fonts->AddFontDefault();
+        m_fontRegular = io.Fonts->AddFontDefault(&font_config);
     }
     if (!m_fontTitle) {
         std::cerr << "[UI] Warning: RussoOne Regular not found, using default\n";
-        m_fontTitle = io.Fonts->AddFontDefault();
+        m_fontTitle = io.Fonts->AddFontDefault(&font_config);
     }
     if (!m_fontRace) {
         std::cerr << "[UI] Warning: F1 font not found, using default\n";
-        m_fontRace = io.Fonts->AddFontDefault();
+        m_fontRace = io.Fonts->AddFontDefault(&font_config);
     }
     
     // Setup ImGui style - Blender-like
     ImGuiStyle& style = ImGui::GetStyle();
+    
+    // Enable AntiAliasing
+    style.AntiAliasedLines = true;
+    style.AntiAliasedFill = true;
+    style.AntiAliasedLinesUseTex = true;
     style.WindowRounding = 8.0f;       
     style.ChildRounding = 0.0f;
     style.FrameRounding = 0.0f;
@@ -568,6 +577,7 @@ void UI::RenderTopMenu()
 	ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10, 12)); // Menu bar item padding
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(6, 0)); // Spacing between File, Settings, View, etc.
 	ImGui::PushStyleVar(ImGuiStyleVar_ItemInnerSpacing, ImVec2(8, 4)); // Arrow spacing in menu bar
+
 
     // Top menu bar colors
     ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(UIConfig::MENU_BG_R, UIConfig::MENU_BG_G, UIConfig::MENU_BG_B, 1.0f));
