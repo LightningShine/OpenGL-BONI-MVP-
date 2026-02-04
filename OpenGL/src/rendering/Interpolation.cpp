@@ -296,3 +296,55 @@ std::vector<SplinePoint> interpolateRoundedPolyline(const std::vector<glm::vec2>
     if (is_closed) result.push_back(result.front());
     return result;
 }
+
+// ============================================================================
+// TRACK CENTERING FUNCTIONS
+// ============================================================================
+
+TrackCenterInfo calculateTrackCenter(const std::vector<glm::vec2>& points)
+{
+    TrackCenterInfo info;
+    info.geometric_center = glm::vec2(0.0f, 0.0f);
+    info.offset = glm::vec2(0.0f, 0.0f);
+    info.is_closed = false;
+    
+    if (points.size() < 2) {
+        return info;
+    }
+    
+    // Check if track is closed
+    info.is_closed = (glm::distance(points.front(), points.back()) < 1e-4f);
+    
+    // Calculate geometric center (average of all points)
+    glm::vec2 sum(0.0f, 0.0f);
+    size_t count = info.is_closed ? points.size() - 1 : points.size(); // Exclude duplicate if closed
+    
+    for (size_t i = 0; i < count; i++) {
+        sum += points[i];
+    }
+    
+    info.geometric_center = sum / (float)count;
+    
+    // Offset needed to move center to (0, 0)
+    info.offset = -info.geometric_center;
+    
+    std::cout << "[TRACK CENTER] Calculated center: (" << info.geometric_center.x << ", " << info.geometric_center.y << ")" << std::endl;
+    std::cout << "[TRACK CENTER] Track is " << (info.is_closed ? "CLOSED" : "OPEN") << std::endl;
+    std::cout << "[TRACK CENTER] Offset to apply: (" << info.offset.x << ", " << info.offset.y << ")" << std::endl;
+    
+    return info;
+}
+
+void recenterTrack(std::vector<glm::vec2>& points, const TrackCenterInfo& center_info)
+{
+    if (points.empty()) return;
+    
+    std::cout << "[TRACK CENTER] Recentering " << points.size() << " points..." << std::endl;
+    
+    // Apply offset to all points
+    for (auto& point : points) {
+        point += center_info.offset;
+    }
+    
+    std::cout << "[TRACK CENTER] Track recentered successfully!" << std::endl;
+}

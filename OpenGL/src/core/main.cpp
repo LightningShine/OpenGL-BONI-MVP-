@@ -247,6 +247,24 @@ void drop_callback(GLFWwindow* window, int count, const char** paths)
 				loadTrackFromData(buffer.str(), *context->points, *context->points_mutex);
 				std::cout << "Loaded file: " << paths[i] << std::endl;
                 
+				// Recenter track to (0, 0) if closed
+				{
+					std::lock_guard<std::mutex> lock(*context->points_mutex);
+					TrackCenterInfo center_info = calculateTrackCenter(*context->points);
+					
+					if (center_info.is_closed) {
+						std::cout << "[TRACK] Track is CLOSED - recentering to (0, 0)" << std::endl;
+						recenterTrack(*context->points, center_info);
+						
+						// Update origin to maintain GPS coordinates
+						g_map_origin.m_origin_lat_dd += center_info.offset.y * (MapConstants::MAP_SIZE / 100000.0);
+						g_map_origin.m_origin_lon_dd += center_info.offset.x * (MapConstants::MAP_SIZE / 100000.0);
+						std::cout << "[TRACK] Origin updated to: (" << g_map_origin.m_origin_lat_dd << ", " << g_map_origin.m_origin_lon_dd << ")" << std::endl;
+					} else {
+						std::cout << "[TRACK] Track is OPEN - keeping original position" << std::endl;
+					}
+				}
+				
 				TrackRenderer::rebuildTrackCache(*context->points, *context->points_mutex);
 				
                 if (context->ui)
@@ -493,7 +511,7 @@ int main()
 		cout << "Failed to initialize GLAD" << endl;
 		return -1;
 	}
-
+	// Commit
 	std::cout << "[MAIN] GLAD loaded successfully" << std::endl;
 	
 	glEnable(GL_MULTISAMPLE);
