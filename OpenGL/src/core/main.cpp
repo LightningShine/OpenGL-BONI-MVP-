@@ -421,7 +421,7 @@ int window_width, int window_height, float horizontalBound, float verticalBound)
 
 int main()
 {
-<<<<<<< HEAD
+
 	// Platform and feature detection
 	std::cout << "==========================================" << std::endl;
 	std::cout << "   OpenGL Telemetry System" << std::endl;
@@ -453,10 +453,10 @@ int main()
 	std::cout << "==========================================" << std::endl;
 	std::cout << std::endl;
 
-=======
+
 	std::cout << "[MAIN] Starting application..." << std::endl;
 	
->>>>>>> origin/dev
+
 	glfwInit();
 	std::cout << "[MAIN] GLFW initialized" << std::endl;
 	
@@ -862,12 +862,9 @@ int main()
 #if NETWORKING_ENABLED
 	serverStop();
 	clientStop();
-<<<<<<< HEAD
 #endif
 	
-=======
 	TrackRenderer::clearTrackCache();  // Clear track VAO/VBO
->>>>>>> origin/dev
 	glDeleteVertexArrays(1, &vao);
 	glDeleteBuffers(1, &vbo);
 	glDeleteVertexArrays(1, &grid_vao);  // Clean grid VAO/VBO

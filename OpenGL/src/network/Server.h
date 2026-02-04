@@ -11,7 +11,6 @@
 #include <GameNetworkingSockets/steam/isteamnetworkingutils.h>
 #include "miniupnpc/miniupnpc.h"
 #include "miniupnpc/upnpcommands.h"
-<<<<<<< HEAD
 #else
 #define NETWORKING_ENABLED 0
 // Stub types for ARM64 compilation
@@ -19,10 +18,8 @@ typedef void* HSteamNetConnection;
 typedef void* ISteamNetworkingSockets;
 #endif
 
-=======
 #include "../Config.h"
 #include "windows.h"
->>>>>>> origin/dev
 #include <vector>
 #include <thread>
 #include <random>
