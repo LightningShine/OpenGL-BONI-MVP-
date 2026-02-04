@@ -2,11 +2,22 @@
 
 #include <cstdint>
 #include <iostream>
+
+// GameNetworkingSockets doesn't build on ARM64 Windows
+#if defined(_M_X64) || defined(_M_AMD64) || defined(__x86_64__)
+#define NETWORKING_ENABLED 1
 #include <GameNetworkingSockets/steam/steamnetworkingsockets.h>
 #include <GameNetworkingSockets/steam/isteamnetworkingsockets.h>
 #include <GameNetworkingSockets/steam/isteamnetworkingutils.h>
 #include "miniupnpc/miniupnpc.h"
 #include "miniupnpc/upnpcommands.h"
+#else
+#define NETWORKING_ENABLED 0
+// Stub types for ARM64 compilation
+typedef void* HSteamNetConnection;
+typedef void* ISteamNetworkingSockets;
+#endif
+
 #include <vector>
 #include <thread>
 #include <random>

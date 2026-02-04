@@ -1,5 +1,7 @@
 ﻿#include "../network/Client.h"
 
+#if NETWORKING_ENABLED
+
 // CLIENT 
 
 HSteamNetConnection g_connection_handle;
@@ -134,6 +136,7 @@ int clientStart()
 	}
 
 
+
 	connectToServer(server_address);
 	std::string message;
 	int counter = 400;
@@ -169,4 +172,17 @@ int clientStart()
 
 	return 0;
 }
+
+#else
+
+// ARM64 stub implementations
+bool g_is_client_running = false;
+
+int clientStart() { return 0; }
+void clientStop() {}
+void toggleClientRunning() {}
+bool isClientRunning() { return false; }
+void continueClientRunning() {}
+
+#endif // NETWORKING_ENABLED
 

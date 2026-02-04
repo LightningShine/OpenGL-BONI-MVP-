@@ -1,9 +1,9 @@
 ﻿#pragma once
 #include "../network/Server.h"
-#include "../serialib/serialib.h"
+#include <serialib/serialib.h>
 #include "../input/Input.h"
 #include "../rendering/Interpolation.h"
-#include "./Config.h"
+#include "../Config.h"
 #include <thread>
 #include <chrono>
 #include <mutex>

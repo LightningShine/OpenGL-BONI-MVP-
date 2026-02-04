@@ -13,6 +13,7 @@
 
 // =================================
 // === 3RD LIBRARIES ===
+//#include <glm/glm.hpp>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
@@ -50,6 +51,8 @@ const std::vector<SplinePoint>* smooth_track = nullptr)
 	// Close when press ESC
 	if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
 		glfwSetWindowShouldClose(window, true);
+	
+#if NETWORKING_ENABLED
 	bool isServerKeyPressed = glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS && glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS;
 
 	if (isServerKeyPressed)
@@ -86,6 +89,7 @@ const std::vector<SplinePoint>* smooth_track = nullptr)
 			toggleClientRunning();
 		}
 	}
+#endif
 	
 
 	static bool wasTPressed = false;
@@ -247,6 +251,37 @@ const char* fragmentShaderSource = R"(
 
 int main()
 {
+	// Platform and feature detection
+	std::cout << "==========================================" << std::endl;
+	std::cout << "   OpenGL Telemetry System" << std::endl;
+	std::cout << "==========================================" << std::endl;
+	
+#if NETWORKING_ENABLED
+	std::cout << "[PLATFORM] Running on x64 architecture" << std::endl;
+	std::cout << "[FEATURES] All features available:" << std::endl;
+	std::cout << "  + GameNetworkingSockets (Server/Client)" << std::endl;
+	std::cout << "  + UPnP Port Forwarding" << std::endl;
+	std::cout << "  + Network Telemetry Streaming" << std::endl;
+	std::cout << "  + Full OpenGL Rendering" << std::endl;
+#else
+	std::cout << "[PLATFORM] Running on ARM64 architecture" << std::endl;
+	std::cout << "[WARNING] Limited functionality mode!" << std::endl;
+	std::cout << std::endl;
+	std::cout << "Disabled features on ARM64:" << std::endl;
+	std::cout << "  - GameNetworkingSockets (Not supported on ARM64 Windows)" << std::endl;
+	std::cout << "  - Network Server/Client functionality" << std::endl;
+	std::cout << "  - UPnP Port Forwarding" << std::endl;
+	std::cout << std::endl;
+	std::cout << "Available features:" << std::endl;
+	std::cout << "  + Local telemetry simulation" << std::endl;
+	std::cout << "  + OpenGL Rendering" << std::endl;
+	std::cout << "  + Serial COM port support" << std::endl;
+	std::cout << std::endl;
+	std::cout << "=> For full networking features, please use x64 build!" << std::endl;
+#endif
+	std::cout << "==========================================" << std::endl;
+	std::cout << std::endl;
+
 	glfwInit();
 	glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);  // Determine OpenGL major version OpenGL 4.X
 	glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 6);	// Determine OpenGL minor version OpenGL X.6
@@ -572,8 +607,11 @@ int main()
 	// ========================== CLEAN UP ==========================
 	ui.Shutdown();
 
+#if NETWORKING_ENABLED
 	serverStop();
 	clientStop();
+#endif
+	
 	glDeleteVertexArrays(1, &vao);
 	glDeleteBuffers(1, &vbo);
 	glDeleteProgram(shader_program);

@@ -1,5 +1,6 @@
 ﻿#include "../network/Server.h"
 
+#if NETWORKING_ENABLED
 
 // SERVER 
 
@@ -293,4 +294,17 @@ void ManagePort(bool open)
 	}
 	freeUPNPDevlist(devlist);
 }
+
+#else
+
+// ARM64 stub implementations
+bool g_is_server_running = false;
+
+int serverWork() { return 0; }
+bool isServerRunning() { return false; }
+void ChangeisServerRunning() {}
+void serverStop() {}
+void continueServerRunning() {}
+
+#endif // NETWORKING_ENABLED
 
