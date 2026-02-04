@@ -24,4 +24,14 @@ std::vector<glm::vec2> filterPointsByDistance(const std::vector<glm::vec2>& poin
 
 std::vector<glm::vec2> generateTriangleStripFromLine(const std::vector<SplinePoint>& spline_points, float width);
 
+// Track centering
+struct TrackCenterInfo {
+    glm::vec2 geometric_center;  // Геометрический центр трека
+    glm::vec2 offset;            // Смещение которое нужно применить к точкам
+    bool is_closed;              // Замкнут ли трек
+};
+
+TrackCenterInfo calculateTrackCenter(const std::vector<glm::vec2>& points);
+void recenterTrack(std::vector<glm::vec2>& points, const TrackCenterInfo& center_info);
+
 // Just comment to make snippet not empty

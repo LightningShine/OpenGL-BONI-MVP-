@@ -231,6 +231,7 @@
     <ClCompile Include="src\network\ESP32_Code.cpp" />
     <ClCompile Include="src\network\Server.cpp" />
     <ClCompile Include="src\rendering\Interpolation.cpp" />
+    <ClCompile Include="src\rendering\Render.cpp" />
     <ClCompile Include="src\vehicle\Vehicle.cpp" />
     <ClCompile Include="src\thirdparty\glad.c" />
     <ClCompile Include="UI.cpp" />
@@ -251,6 +252,8 @@
     <ClInclude Include="src\network\ESP32_Code.h" />
     <ClInclude Include="src\network\Server.h" />
     <ClInclude Include="src\rendering\Interpolation.h" />
+    <ClInclude Include="src\rendering\Render.h" />
+    <ClInclude Include="src\ui\UI_Config.h" />
     <ClInclude Include="src\vehicle\Vehicle.h" />
     <ClInclude Include="UI.h" />
   </ItemGroup>

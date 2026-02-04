@@ -1,4 +1,7 @@
-﻿#include "../network/Client.h"
+#include "../network/Client.h"
+#include "../Config.h"
+#include <cstring>
+#include <windows.h>
 
 #if NETWORKING_ENABLED
 
@@ -24,6 +27,37 @@ void onClientConnectionStatusChanged(SteamNetConnectionStatusChangedCallback_t* 
 		SteamNetworkingSockets()->CloseConnection(pInfo->m_hConn, 0, nullptr, false);
 		g_connection_handle = k_HSteamNetConnection_Invalid;
 	}
+}
+
+// Send authentication packet to server
+static bool sendAuthPacket(HSteamNetConnection connection, const std::string& password)
+{
+	// Guard clause
+	if (connection == k_HSteamNetConnection_Invalid) {
+		std::cerr << "Cannot send auth - invalid connection" << std::endl;
+		return false;
+	}
+	
+	AuthPacket auth_packet;
+	auth_packet.magic_marker = PacketMagic::AUTH;
+	strncpy_s(auth_packet.password, password.c_str(), sizeof(auth_packet.password) - 1);
+	auth_packet.password[sizeof(auth_packet.password) - 1] = '\0';  // Ensure null termination
+	
+	EResult result = SteamNetworkingSockets()->SendMessageToConnection(
+		connection,
+		&auth_packet,
+		sizeof(auth_packet),
+		k_nSteamNetworkingSend_Reliable,
+		nullptr
+	);
+	
+	if (result == k_EResultOK) {
+		std::cout << "? Authentication packet sent" << std::endl;
+		return true;
+	}
+	
+	std::cerr << "? Failed to send authentication packet" << std::endl;
+	return false;
 }
 
 void connectToServer(const SteamNetworkingIPAddr& server_address)
@@ -119,13 +153,20 @@ int clientStart()
 	std::getline(std::cin, server_name);
 	if (server_name == "d" || server_name == " " || server_name == "\n")
 	{
-		server_address.ParseString("136.169.18.31:777");
-		std::cout << "Using default server address: 136.169.18.31:777" << std::endl;
+		//std::string ip = NetworkConstants::DEFAULT_SERVER_IP;
+		std::string default_address = std::string(NetworkConstants::DEFAULT_SERVER_IP) + ":" + std::to_string(NetworkConstants::DEFAULT_SERVER_PORT);
+		server_address.ParseString(default_address.c_str());
+		std::cout << "Using default server address: " << default_address << std::endl;
 	}
 	else if(std::regex_match(server_name, ip_port_pattern))
 	{
 		server_address.ParseString(server_name.c_str());
 		std::cout << "Using server address: " << server_name << std::endl;
+	}
+	else if (server_name == "l")
+	{
+		std::string local_server_ip = std::string(NetworkConstants::DEFAULT_LOCAL_SERVER_IP) + ":" + std::to_string(NetworkConstants::DEFAULT_SERVER_PORT);
+		server_address.ParseString(local_server_ip.c_str());
 	}
 	else
 	{
@@ -138,6 +179,80 @@ int clientStart()
 
 
 	connectToServer(server_address);
+	
+	// Wait for connection to establish
+	std::cout << "Waiting for connection..." << std::endl;
+	std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+	
+	// Authentication loop with retry attempts
+	bool is_authenticated = false;
+	int auth_attempts = 0;
+	
+	while (!is_authenticated && auth_attempts < NetworkConstants::MAX_AUTH_ATTEMPTS && !g_should_close_client)
+	{
+		std::string password;
+		std::cout << "Enter server password: ";
+		std::getline(std::cin, password);
+		
+		if (!sendAuthPacket(g_connection_handle, password)) {
+			std::cerr << "Failed to send authentication packet" << std::endl;
+			break;
+		}
+		
+		auth_attempts++;
+		
+		// Wait for auth response from server
+		std::cout << "Authenticating..." << std::endl;
+		int response_timeout = 0;
+		bool received_response = false;
+		
+		while (response_timeout < 50 && !received_response && !g_should_close_client) {
+			SteamNetworkingSockets()->RunCallbacks();
+			
+			ISteamNetworkingMessage* messages[16];
+			int msg_count = SteamNetworkingSockets()->ReceiveMessagesOnConnection(g_connection_handle, messages, 16);
+			
+			for (int i = 0; i < msg_count; i++) {
+				if (messages[i]->m_cbSize == sizeof(AuthResponsePacket)) {
+					AuthResponsePacket* response = (AuthResponsePacket*)messages[i]->m_pData;
+					if (response->magic_marker == PacketMagic::RESP) {
+						received_response = true;
+						
+						if (response->is_authenticated) {
+							SetConsoleTextAttribute(GetStdHandle(STD_OUTPUT_HANDLE), ConsoleColors::CONSOLE_COLOR_GREEN);
+							std::cout << "Authentication successful!" << std::endl;
+							SetConsoleTextAttribute(GetStdHandle(STD_OUTPUT_HANDLE), ConsoleColors::CONSOLE_DEFAULT);
+							is_authenticated = true;
+						} else {
+							SetConsoleTextAttribute(GetStdHandle(STD_OUTPUT_HANDLE), ConsoleColors::CONSOLE_COLOR_RED);
+							std::cout << "Authentication failed: " << response->message << std::endl;
+							SetConsoleTextAttribute(GetStdHandle(STD_OUTPUT_HANDLE), ConsoleColors::CONSOLE_DEFAULT);
+							
+							if (response->attempts_remaining <= 0) {
+								std::cerr << "Max attempts exceeded - connection will close" << std::endl;
+								g_should_close_client = true;
+							}
+						}
+					}
+				}
+				messages[i]->Release();
+			}
+			
+			std::this_thread::sleep_for(std::chrono::milliseconds(100));
+			response_timeout++;
+		}
+		
+		if (!received_response && !is_authenticated) {
+			std::cout << "No response from server - retrying..." << std::endl;
+		}
+	}
+	
+	if (!is_authenticated) {
+		std::cerr << "Authentication failed. Closing connection." << std::endl;
+		GameNetworkingSockets_Kill();
+		return 1;
+	}
+	
 	std::string message;
 	int counter = 400;
 	while (!g_should_close_client)

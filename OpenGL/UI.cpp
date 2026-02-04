@@ -1,5 +1,7 @@
 ﻿#include "src/input/Input.h"
 #include "UI.h"
+#include "src/Config.h"
+#include "src/ui/UI_Config.h"
 #include <iostream>
 #include <algorithm>
 
@@ -31,6 +33,7 @@ UI::UI()
     , m_context(nullptr)
     , m_showSplash(true)
     , m_closeSplash(false)
+    , m_show_help_modal(false)
     , m_fontRegular(nullptr)
     , m_fontTitle(nullptr)
     , m_fontRace(nullptr)
@@ -84,7 +87,7 @@ bool UI::LoadTextureFromFile(const char* filename, void** out_texture, int* out_
 void UI::LoadResources()
 {
     int w, h;
-    // ПОЛНЫЙ путь к изображению
+    // ?????? ???? ? ???????????
     if (!LoadTextureFromFile("styles/images/Background.png", &m_backgroundTexture, &w, &h))
     {
         std::cerr << "[UI] Warning: Background image not loaded\n";
@@ -129,14 +132,54 @@ bool UI::Initialize(GLFWwindow* window)
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     
-    // Load Fonts
-    m_fontRegular = io.Fonts->AddFontFromFileTTF("styles/fonts/JetBrains Mono/ttf/JetBrainsMono-Regular.ttf", 18.0f);
-    m_fontTitle = io.Fonts->AddFontFromFileTTF("styles/fonts/JetBrains Mono/ttf/JetBrainsMono-Bold.ttf", 18.0f);
-    m_fontRace = io.Fonts->AddFontFromFileTTF("styles/fonts/F1-Font-Family/Formula1-Regular-1.ttf", 18.0f);
+    // Load Fonts with oversampling for better quality
+    ImFontConfig font_config;
+    font_config.OversampleH = 3;
+    font_config.OversampleV = 3;
     
-    if (!m_fontRegular) std::cerr << "[UI] Failed to load Regular font\n";
-    if (!m_fontTitle) std::cerr << "[UI] Failed to load Bold font\n";
-    if (!m_fontRace) std::cerr << "[UI] Failed to load F1 font\n";
+    m_fontRegular = io.Fonts->AddFontFromFileTTF("styles/fonts/Ubuntu/Ubuntu-Regular.ttf", 16.0f, &font_config);
+    m_fontTitle = io.Fonts->AddFontFromFileTTF("styles/fonts/Russo_One/RussoOne-Regular.ttf", 14.0f, &font_config);
+    m_fontRace = io.Fonts->AddFontFromFileTTF(UIConfig::FONT_PATH_F1, UIConfig::FONT_SIZE_RACE, &font_config);
+    
+    // Fallback to default font if Ubuntu not found
+    if (!m_fontRegular) {
+        std::cerr << "[UI] Warning: Ubuntu font not found, using default\n";
+        m_fontRegular = io.Fonts->AddFontDefault(&font_config);
+    }
+    if (!m_fontTitle) {
+        std::cerr << "[UI] Warning: RussoOne Regular not found, using default\n";
+        m_fontTitle = io.Fonts->AddFontDefault(&font_config);
+    }
+    if (!m_fontRace) {
+        std::cerr << "[UI] Warning: F1 font not found, using default\n";
+        m_fontRace = io.Fonts->AddFontDefault(&font_config);
+    }
+    
+    // Setup ImGui style - Blender-like
+    ImGuiStyle& style = ImGui::GetStyle();
+    
+    // Enable AntiAliasing
+    style.AntiAliasedLines = true;
+    style.AntiAliasedFill = true;
+    style.AntiAliasedLinesUseTex = true;
+    style.WindowRounding = 8.0f;       
+    style.ChildRounding = 0.0f;
+    style.FrameRounding = 0.0f;
+    style.PopupRounding = 0.0f;
+    style.ScrollbarRounding = 8.0f;
+    style.GrabRounding = 0.0f;
+    style.TabRounding = 0.0f;
+    
+    style.WindowPadding = ImVec2(8, 8);
+    style.FramePadding = ImVec2(8, 4);
+    style.ItemSpacing = ImVec2(8, 4);
+    style.ItemInnerSpacing = ImVec2(6, 4);
+    style.IndentSpacing = 20.0f;
+    
+    style.WindowBorderSize = 0.0f;
+    style.ChildBorderSize = 0.0f;
+    style.PopupBorderSize = 1.0f;
+    style.FrameBorderSize = 0.0f;
 
     if (!ImGui_ImplGlfw_InitForOpenGL(window, true))
     {
@@ -149,28 +192,6 @@ bool UI::Initialize(GLFWwindow* window)
         std::cerr << "[UI] Error: Failed to init OpenGL3 backend\n";
         return false;
     }
-    
-    // Style
-    ImGuiStyle& style = ImGui::GetStyle();
-    style.WindowRounding = 15.0f;
-    style.FrameRounding = 12.0f;
-    style.WindowPadding = ImVec2(0, 0);
-    style.FramePadding = ImVec2(12, 8);
-    style.ItemSpacing = ImVec2(8, 8);
-    style.WindowBorderSize = 0.0f;
-    
-    ImVec4* colors = style.Colors;
-    colors[ImGuiCol_WindowBg] = ImVec4(0.0f, 0.0f, 0.0f, 1.0f);
-    colors[ImGuiCol_ChildBg] = ImVec4(0.0f, 0.0f, 0.0f, 0.0f);
-    colors[ImGuiCol_Text] = ImVec4(0.835f, 0.835f, 0.835f, 1.0f); // D5D5D5
-    colors[ImGuiCol_Button] = ImVec4(0.0f, 0.722f, 0.745f, 1.0f); // 00B8BE
-    colors[ImGuiCol_ButtonHovered] = ImVec4(0.0f, 0.722f, 0.745f, 1.0f); // Same - no hover effect
-    colors[ImGuiCol_ButtonActive] = ImVec4(0.0f, 0.65f, 0.68f, 1.0f);
-    
-    // Disable hover effect for selectables
-    colors[ImGuiCol_Header] = ImVec4(0.0f, 0.0f, 0.0f, 0.0f);
-    colors[ImGuiCol_HeaderHovered] = ImVec4(0.0f, 0.0f, 0.0f, 0.0f);
-    colors[ImGuiCol_HeaderActive] = ImVec4(0.0f, 0.0f, 0.0f, 0.0f);
 
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.MouseDrawCursor = true; // ImGui will draw the program cursor
@@ -207,10 +228,19 @@ void UI::BeginFrame()
 
 void UI::Render()
 {
+    // Render splash screen if needed
     if (m_showSplash)
     {
         RenderSplashWindow();
+        return; // Don't render menus during splash
     }
+    
+    // Always render top and bottom menus (after splash)
+    RenderTopMenu();
+    RenderBottomMenu();
+    
+    // Render help modal if open
+    RenderHelpModal();
 }
 
 void UI::EndFrame()
@@ -499,25 +529,10 @@ void UI::RenderMainWindow()
         ImGui::Image((ImTextureID)m_iconCopyright, ImVec2(20, 20));
         ImGui::SameLine();
     }
-    ImGui::TextColored(ImVec4(0.835f, 0.835f, 0.835f, 1.0f), " Copyright by us");
-    
-    ImGui::SetCursorPos(ImVec2(215, contentY));
-    if (ImGui::InvisibleButton("##copyright", ImVec2(180, 30)))
-    {
-        std::cout << "[UI] Copyright\n";
-    }
-    
-    // Donate
-    ImGui::SetCursorPos(ImVec2(455, contentY));
-    if (m_iconHeart)
-    {
-        ImGui::Image((ImTextureID)m_iconHeart, ImVec2(20, 20));
-        ImGui::SameLine();
-    }
-    ImGui::TextColored(ImVec4(0.835f, 0.835f, 0.835f, 1.0f), " Donate to Us");
+    ImGui::TextColored(ImVec4(0.835f, 0.835f, 0.835f, 1.0f), " Donate");
     
     ImGui::SetCursorPos(ImVec2(455, contentY));
-    if (ImGui::InvisibleButton("##donate", ImVec2(150, 30)))
+    if (ImGui::InvisibleButton("##donate", ImVec2(130, 30)))
     {
         std::cout << "[UI] Donate\n";
     }
@@ -540,4 +555,359 @@ void UI::RenderMainWindow()
     
     ImGui::End();
     ImGui::PopStyleVar();
+}
+
+// COMPLETE FIXED UI Menu functions - Blender style
+
+void UI::RenderTopMenu()
+{
+    ImGuiViewport* viewport = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(viewport->Pos);
+    ImGui::SetNextWindowSize(ImVec2(viewport->Size.x, UIConfig::TOP_MENU_HEIGHT)); // 24px height like Blender
+    
+    ImGuiWindowFlags window_flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | 
+                                    ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar | 
+                                    ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_MenuBar |
+                                    ImGuiWindowFlags_NoBringToFrontOnFocus;
+    
+    // === TOP MENU BAR STYLING ===
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+	ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10, 12)); // Menu bar item padding
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(6, 0)); // Spacing between File, Settings, View, etc.
+	ImGui::PushStyleVar(ImGuiStyleVar_ItemInnerSpacing, ImVec2(8, 4)); // Arrow spacing in menu bar
+
+
+    // Top menu bar colors
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(UIConfig::MENU_BG_R, UIConfig::MENU_BG_G, UIConfig::MENU_BG_B, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_MenuBarBg, ImVec4(UIConfig::MENU_BG_R, UIConfig::MENU_BG_G, UIConfig::MENU_BG_B, 1.0f));
+    
+    // Dropdown menu colors (применяем настройки из UI_Config.h)
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(UIConfig::DROPDOWN_TEXT_R, UIConfig::DROPDOWN_TEXT_G, UIConfig::DROPDOWN_TEXT_B, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_PopupBg, ImVec4(UIConfig::DROPDOWN_BG_R, UIConfig::DROPDOWN_BG_G, UIConfig::DROPDOWN_BG_B, UIConfig::DROPDOWN_BG_ALPHA));
+    ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(UIConfig::DROPDOWN_ACTIVE_R, UIConfig::DROPDOWN_ACTIVE_G, UIConfig::DROPDOWN_ACTIVE_B, 0.5f));
+    ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(UIConfig::DROPDOWN_HOVER_R, UIConfig::DROPDOWN_HOVER_G, UIConfig::DROPDOWN_HOVER_B, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(UIConfig::DROPDOWN_ACTIVE_R, UIConfig::DROPDOWN_ACTIVE_G, UIConfig::DROPDOWN_ACTIVE_B, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Separator, ImVec4(UIConfig::DROPDOWN_SEPARATOR_R, UIConfig::DROPDOWN_SEPARATOR_G, UIConfig::DROPDOWN_SEPARATOR_B, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(UIConfig::DROPDOWN_BORDER_R, UIConfig::DROPDOWN_BORDER_G, UIConfig::DROPDOWN_BORDER_B, 1.0f));
+    
+    ImGui::Begin("##TopMenu", nullptr, window_flags);
+    
+    
+    
+    
+    
+    if (ImGui::BeginMenuBar())
+    {
+        ImGui::PushFont(m_fontRegular); // Ubuntu Regular 16px
+        
+        // === ОТСТУП ПЕРВОГО ЭЛЕМЕНТА МЕНЮ ОТ ЛЕВОГО КРАЯ ===
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + UIConfig::MENU_LEFT_PADDING);
+        
+        // === DROPDOWN MENU ITEM STYLING (применяем настройки для пунктов меню) ===
+        // Временно изменяем глобальные стили для dropdown меню
+        ImGuiStyle& style = ImGui::GetStyle();
+        ImVec2 old_window_padding = style.WindowPadding;
+        ImVec2 old_window_min_size = style.WindowMinSize;
+        float old_window_rounding = style.WindowRounding;
+        float old_popup_rounding = style.PopupRounding;
+        float old_popup_border_size = style.PopupBorderSize;
+        
+        // Применяем настройки dropdown из UI_Config.h
+        style.WindowPadding = ImVec2(UIConfig::DROPDOWN_PADDING_X, UIConfig::DROPDOWN_PADDING_Y);
+        style.WindowMinSize = ImVec2(UIConfig::DROPDOWN_MIN_WIDTH, 0.0f); // ← ПРИМЕНЯЕМ МИНИМАЛЬНУЮ ШИРИНУ!
+        style.WindowRounding = UIConfig::DROPDOWN_ROUNDING;
+        style.PopupRounding = UIConfig::DROPDOWN_ROUNDING;
+        style.PopupBorderSize = UIConfig::DROPDOWN_BORDER_SIZE;
+        
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(UIConfig::DROPDOWN_ITEM_SPACING_X, UIConfig::DROPDOWN_ITEM_SPACING_Y));
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemInnerSpacing, ImVec2(UIConfig::DROPDOWN_ITEM_INNER_SPACING, 4.0f));
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(UIConfig::DROPDOWN_ITEM_PADDING_X, UIConfig::DROPDOWN_ITEM_PADDING_Y));
+        
+        // File menu
+        if (ImGui::BeginMenu("File"))
+        {
+            if (ImGui::MenuItem("New", "Ctrl+N", false, false)) {}
+            if (ImGui::MenuItem("Open...", "Ctrl+O", false, false)) {}
+            if (ImGui::MenuItem("Save", "Ctrl+S", false, false)) {}
+            if (ImGui::MenuItem("Save As...", "Shift+Ctrl+S", false, false)) {}
+            ImGui::Separator();
+            if (ImGui::MenuItem("Exit", "Alt+F4", false, false)) {}
+            ImGui::EndMenu();
+        }
+        
+        if (ImGui::BeginMenu("Settings"))
+        {
+            if (ImGui::MenuItem("Preferences", nullptr, false, false)) {}
+            if (ImGui::MenuItem("Configuration", nullptr, false, false)) {}
+            ImGui::Separator();
+            if (ImGui::MenuItem("Reset to Defaults", nullptr, false, false)) {}
+            ImGui::EndMenu();
+        }
+        
+        if (ImGui::BeginMenu("View"))
+        {
+            if (ImGui::MenuItem("Zoom In", "+", false, false)) {}
+            if (ImGui::MenuItem("Zoom Out", "-", false, false)) {}
+            if (ImGui::MenuItem("Reset View", "Home", false, false)) {}
+            ImGui::Separator();
+            if (ImGui::MenuItem("Toggle Fullscreen", "F11", false, false)) {}
+            ImGui::EndMenu();
+        }
+        
+        if (ImGui::BeginMenu("Networking"))
+        {
+            if (ImGui::MenuItem("Connect", "Shift+C", false, false)) {}
+            if (ImGui::MenuItem("Disconnect", nullptr, false, false)) {}
+            ImGui::Separator();
+            if (ImGui::MenuItem("Start Server", "Shift+S", false, false)) {}
+            if (ImGui::MenuItem("Stop Server", nullptr, false, false)) {}
+            ImGui::Separator();
+            if (ImGui::MenuItem("Server Settings", nullptr, false, false)) {}
+            ImGui::EndMenu();
+        }
+        
+        if (ImGui::BeginMenu("Help"))
+        {
+            if (ImGui::MenuItem("Keyboard Shortcuts", "F1"))
+            {
+                m_show_help_modal = true;
+            }
+            ImGui::Separator();
+            if (ImGui::MenuItem("About", nullptr, false, false)) {}
+            if (ImGui::MenuItem("Documentation", nullptr, false, false)) {}
+            ImGui::EndMenu();
+        }
+        
+        ImGui::PopStyleVar(3); // Pop DROPDOWN_ITEM styles (ItemSpacing, ItemInnerSpacing, FramePadding)
+        
+        // Восстанавливаем оригинальные стили
+        style.WindowPadding = old_window_padding;
+        style.WindowMinSize = old_window_min_size;
+        style.WindowRounding = old_window_rounding;
+        style.PopupRounding = old_popup_rounding;
+        style.PopupBorderSize = old_popup_border_size;
+        
+        ImGui::PopFont();
+        ImGui::EndMenuBar();
+    }
+    
+    ImGui::End();
+    ImGui::PopStyleColor(9); // Pop 9 colors
+    ImGui::PopStyleVar(6); // Pop 6 style vars (WindowPadding, WindowBorderSize, WindowRounding, FramePadding, ItemSpacing, ItemInnerSpacing)
+}
+
+void UI::RenderBottomMenu()
+{
+    ImGuiViewport* viewport = ImGui::GetMainViewport();
+    ImVec2 bottom_pos = ImVec2(viewport->Pos.x, viewport->Pos.y + viewport->Size.y - 22.0f); // 22px height
+    
+    ImGui::SetNextWindowPos(bottom_pos);
+    ImGui::SetNextWindowSize(ImVec2(viewport->Size.x, UIConfig::BOTTOM_MENU_HEIGHT));
+    
+    ImGuiWindowFlags window_flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | 
+                                    ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar | 
+                                    ImGuiWindowFlags_NoSavedSettings | 
+                                    ImGuiWindowFlags_NoBringToFrontOnFocus;
+    
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10, 3));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+    
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(UIConfig::MENU_BG_R, UIConfig::MENU_BG_G, UIConfig::MENU_BG_B, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.6f, 0.6f, 0.6f, 1.0f));
+    
+    ImGui::Begin("##BottomMenu", nullptr, window_flags);
+    
+    ImGui::PushFont(m_fontRegular);
+    
+    // Version info on the right
+    const char* version_text = UIConfig::APP_VERSION;
+    float text_width = ImGui::CalcTextSize(version_text).x;
+    float window_width = ImGui::GetWindowWidth();
+    
+    ImGui::SetCursorPosX(window_width - text_width - 10);
+    ImGui::SetCursorPosY(3); // Vertical center
+    ImGui::Text("%s", version_text);
+    
+    ImGui::PopFont();
+    ImGui::End();
+    ImGui::PopStyleColor(2);
+    ImGui::PopStyleVar(3);
+}
+
+void UI::RenderHelpModal()
+{
+    if (!m_show_help_modal)
+        return;
+    
+    // Darken background - CLICKABLE to close
+    ImGui::SetNextWindowPos(ImVec2(0, 0));
+    ImGui::SetNextWindowSize(ImGui::GetIO().DisplaySize);
+    ImGui::SetNextWindowBgAlpha(0.8f);
+    
+    ImGuiWindowFlags bg_flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | 
+                                ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar | 
+                                ImGuiWindowFlags_NoSavedSettings;
+    
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.0f, 0.0f, 0.0f, 0.8f));
+    if (ImGui::Begin("##ModalBackground", nullptr, bg_flags))
+    {
+        // Check if clicked outside modal window
+        ImVec2 modal_pos = ImVec2(ImGui::GetIO().DisplaySize.x * 0.5f - 350, ImGui::GetIO().DisplaySize.y * 0.5f - 250);
+        ImVec2 modal_size = ImVec2(UIConfig::HELP_MODAL_WIDTH, UIConfig::HELP_MODAL_HEIGHT);
+        ImVec2 mouse_pos = ImGui::GetMousePos();
+        
+        bool clicked_outside = ImGui::IsMouseClicked(0) &&
+            (mouse_pos.x < modal_pos.x || mouse_pos.x > modal_pos.x + modal_size.x ||
+             mouse_pos.y < modal_pos.y || mouse_pos.y > modal_pos.y + modal_size.y);
+        
+        if (clicked_outside)
+        {
+            m_show_help_modal = false;
+        }
+    }
+    ImGui::End();
+    ImGui::PopStyleColor();
+    
+    // Help modal window with scroll - CAPTURE MOUSE
+    ImGui::SetNextWindowPos(ImVec2(ImGui::GetIO().DisplaySize.x * 0.5f, ImGui::GetIO().DisplaySize.y * 0.5f), 
+                            ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(UIConfig::HELP_MODAL_WIDTH, UIConfig::HELP_MODAL_HEIGHT));
+    ImGui::SetNextWindowFocus(); // Force focus on modal
+    
+    ImGuiWindowFlags modal_flags = ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse;  // ← УБРАЛИ ТРЕУГОЛЬНИК!
+    
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(UIConfig::MODAL_PADDING_X, UIConfig::MODAL_PADDING_Y));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(UIConfig::MODAL_ITEM_SPACING_X, UIConfig::MODAL_ITEM_SPACING_Y));
+    
+    // ПРИМЕНЯЕМ НАСТРОЙКИ ИЗ UI_CONFIG.H
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(UIConfig::MODAL_BG_R, UIConfig::MODAL_BG_G, UIConfig::MODAL_BG_B, UIConfig::MODAL_BG_ALPHA));
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(UIConfig::MODAL_TEXT_R, UIConfig::MODAL_TEXT_G, UIConfig::MODAL_TEXT_B, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_TitleBg, ImVec4(UIConfig::MODAL_TITLE_BG_R, UIConfig::MODAL_TITLE_BG_G, UIConfig::MODAL_TITLE_BG_B, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_TitleBgActive, ImVec4(UIConfig::MODAL_TITLE_ACTIVE_R, UIConfig::MODAL_TITLE_ACTIVE_G, UIConfig::MODAL_TITLE_ACTIVE_B, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(UIConfig::MODAL_BUTTON_R, UIConfig::MODAL_BUTTON_G, UIConfig::MODAL_BUTTON_B, UIConfig::MODAL_BUTTON_ALPHA));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(UIConfig::MODAL_BUTTON_HOVER_R, UIConfig::MODAL_BUTTON_HOVER_G, UIConfig::MODAL_BUTTON_HOVER_B, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(UIConfig::MODAL_BUTTON_ACTIVE_R, UIConfig::MODAL_BUTTON_ACTIVE_G, UIConfig::MODAL_BUTTON_ACTIVE_B, 1.0f));
+    
+    bool modal_open = true;
+    if (ImGui::Begin("Keyboard Shortcuts", &modal_open, modal_flags))
+    {
+        ImGui::PushFont(m_fontRegular);
+        
+        ImGui::TextColored(ImVec4(0.5f, 0.8f, 1.0f, 1.0f), "Camera Controls:");
+        ImGui::Separator();
+        ImGui::Spacing();
+        
+        ImGui::Columns(2, nullptr, false);
+        ImGui::SetColumnWidth(0, 250);
+        
+        ImGui::Text("W / Up Arrow");
+        ImGui::NextColumn();
+        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Move camera up");
+        ImGui::NextColumn();
+        
+        ImGui::Text("S / Down Arrow");
+        ImGui::NextColumn();
+        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Move camera down");
+        ImGui::NextColumn();
+        
+        ImGui::Text("A / Left Arrow");
+        ImGui::NextColumn();
+        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Move camera left");
+        ImGui::NextColumn();
+        
+        ImGui::Text("D / Right Arrow");
+        ImGui::NextColumn();
+        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Move camera right");
+        ImGui::NextColumn();
+        
+        ImGui::Text("Mouse Wheel");
+        ImGui::NextColumn();
+        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Zoom in/out");
+        ImGui::NextColumn();
+        
+        ImGui::Columns(1);
+        ImGui::Spacing();
+        ImGui::Spacing();
+        
+        ImGui::TextColored(ImVec4(0.5f, 0.8f, 1.0f, 1.0f), "Application:");
+        ImGui::Separator();
+        ImGui::Spacing();
+        
+        ImGui::Columns(2, nullptr, false);
+        ImGui::SetColumnWidth(0, 250);
+        
+        ImGui::Text("ESC");
+        ImGui::NextColumn();
+        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Close application");
+        ImGui::NextColumn();
+        
+        ImGui::Text("F11");
+        ImGui::NextColumn();
+        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Toggle fullscreen");
+        ImGui::NextColumn();
+        
+        ImGui::Columns(1);
+        ImGui::Spacing();
+        ImGui::Spacing();
+        
+        ImGui::TextColored(ImVec4(0.5f, 0.8f, 1.0f, 1.0f), "Network:");
+        ImGui::Separator();
+        ImGui::Spacing();
+        
+        ImGui::Columns(2, nullptr, false);
+        ImGui::SetColumnWidth(0, 250);
+        
+        ImGui::Text("Shift + S");
+        ImGui::NextColumn();
+        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Toggle server");
+        ImGui::NextColumn();
+        
+        ImGui::Text("Shift + C");
+        ImGui::NextColumn();
+        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Toggle client");
+        ImGui::NextColumn();
+        
+        ImGui::Columns(1);
+        ImGui::Spacing();
+        ImGui::Spacing();
+        
+        ImGui::TextColored(ImVec4(0.5f, 0.8f, 1.0f, 1.0f), "Testing:");
+        ImGui::Separator();
+        ImGui::Spacing();
+        
+        ImGui::Columns(2, nullptr, false);
+        ImGui::SetColumnWidth(0, 250);
+        
+        ImGui::Text("T");
+        ImGui::NextColumn();
+        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Create test vehicle");
+        ImGui::NextColumn();
+        
+        ImGui::Columns(1);
+        ImGui::Spacing();
+        ImGui::Spacing();
+        ImGui::Spacing();
+        
+        ImGui::SetCursorPosX((ImGui::GetWindowWidth() - UIConfig::MODAL_BUTTON_WIDTH) * 0.5f);
+        if (ImGui::Button("Close", ImVec2(UIConfig::MODAL_BUTTON_WIDTH, UIConfig::MODAL_BUTTON_HEIGHT)))
+        {
+            m_show_help_modal = false;
+        }
+        
+        
+        ImGui::PopFont();
+    }
+    ImGui::End();
+    
+    // Close modal if user clicked X or clicked outside
+    if (!modal_open)
+    {
+        m_show_help_modal = false;
+    }
+    
+    ImGui::PopStyleColor(7);
+    ImGui::PopStyleVar(2);
 }

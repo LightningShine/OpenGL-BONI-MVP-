@@ -11,6 +11,7 @@
 #include <GameNetworkingSockets/steam/isteamnetworkingutils.h>
 #include "miniupnpc/miniupnpc.h"
 #include "miniupnpc/upnpcommands.h"
+<<<<<<< HEAD
 #else
 #define NETWORKING_ENABLED 0
 // Stub types for ARM64 compilation
@@ -18,9 +19,16 @@ typedef void* HSteamNetConnection;
 typedef void* ISteamNetworkingSockets;
 #endif
 
+=======
+#include "../Config.h"
+#include "windows.h"
+>>>>>>> origin/dev
 #include <vector>
 #include <thread>
 #include <random>
+#include <algorithm>
+#include <map>
+
 
 #pragma pack(push, 1) 
 struct TelemetryPacket 
@@ -35,6 +43,20 @@ struct TelemetryPacket
 	uint16_t gForceY;		// g-force Y * 100
 	int16_t fixtype;		// 0=none, 4=RTK_FIXED, etc.
 	int32_t ID;			    // vehicle ID
+};
+#pragma pack(pop)
+
+#pragma pack(push, 1)
+struct AuthPacket {
+	uint32_t magic_marker;  // 0x41555448 ('AUTH')
+	char password[64];
+};
+
+struct AuthResponsePacket {
+	uint32_t magic_marker;  // 0x52455350 ('RESP')
+	bool is_authenticated;
+	int attempts_remaining;
+	char message[128];
 };
 #pragma pack(pop)
 

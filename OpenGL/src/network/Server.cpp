@@ -1,4 +1,18 @@
-﻿#include "../network/Server.h"
+#include "../network/Server.h"
+#include "../Config.h"
+#include <cstring>
+#include <windows.h>
+
+// Console colors (anonymous namespace for internal use)
+namespace {
+    constexpr WORD CONSOLE_DEFAULT = 7;
+    constexpr WORD CONSOLE_COLOR_GREEN = 10;
+    constexpr WORD CONSOLE_COLOR_RED = 12;
+    constexpr WORD CONSOLE_COLOR_YELLOW = 14;
+}
+
+
+
 
 #if NETWORKING_ENABLED
 
@@ -7,6 +21,8 @@
 HSteamListenSocket g_hListenSocket;
 HSteamNetPollGroup g_hPollGroup;
 std::vector<HSteamNetConnection> g_hConnections;
+static std::map<HSteamNetConnection, bool> g_authenticated_connections;
+static std::map<HSteamNetConnection, int> g_auth_attempts;
 
 bool g_is_server_running = false;
 bool ServerNeedStop_b = false;
@@ -27,24 +43,41 @@ void OnConnectionStatusChange(SteamNetConnectionStatusChangedCallback_t* pInfo)
 	case k_ESteamNetworkingConnectionState_None:
 		break;
 	case k_ESteamNetworkingConnectionState_Connecting:
-		SteamNetworkingSockets()->AcceptConnection(hConn);
-		std::cout << "Try to connect: " << hConn << std::endl;
+		std::cout << "Client attempting to connect: " << hConn << std::endl;
+		
+		// Accept connection immediately to receive auth packet
+		if (SteamNetworkingSockets()->AcceptConnection(hConn) == k_EResultOK) {
+			std::cout << "Connection accepted, waiting for authentication..." << std::endl;
+			
+			// Add to poll group to receive messages
+			SteamNetworkingSockets()->SetConnectionPollGroup(hConn, g_hPollGroup);
+			
+			// Mark as NOT authenticated yet
+			g_authenticated_connections[hConn] = false;
+		} else {
+			std::cerr << "Failed to accept connection" << std::endl;
+		}
+		break;
 		break;
 	case k_ESteamNetworkingConnectionState_FindingRoute:
 		break;
 	case k_ESteamNetworkingConnectionState_Connected:
-		std::cout << "Peer Connected: " << hConn << std::endl;
+		std::cout << "Client connected. Waiting for auth..." << std::endl;
 		g_hConnections.push_back(hConn);
-		SteamNetworkingSockets()->SetConnectionPollGroup(hConn, g_hPollGroup);
+		g_authenticated_connections[hConn] = false;  
 		break;
 	case k_ESteamNetworkingConnectionState_ClosedByPeer:
 		std::cout << "Connection closed by peer: " << hConn << std::endl;
 		g_hConnections.erase(std::remove(g_hConnections.begin(), g_hConnections.end(), hConn), g_hConnections.end());
+		g_authenticated_connections.erase(hConn);
+		g_auth_attempts.erase(hConn);
 		SteamNetworkingSockets()->CloseConnection(hConn, 0, "Closed by peer", false);
 		break;
 	case k_ESteamNetworkingConnectionState_ProblemDetectedLocally:
 		std::cout << "Connection problem detected: " << hConn << std::endl;
 		g_hConnections.erase(std::remove(g_hConnections.begin(), g_hConnections.end(), hConn), g_hConnections.end());
+		g_authenticated_connections.erase(hConn);
+		g_auth_attempts.erase(hConn);
 		SteamNetworkingSockets()->CloseConnection(hConn, 0, "Closed due to local problem", false);
 		break;
 	case k_ESteamNetworkingConnectionState_FinWait:
@@ -73,11 +106,22 @@ public:
 		{
 		case k_ESteamNetworkingConnectionState_None:
 			break;
-		case k_ESteamNetworkingConnectionState_Connecting:
-			SteamNetworkingSockets()->AcceptConnection(hConn);
-			std::cout << "Accepted connection: " << hConn << std::endl;
-			break;
-		case k_ESteamNetworkingConnectionState_FindingRoute:
+	case k_ESteamNetworkingConnectionState_Connecting:
+		std::cout << "Client attempting to connect: " << hConn << std::endl;
+		
+		// Accept connection immediately to receive auth packet
+		if (SteamNetworkingSockets()->AcceptConnection(hConn) == k_EResultOK) {
+			std::cout << "Connection accepted, waiting for authentication..." << std::endl;
+			
+			// Add to poll group to receive messages
+			SteamNetworkingSockets()->SetConnectionPollGroup(hConn, g_hPollGroup);
+			
+			// Mark as NOT authenticated yet
+			g_authenticated_connections[hConn] = false;
+		} else {
+			std::cerr << "Failed to accept connection" << std::endl;
+		}
+		break;
 			break;
 		case k_ESteamNetworkingConnectionState_Connected:
 			std::cout << "Connection established: " << hConn << std::endl;
@@ -134,22 +178,140 @@ void SendToAll(const void* pData, uint32 nSize)
 {
 	for (auto& hConn : g_hConnections)
 	{
-		SteamNetworkingSockets()->SendMessageToConnection(hConn, pData, nSize, k_nSteamNetworkingSend_Unreliable, nullptr);
+		// Only send to authenticated clients
+		if (g_authenticated_connections[hConn]) {
+			SteamNetworkingSockets()->SendMessageToConnection(hConn, pData, nSize, k_nSteamNetworkingSend_Unreliable, nullptr);
+		}
 	}
+}
+
+// Authenticate connection with password
+static bool authenticateConnection(HSteamNetConnection connection, const char* password)
+{
+	// Guard clause - check if already authenticated
+	if (g_authenticated_connections[connection]) {
+		return true;
+	}
+	
+	// Initialize attempts counter if needed
+	if (g_auth_attempts.find(connection) == g_auth_attempts.end()) {
+		g_auth_attempts[connection] = 0;
+	}
+	
+	// Increment attempt counter
+	g_auth_attempts[connection]++;
+	int attempts_used = g_auth_attempts[connection];
+	int attempts_remaining = NetworkConstants::MAX_AUTH_ATTEMPTS - attempts_used;
+	
+	AuthResponsePacket response;
+	response.magic_marker = PacketMagic::RESP;
+	
+	// Verify password
+	if (strcmp(password, NetworkConstants::SERVER_PASSWORD) == 0)
+	{
+		// Authentication successful
+		SetConsoleTextAttribute(GetStdHandle(STD_OUTPUT_HANDLE), CONSOLE_COLOR_GREEN);
+		std::cout << "Client " << connection << " authenticated successfully" << std::endl;
+		std::cout.flush();
+		SetConsoleTextAttribute(GetStdHandle(STD_OUTPUT_HANDLE), CONSOLE_DEFAULT);
+		
+		g_authenticated_connections[connection] = true;
+		response.is_authenticated = true;
+		response.attempts_remaining = 0;
+		strncpy_s(response.message, "Authentication successful", sizeof(response.message) - 1);
+		
+		// Send success response
+		SteamNetworkingSockets()->SendMessageToConnection(
+			connection,
+			&response,
+			sizeof(response),
+			k_nSteamNetworkingSend_Reliable,
+			nullptr
+		);
+		
+		return true;
+	}
+	
+	// Authentication failed
+	SetConsoleTextAttribute(GetStdHandle(STD_OUTPUT_HANDLE), CONSOLE_COLOR_RED);
+	std::cout << "Authentication failed for client " << connection 
+	          << " (attempt " << attempts_used << "/" << NetworkConstants::MAX_AUTH_ATTEMPTS << ")" << std::endl;
+	std::cout.flush();
+	SetConsoleTextAttribute(GetStdHandle(STD_OUTPUT_HANDLE), CONSOLE_DEFAULT);
+	
+	response.is_authenticated = false;
+	response.attempts_remaining = attempts_remaining;
+	
+	// Check if max attempts exceeded
+	if (attempts_remaining <= 0) {
+		strncpy_s(response.message, "Max attempts exceeded - disconnecting", sizeof(response.message) - 1);
+		
+		// Send response before closing
+		SteamNetworkingSockets()->SendMessageToConnection(
+			connection,
+			&response,
+			sizeof(response),
+			k_nSteamNetworkingSend_Reliable,
+			nullptr
+		);
+		
+		// Give time to send before closing
+		std::this_thread::sleep_for(std::chrono::milliseconds(100));
+		SteamNetworkingSockets()->CloseConnection(connection, 0, "Max authentication attempts exceeded", false);
+		
+		std::cout << "Client " << connection << " disconnected - max attempts exceeded" << std::endl;
+	} else {
+		// Still has attempts remaining
+		snprintf(response.message, sizeof(response.message), 
+		         "Invalid password - %d attempts remaining", attempts_remaining);
+		
+		// Send response
+		SteamNetworkingSockets()->SendMessageToConnection(
+			connection,
+			&response,
+			sizeof(response),
+			k_nSteamNetworkingSend_Reliable,
+			nullptr
+		);
+	}
+	
+	return false;
 }
 
 void FrameUpdate()
 {
 	SteamNetworkingSockets()->RunCallbacks();
 
-	ISteamNetworkingMessage* pIncomingMsg[16];
-	int numMsgs = SteamNetworkingSockets()->ReceiveMessagesOnPollGroup(g_hPollGroup, pIncomingMsg, 16);
+	ISteamNetworkingMessage* incoming_messages[16];
+	int message_count = SteamNetworkingSockets()->ReceiveMessagesOnPollGroup(g_hPollGroup, incoming_messages, 16);
 
-	for (int i = 0; i < numMsgs; ++i)
+	for (int i = 0; i < message_count; ++i)
 	{
-		std::string msgText((const char*)pIncomingMsg[i]->m_pData, pIncomingMsg[i]->m_cbSize);
-		std::cout << "Received message: " << msgText << std::endl;
-		pIncomingMsg[i]->Release();
+		auto* message = incoming_messages[i];
+		HSteamNetConnection connection = message->GetConnection();
+		
+		// Check for auth packet (guard clause)
+		if (message->m_cbSize == sizeof(AuthPacket)) {
+			AuthPacket* auth_packet = (AuthPacket*)message->m_pData;
+			if (auth_packet->magic_marker == PacketMagic::AUTH) {
+				authenticateConnection(connection, auth_packet->password);
+				message->Release();
+				continue;
+			}
+		}
+		
+		// Reject if not authenticated (guard clause)
+		if (!g_authenticated_connections[connection]) {
+			std::cout << "Rejected message from unauthenticated client " << connection << std::endl;
+			message->Release();
+			continue;
+		}
+		
+		// Process authenticated message
+		std::string message_text((const char*)message->m_pData, message->m_cbSize);
+		std::cout << "Received from client " << connection << ": " << message_text << std::endl;
+		
+		message->Release();
 	}
 }
 
@@ -201,17 +363,26 @@ int serverWork()
 
 	std::cout << "GNS initialized successfully." << std::endl;
 	ManagePort(true);
-	StartServer(777);
+	StartServer(NetworkConstants::DEFAULT_SERVER_PORT);
 
 	int counter = 0;
 	while (!ServerNeedStop_b)
 	{
 		if (counter >= 120)
 		{
-			//std::string message = "Hello from server";
-			//SendToAll(message.c_str(), message.size());
-			RandomTelemetryData(myPacket);
-			SendToAll(&myPacket, sizeof(TelemetryPacket));
+			// Check if there are any authenticated clients before sending
+			bool has_authenticated_clients = false;
+			for (const auto& pair : g_authenticated_connections) {
+				if (pair.second) {
+					has_authenticated_clients = true;
+					break;
+				}
+			}
+			
+			if (has_authenticated_clients) {
+				RandomTelemetryData(myPacket);
+				SendToAll(&myPacket, sizeof(TelemetryPacket));
+			}
 			counter = 0;
 		}
 		FrameUpdate();
@@ -251,6 +422,8 @@ void RandomTelemetryData(TelemetryPacket& packet)
 	packet.acceleration = (uint32_t)accelDist(generator);
 	packet.fixtype = fixTypeDist(generator);
 	packet.ID = idDist(generator);
+
+
 
 
 }
