@@ -24,8 +24,8 @@ namespace CameraConstants {
     
     // Rotation constants
     static constexpr float CAMERA_ROTATION_SPEED = 0.5f;  // degrees per frame
-    static constexpr float CAMERA_ROTATION_MIN = -89.0f;  // degrees
-    static constexpr float CAMERA_ROTATION_MAX = 89.0f;   // degrees
+    static constexpr float CAMERA_ROTATION_MIN = -180.0f;  // degrees
+    static constexpr float CAMERA_ROTATION_MAX = 180.0f;   // degrees
 }
 
 // Network constants

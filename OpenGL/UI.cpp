@@ -1,9 +1,18 @@
 ﻿#include "src/input/Input.h"
 #include "UI.h"
+#include "UI_Elements.h"
 #include "src/Config.h"
 #include "src/ui/UI_Config.h"
+#include "src/rendering/Interpolation.h"
+#include "src/rendering/Render.h"
 #include <iostream>
 #include <algorithm>
+#include <cmath>
+#include <glm/glm.hpp>
+#include <glm/gtc/constants.hpp>
+#include <filesystem>
+#include <fstream>
+#include <sstream>
 
 #define STB_IMAGE_IMPLEMENTATION
 #include "libraries/include/stb_image.h"
@@ -44,6 +53,7 @@ UI::UI()
     , m_iconHeart(nullptr)
     , m_iconClose(nullptr)
     , m_iconDragDrop(nullptr)
+    , m_compassTexture(nullptr)
     , m_points(nullptr)
     , m_pointsMutex(nullptr)
 {
@@ -100,14 +110,89 @@ void UI::LoadResources()
     if (!LoadTextureFromFile("styles/icons/PNG/heart.png", &m_iconHeart, nullptr, nullptr)) std::cerr << "Failed to load heart.png\n";
     if (!LoadTextureFromFile("styles/icons/PNG/circle-x.png", &m_iconClose, nullptr, nullptr)) std::cerr << "Failed to load circle-x.png\n";
     if (!LoadTextureFromFile("styles/icons/PNG/DragAndDrop.png", &m_iconDragDrop, nullptr, nullptr)) std::cerr << "Failed to load DragAndDrop.png\n";
+    
+    // Load Compass texture
+    if (!LoadTextureFromFile("styles/images/Compas scaled.png", &m_compassTexture, nullptr, nullptr)) 
+    {
+        std::cerr << "[UI] Failed to load Compas scaled.png\n";
+    }
+    else
+    {
+        std::cout << "[UI] Compass texture loaded successfully\n";
+    }
 
-    // Test recent files
-    m_recentFiles.push_back({"333 Track.json", "C:/tracks/333.json"});
-    m_recentFiles.push_back({"Rulitis.json", "C:/tracks/rulitis.json"});
-    m_recentFiles.push_back({"MONZA CIRCUIT.json", "C:/tracks/monza.json"});
-    m_recentFiles.push_back({"CIRCUIT DE CALAFAT.json", "C:/tracks/calafat.json"});
-    m_recentFiles.push_back({"Bikernieku Trase.json", "C:/tracks/bikernieku.json"});
-    m_recentFiles.push_back({"NoName.json", "C:/tracks/noname.json"});
+    // Load recent files from saves directory
+    LoadRecentFiles();
+}
+
+void UI::LoadRecentFiles()
+{
+    namespace fs = std::filesystem;
+    
+    const std::string saves_path = "src/saves";
+    
+    // Clear existing files
+    m_recentFiles.clear();
+    
+    // Check if directory exists
+    if (!fs::exists(saves_path) || !fs::is_directory(saves_path))
+    {
+        std::cout << "[UI] Saves directory not found: " << saves_path << "\n";
+        std::cout << "[UI] Creating saves directory...\n";
+        
+        try
+        {
+            fs::create_directories(saves_path);
+            std::cout << "[UI] Saves directory created successfully\n";
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "[UI] Failed to create saves directory: " << e.what() << "\n";
+        }
+        
+        return;
+    }
+    
+    std::cout << "[UI] Scanning saves directory: " << saves_path << "\n";
+    
+    // Scan directory for track files (.json and .txt)
+    try
+    {
+        for (const auto& entry : fs::directory_iterator(saves_path))
+        {
+            if (entry.is_regular_file())
+            {
+                std::string filename = entry.path().filename().string();
+                std::string extension = entry.path().extension().string();
+                
+                // Load .json and .txt files
+                if (extension == ".json" || extension == ".txt")
+                {
+                    RecentFile file;
+                    file.name = filename;
+                    file.path = entry.path().string();
+                    
+                    // Convert backslashes to forward slashes for consistency
+                    std::replace(file.path.begin(), file.path.end(), '\\', '/');
+                    
+                    m_recentFiles.push_back(file);
+                    std::cout << "[UI] Found save file: " << filename << "\n";
+                }
+            }
+        }
+        
+        // Sort files alphabetically
+        std::sort(m_recentFiles.begin(), m_recentFiles.end(), 
+                 [](const RecentFile& a, const RecentFile& b) {
+                     return a.name < b.name;
+                 });
+        
+        std::cout << "[UI] Loaded " << m_recentFiles.size() << " save file(s)\n";
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "[UI] Error scanning saves directory: " << e.what() << "\n";
+    }
 }
 
 bool UI::Initialize(GLFWwindow* window)
@@ -198,6 +283,20 @@ bool UI::Initialize(GLFWwindow* window)
     
     LoadResources();
     
+    // Initialize UI Elements
+    m_ui_elements = new UIElements();
+    if (!m_ui_elements->initialize())
+    {
+        std::cerr << "[UI] Error: Failed to initialize UI Elements\n";
+        delete m_ui_elements;
+        m_ui_elements = nullptr;
+        return false;
+    }
+    
+    // Pass fonts and textures to UI Elements
+    m_ui_elements->setFontTitle(m_fontTitle);
+    m_ui_elements->setCompassTexture(m_compassTexture);
+    
     std::cout << "[UI] Initialized successfully\n";
     return true;
 }
@@ -209,6 +308,12 @@ void UI::Shutdown()
         if (m_backgroundTexture)
         {
             unsigned int tex = (unsigned int)(intptr_t)m_backgroundTexture;
+            glDeleteTextures(1, &tex);
+        }
+        
+        if (m_compassTexture)
+        {
+            unsigned int tex = (unsigned int)(intptr_t)m_compassTexture;
             glDeleteTextures(1, &tex);
         }
         
@@ -498,8 +603,49 @@ void UI::RenderMainWindow()
         if (ImGui::InvisibleButton(("##file" + std::to_string(i)).c_str(), ImVec2(390, 28)))
         {
             std::cout << "[UI] Opening: " << m_recentFiles[i].path << "\n";
-            m_showSplash = false;
-            m_closeSplash = true;
+            
+            // Load file
+            std::ifstream file(m_recentFiles[i].path);
+            if (file.is_open() && m_points && m_pointsMutex)
+            {
+                std::stringstream buffer;
+                buffer << file.rdbuf();
+                file.close();
+                
+                loadTrackFromData(buffer.str(), *m_points, *m_pointsMutex);
+                std::cout << "[UI] Track loaded from: " << m_recentFiles[i].path << "\n";
+                
+                // Recenter track to (0, 0) if closed
+                {
+                    std::lock_guard<std::mutex> lock(*m_pointsMutex);
+                    TrackCenterInfo center_info = calculateTrackCenter(*m_points);
+                    
+                    if (center_info.is_closed)
+                    {
+                        std::cout << "[TRACK] Track is CLOSED - recentering to (0, 0)" << std::endl;
+                        recenterTrack(*m_points, center_info);
+                        
+                        // Update origin to maintain GPS coordinates
+                        g_map_origin.m_origin_lat_dd += center_info.offset.y * (MapConstants::MAP_SIZE / 100000.0);
+                        g_map_origin.m_origin_lon_dd += center_info.offset.x * (MapConstants::MAP_SIZE / 100000.0);
+                        std::cout << "[TRACK] Origin updated to: (" << g_map_origin.m_origin_lat_dd << ", " << g_map_origin.m_origin_lon_dd << ")" << std::endl;
+                    }
+                    else
+                    {
+                        std::cout << "[TRACK] Track is OPEN - keeping original position" << std::endl;
+                    }
+                }
+                
+                // Rebuild track cache for rendering
+                TrackRenderer::rebuildTrackCache(*m_points, *m_pointsMutex);
+                
+                m_showSplash = false;
+                m_closeSplash = true;
+            }
+            else
+            {
+                std::cerr << "[UI] Failed to open file: " << m_recentFiles[i].path << "\n";
+            }
         }
     }
     
@@ -911,3 +1057,5 @@ void UI::RenderHelpModal()
     ImGui::PopStyleColor(7);
     ImGui::PopStyleVar(2);
 }
+
+

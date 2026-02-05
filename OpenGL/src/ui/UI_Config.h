@@ -10,7 +10,7 @@ namespace UIConfig {
 // ============================================================================
 // APPLICATION INFO
 // ============================================================================
-static constexpr const char* APP_VERSION = "v0.6.0";
+static constexpr const char* APP_VERSION = "v0.7.0";
 static constexpr const char* APP_NAME = "R.A.J.A Prime";
 
 // ============================================================================
@@ -28,8 +28,8 @@ static constexpr const char* FONT_PATH_F1 = "styles/fonts/F1-Font-Family/Formula
 // ============================================================================
 // MENU BAR SETTINGS
 // ============================================================================
-static constexpr float TOP_MENU_HEIGHT = 24.0f;      // Top menu bar height (like Blender)
-static constexpr float BOTTOM_MENU_HEIGHT = 22.0f;   // Bottom status bar height
+static constexpr float TOP_MENU_HEIGHT = 30.0f / 900.0f;      // Top menu bar height (like Blender)
+static constexpr float BOTTOM_MENU_HEIGHT = 22.0f / 900.0f;   // Bottom status bar height
 
 // Menu spacing
 static constexpr float MENU_ITEM_SPACING = 0.0f;     // Horizontal space between menu items

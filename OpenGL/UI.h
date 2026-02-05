@@ -8,6 +8,8 @@
 
 struct ImGuiContext;
 struct ImFont;
+class MapOrigin;
+class UIElements;
 
 class UI
 {
@@ -26,6 +28,9 @@ public:
     void RenderBottomMenu();
     void RenderHelpModal();
     void EndFrame();
+    
+    // Access to UI elements
+    UIElements* getElements() { return m_ui_elements; }
     
     bool ShouldCloseSplash() const { return m_closeSplash; }
     void CloseSplash() { m_showSplash = false; m_closeSplash = true; }
@@ -51,6 +56,7 @@ private:
     void* m_iconHeart;
     void* m_iconClose;
     void* m_iconDragDrop;
+    void* m_compassTexture;
     
     // Recent files
     struct RecentFile
@@ -63,6 +69,9 @@ private:
     // Track Data
     std::vector<glm::vec2>* m_points;
     std::mutex* m_pointsMutex;
+    
+    // UI Elements (Compass, Laptimer, etc.)
+    UIElements* m_ui_elements;
 
     // Methods
     void RenderSplashWindow();
@@ -71,4 +80,5 @@ private:
     // Helpers
     bool LoadTextureFromFile(const char* filename, void** out_texture, int* out_width, int* out_height);
     void LoadResources();
+    void LoadRecentFiles();
 };
