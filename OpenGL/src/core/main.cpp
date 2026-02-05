@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include <iostream>
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
@@ -259,10 +259,7 @@ void drop_callback(GLFWwindow* window, int count, const char** paths)
 					if (center_info.is_closed) {
 						std::cout << "[TRACK] Track is CLOSED - recentering to (0, 0)" << std::endl;
 						recenterTrack(*context->points, center_info);
-						
-						// Update origin to maintain GPS coordinates
-						g_map_origin.m_origin_lat_dd += center_info.offset.y * (MapConstants::MAP_SIZE / 100000.0);
-						g_map_origin.m_origin_lon_dd += center_info.offset.x * (MapConstants::MAP_SIZE / 100000.0);
+					
 						std::cout << "[TRACK] Origin updated to: (" << g_map_origin.m_origin_lat_dd << ", " << g_map_origin.m_origin_lon_dd << ")" << std::endl;
 					} else {
 						std::cout << "[TRACK] Track is OPEN - keeping original position" << std::endl;
@@ -805,9 +802,15 @@ int main()
 		);
 		
 		// Creating view matrix with camera position and rotation
-		glm::mat4 view_world = glm::mat4(1.0f); glm::mat4 view_grid = glm::mat4(1.0f);
-	view_world = glm::translate(view_world, glm::vec3(-camera_position.x, -camera_position.y, 0.0f));
-	view_world = glm::rotate(view_world, glm::radians(camera_rotation), glm::vec3(0.0f, 0.0f, 1.0f));
+		glm::mat4 view_world = glm::mat4(1.0f);
+
+		// 1. Move to screen center (camera position)
+		view_world = glm::translate(view_world, glm::vec3(-camera_position.x, -camera_position.y, 0.0f));
+
+		// 2. Rotate around screen center (camera position)
+		view_world = glm::rotate(view_world, glm::radians(camera_rotation), glm::vec3(0.0f, 0.0f, 1.0f));
+
+		glm::mat4 view_grid = glm::mat4(1.0f);
 	view_grid = glm::translate(view_grid, glm::vec3(-camera_position.x, -camera_position.y, 0.0f));
 		
 	

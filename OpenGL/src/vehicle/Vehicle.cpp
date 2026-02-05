@@ -85,7 +85,8 @@ void vehicleLoop()
     g_is_vehicles_active = true; // ✅ Используем ГЛОБАЛЬНУЮ переменную
     std::cout << "vehicleLoop started" << std::endl;
     
-    while (g_is_vehicles_active) 
+	while (g_is_vehicles_active) // Need to chabge ( g_is_vehicles_active is all time true, but we need check if car movving or send packed if not then remove venchile 
+                                 // and replace checking to functiont ) 
     {
         removeVehicles();
 
