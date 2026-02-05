@@ -242,6 +242,7 @@
     <ClCompile Include="libraries\include\imgui\imgui_widgets.cpp" />
     <ClCompile Include="libraries\include\imgui\backends\imgui_impl_glfw.cpp" />
     <ClCompile Include="libraries\include\imgui\backends\imgui_impl_opengl3.cpp" />
+    <ClCompile Include="UI_Elements.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="libraries\include\serialib\serialib.h" />
@@ -254,8 +255,10 @@
     <ClInclude Include="src\rendering\Interpolation.h" />
     <ClInclude Include="src\rendering\Render.h" />
     <ClInclude Include="src\ui\UI_Config.h" />
+    <ClInclude Include="src\ui\UI_Elements_Config.h" />
     <ClInclude Include="src\vehicle\Vehicle.h" />
     <ClInclude Include="UI.h" />
+    <ClInclude Include="UI_Elements.h" />
   </ItemGroup>
   <ItemGroup>
     <Text Include="RESTRUCTURE_SUMMARY.txt" />
@@ -267,5 +270,3 @@
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>
 </Project>
-
-

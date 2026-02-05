@@ -8,6 +8,8 @@
 
 struct ImGuiContext;
 struct ImFont;
+class MapOrigin;
+class UIElements;
 
 class UI
 {
@@ -27,6 +29,9 @@ public:
     void RenderHelpModal();
     void EndFrame();
     
+    // Access to UI elements
+    UIElements* getElements() { return m_ui_elements; }
+    
     bool ShouldCloseSplash() const { return m_closeSplash; }
     void CloseSplash() { m_showSplash = false; m_closeSplash = true; }
 
@@ -39,9 +44,10 @@ private:
     bool m_show_help_modal;
     
     // Fonts
-    ImFont* m_fontRegular;
-    ImFont* m_fontTitle;
-    ImFont* m_fontRace; // Added F1 font
+    ImFont* m_fontRegular;  // 12px for menu
+    ImFont* m_fontUI;       // 16px for UI elements (modals, etc.)
+    ImFont* m_fontTitle;    // 36px Russo One for LapTimer
+    ImFont* m_fontRace;     // F1 font
     
     // Textures (using void* instead of ImTextureID to avoid forward declaration issues)
     void* m_backgroundTexture;
@@ -51,6 +57,7 @@ private:
     void* m_iconHeart;
     void* m_iconClose;
     void* m_iconDragDrop;
+    void* m_compassTexture;
     
     // Recent files
     struct RecentFile
@@ -63,6 +70,9 @@ private:
     // Track Data
     std::vector<glm::vec2>* m_points;
     std::mutex* m_pointsMutex;
+    
+    // UI Elements (Compass, Laptimer, etc.)
+    UIElements* m_ui_elements;
 
     // Methods
     void RenderSplashWindow();
@@ -71,4 +81,5 @@ private:
     // Helpers
     bool LoadTextureFromFile(const char* filename, void** out_texture, int* out_width, int* out_height);
     void LoadResources();
+    void LoadRecentFiles();
 };

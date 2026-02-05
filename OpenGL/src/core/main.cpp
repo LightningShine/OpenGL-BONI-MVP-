@@ -26,6 +26,7 @@
 #include "../rendering/Interpolation.h"
 #include "../rendering/Render.h"          
 #include "../../UI.h"
+#include "../../UI_Elements.h"
 #include "../network/Server.h"
 #include "../network/Client.h"
 #include "../network/ESP32_Code.h"
@@ -170,16 +171,16 @@ const std::vector<SplinePoint>* smooth_track = nullptr)
 	{
 		if (glfwGetKey(window, GLFW_KEY_LEFT) == GLFW_PRESS)
 		{
-			rotation -= CameraConstants::CAMERA_ROTATION_SPEED;
-			if (rotation < CameraConstants::CAMERA_ROTATION_MIN)
-				rotation = CameraConstants::CAMERA_ROTATION_MIN;
+			rotation += CameraConstants::CAMERA_ROTATION_SPEED;
+			if (rotation > CameraConstants::CAMERA_ROTATION_MAX)
+				rotation = CameraConstants::CAMERA_ROTATION_MAX;
 		}
 		
 		if (glfwGetKey(window, GLFW_KEY_RIGHT) == GLFW_PRESS)
 		{
-			rotation += CameraConstants::CAMERA_ROTATION_SPEED;
-			if (rotation > CameraConstants::CAMERA_ROTATION_MAX)
-				rotation = CameraConstants::CAMERA_ROTATION_MAX;
+			rotation -= CameraConstants::CAMERA_ROTATION_SPEED;
+			if (rotation < CameraConstants::CAMERA_ROTATION_MIN)
+				rotation = CameraConstants::CAMERA_ROTATION_MIN;
 		}
 	}
 
@@ -849,6 +850,17 @@ int main()
 	// ========================== UI RENDERING ==========================
 		// Render UI AFTER track and vehicles so it's on top
 		ui.Render();
+		
+		// Render compass (show after splash, rotates based on camera yaw)
+		if (ui.ShouldCloseSplash() && ui.getElements())
+		{
+			// Render compass
+			ui.getElements()->drawCompass(camera_rotation, g_map_origin);
+			
+			// Render laptimer (demo values for now)
+			ui.getElements()->drawLapTimer(39.279f, 0.0f, 94.150f, -0.534f);
+		}
+		
 		ui.EndFrame();
 		
 		// check and call events and swap the buffers
