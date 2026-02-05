@@ -24,10 +24,10 @@ namespace UIElementsConfig
         // Arrow position: -20px from top at 1600x900
         static constexpr float ARROW_OFFSET_RATIO = 20.0f / 900.0f;  // 0.022222
         
-        // Triangle color (golden yellow)
-        static constexpr unsigned char TRIANGLE_COLOR_R = 255;
-        static constexpr unsigned char TRIANGLE_COLOR_G = 215;
-        static constexpr unsigned char TRIANGLE_COLOR_B = 0;
+        // Triangle color (golden like separator lines - DAA940)
+        static constexpr unsigned char TRIANGLE_COLOR_R = 0xDA;
+        static constexpr unsigned char TRIANGLE_COLOR_G = 0xA9;
+        static constexpr unsigned char TRIANGLE_COLOR_B = 0x40;
         static constexpr unsigned char TRIANGLE_COLOR_A = 255;
     }
     
@@ -37,9 +37,8 @@ namespace UIElementsConfig
         // Size based on design: 259x217 at 1600x900 window
         static constexpr float WIDTH_RATIO = 259.0f / 1600.0f;   // 0.161875 (16.19%)
         static constexpr float HEIGHT_RATIO = 217.0f / 900.0f;   // 0.241111 (24.11%)
-        
-        // Separator line width: 172px at 1600x900
-        static constexpr float LINE_WIDTH_RATIO = 172.0f / 1600.0f;  // 0.1075 (10.75%)
+        // Separator line width: 176px at 1600x900
+        static constexpr float LINE_WIDTH_RATIO = 176.0f / 1600.0f;  // 0.11 (11%)
         static constexpr float LINE_THICKNESS = 2.0f;
         
         // Spacing and padding
@@ -47,11 +46,11 @@ namespace UIElementsConfig
         static constexpr float TOP_SPACING_RATIO = 28.0f / 900.0f;          // 0.031111 (3.11%)
         static constexpr float ELEMENT_SPACING_RATIO = 10.0f / 900.0f;      // 0.011111 (1.11%)
         
-        // Font sizes at 1600x900
-        static constexpr float TITLE_SIZE_RATIO = 16.0f / 900.0f;      // 0.017778
-        static constexpr float MAIN_TIME_SIZE_RATIO = 36.0f / 900.0f;  // 0.04
-        static constexpr float LABEL_SIZE_RATIO = 12.0f / 900.0f;      // 0.013333
-        static constexpr float TIME_SIZE_RATIO = 20.0f / 900.0f;       // 0.022222
+        // Font sizes at 1600x900 (increased to match reference design)
+        static constexpr float TITLE_SIZE_RATIO = 18.0f / 900.0f;      // 0.022222 (LAPTIME text)
+        static constexpr float MAIN_TIME_SIZE_RATIO = 44.0f / 900.0f;  // 0.077778 (Main time - HUGE!)
+        static constexpr float LABEL_SIZE_RATIO = 16.0f / 900.0f;      // 0.017778 (LAST LAP, BEST LAP)
+        static constexpr float TIME_SIZE_RATIO = 22.0f / 900.0f;       // 0.033333 (Time digits)
         
         // Colors (RGB hex format)
         // Title and labels color: A4A3A3

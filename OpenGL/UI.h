@@ -44,9 +44,10 @@ private:
     bool m_show_help_modal;
     
     // Fonts
-    ImFont* m_fontRegular;
-    ImFont* m_fontTitle;
-    ImFont* m_fontRace; // Added F1 font
+    ImFont* m_fontRegular;  // 12px for menu
+    ImFont* m_fontUI;       // 16px for UI elements (modals, etc.)
+    ImFont* m_fontTitle;    // 36px Russo One for LapTimer
+    ImFont* m_fontRace;     // F1 font
     
     // Textures (using void* instead of ImTextureID to avoid forward declaration issues)
     void* m_backgroundTexture;

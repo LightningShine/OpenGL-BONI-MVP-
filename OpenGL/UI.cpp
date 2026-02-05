@@ -38,15 +38,16 @@ static void AddDashedRect(ImDrawList* draw_list, const ImVec2& p_min, const ImVe
 }
 
 UI::UI()
-    : m_window(nullptr)
-    , m_context(nullptr)
-    , m_showSplash(true)
-    , m_closeSplash(false)
-    , m_show_help_modal(false)
-    , m_fontRegular(nullptr)
-    , m_fontTitle(nullptr)
-    , m_fontRace(nullptr)
-    , m_backgroundTexture(nullptr)
+: m_window(nullptr)
+, m_context(nullptr)
+, m_showSplash(true)
+, m_closeSplash(false)
+, m_show_help_modal(false)
+, m_fontRegular(nullptr)
+, m_fontUI(nullptr)
+, m_fontTitle(nullptr)
+, m_fontRace(nullptr)
+, m_backgroundTexture(nullptr)
     , m_iconFile(nullptr)
     , m_iconContact(nullptr)
     , m_iconCopyright(nullptr)
@@ -217,19 +218,34 @@ bool UI::Initialize(GLFWwindow* window)
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     
+    // Get window size for relative calculations
+    int window_width, window_height;
+    glfwGetWindowSize(window, &window_width, &window_height);
+    
     // Load Fonts with oversampling for better quality
     ImFontConfig font_config;
     font_config.OversampleH = 3;
     font_config.OversampleV = 3;
     
-    m_fontRegular = io.Fonts->AddFontFromFileTTF("styles/fonts/Ubuntu/Ubuntu-Regular.ttf", 16.0f, &font_config);
-    m_fontTitle = io.Fonts->AddFontFromFileTTF("styles/fonts/Russo_One/RussoOne-Regular.ttf", 14.0f, &font_config);
-    m_fontRace = io.Fonts->AddFontFromFileTTF(UIConfig::FONT_PATH_F1, UIConfig::FONT_SIZE_RACE, &font_config);
+    // Calculate font sizes based on window height
+    float font_size_menu = UIConfig::MENU_TEXT_SIZE * window_height;        // 12px for menu
+    float font_size_ui = UIConfig::FONT_SIZE_REGULAR * window_height;       // 16px for UI elements
+    float font_size_title = 32.0f / UIConfig::BASE_HEIGHT * window_height;  // 32px base for Russo One (better quality when scaled)
+    float font_size_race = UIConfig::FONT_SIZE_RACE * window_height;
+    
+    m_fontRegular = io.Fonts->AddFontFromFileTTF("styles/fonts/Ubuntu/Ubuntu-Regular.ttf", font_size_menu, &font_config);
+    m_fontUI = io.Fonts->AddFontFromFileTTF("styles/fonts/Ubuntu/Ubuntu-Regular.ttf", font_size_ui, &font_config);
+    m_fontTitle = io.Fonts->AddFontFromFileTTF("styles/fonts/Russo_One/RussoOne-Regular.ttf", font_size_title, &font_config);
+    m_fontRace = io.Fonts->AddFontFromFileTTF(UIConfig::FONT_PATH_F1, font_size_race, &font_config);
     
     // Fallback to default font if Ubuntu not found
     if (!m_fontRegular) {
-        std::cerr << "[UI] Warning: Ubuntu font not found, using default\n";
+        std::cerr << "[UI] Warning: Ubuntu font (menu) not found, using default\n";
         m_fontRegular = io.Fonts->AddFontDefault(&font_config);
+    }
+    if (!m_fontUI) {
+        std::cerr << "[UI] Warning: Ubuntu font (UI) not found, using default\n";
+        m_fontUI = io.Fonts->AddFontDefault(&font_config);
     }
     if (!m_fontTitle) {
         std::cerr << "[UI] Warning: RussoOne Regular not found, using default\n";
@@ -257,9 +273,15 @@ bool UI::Initialize(GLFWwindow* window)
     
     style.WindowPadding = ImVec2(8, 8);
     style.FramePadding = ImVec2(8, 4);
-    style.ItemSpacing = ImVec2(8, 4);
-    style.ItemInnerSpacing = ImVec2(6, 4);
-    style.IndentSpacing = 20.0f;
+    style.ItemSpacing = ImVec2(
+        UIConfig::GLOBAL_ITEM_SPACING_X * window_width, 
+        UIConfig::GLOBAL_ITEM_SPACING_Y * window_height
+    );
+    style.ItemInnerSpacing = ImVec2(
+        UIConfig::GLOBAL_ITEM_INNER_SPACING_X * window_width, 
+        UIConfig::GLOBAL_ITEM_INNER_SPACING_Y * window_height
+    );
+    style.IndentSpacing = UIConfig::GLOBAL_INDENT_SPACING * window_width;
     
     style.WindowBorderSize = 0.0f;
     style.ChildBorderSize = 0.0f;
@@ -473,19 +495,19 @@ void UI::RenderMainWindow()
     // === TITLE "RACE APP" ===
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, 0));
     
-    if (m_fontRace) ImGui::PushFont(m_fontRace);
-    else if (m_fontTitle) ImGui::PushFont(m_fontTitle);
+    if (m_fontUI) ImGui::PushFont(m_fontUI);  // Use 16px UI font instead of huge title font
+    else if (m_fontRegular) ImGui::PushFont(m_fontRegular);
 
     ImGui::SetCursorPos(ImVec2(35, 35));
 	ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f)); // White color RACE APP color
-    ImGui::SetWindowFontScale(3.5f);
+    ImGui::SetWindowFontScale(2.5f);  // Reduced from 3.5f (16px * 2.5 = 40px)
     ImGui::Text("RACE");
     ImGui::SetWindowFontScale(1.0f);
     ImGui::PopStyleColor();
     
     ImGui::SetCursorPos(ImVec2(35, 110));
     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
-    ImGui::SetWindowFontScale(3.5f);
+    ImGui::SetWindowFontScale(2.5f);  // Reduced from 3.5f
     ImGui::Text("APP");
     ImGui::SetWindowFontScale(1.0f);
     ImGui::PopStyleColor();
@@ -579,14 +601,17 @@ void UI::RenderMainWindow()
     // ImGui::PopStyleVar(2); // Removed vars
     
     // === RECENT FILES ===
-    ImGui::SetCursorPos(ImVec2(435, windowSize.y - 290));
+    // Position at right side of window (after vertical separator)
+    float files_x_pos = 435;  // This is relative to window, not screen
+    
+    ImGui::SetCursorPos(ImVec2(files_x_pos, windowSize.y - 290));
     ImGui::TextColored(ImVec4(0.525f, 0.525f, 0.525f, 1.0f), "Recent Files");
     
     // Recent files list
     float listStartY = windowSize.y - 255;
     for (size_t i = 0; i < m_recentFiles.size() && i < 6; i++)
     {
-        ImGui::SetCursorPos(ImVec2(435, listStartY + i * 30));
+        ImGui::SetCursorPos(ImVec2(files_x_pos, listStartY + i * 30));
         
         // Draw File Icon
         if (m_iconFile)
@@ -595,11 +620,11 @@ void UI::RenderMainWindow()
         }
         
         ImGui::SameLine();
-        ImGui::SetCursorPosX(465);
+        ImGui::SetCursorPosX(files_x_pos + 30);  // Icon width + small gap
         ImGui::TextColored(ImVec4(0.835f, 0.835f, 0.835f, 1.0f), m_recentFiles[i].name.c_str());
         
         // Clickable area
-        ImGui::SetCursorPos(ImVec2(435, listStartY + i * 30));
+        ImGui::SetCursorPos(ImVec2(files_x_pos, listStartY + i * 30));
         if (ImGui::InvisibleButton(("##file" + std::to_string(i)).c_str(), ImVec2(390, 28)))
         {
             std::cout << "[UI] Opening: " << m_recentFiles[i].path << "\n";
@@ -708,8 +733,10 @@ void UI::RenderMainWindow()
 void UI::RenderTopMenu()
 {
     ImGuiViewport* viewport = ImGui::GetMainViewport();
+    ImVec2 display_size = viewport->Size;
+    
     ImGui::SetNextWindowPos(viewport->Pos);
-    ImGui::SetNextWindowSize(ImVec2(viewport->Size.x, UIConfig::TOP_MENU_HEIGHT)); // 24px height like Blender
+    ImGui::SetNextWindowSize(ImVec2(display_size.x, UIConfig::TOP_MENU_HEIGHT * display_size.y));
     
     ImGuiWindowFlags window_flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | 
                                     ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar | 
@@ -720,9 +747,18 @@ void UI::RenderTopMenu()
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
-	ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10, 12)); // Menu bar item padding
-    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(6, 0)); // Spacing between File, Settings, View, etc.
-	ImGui::PushStyleVar(ImGuiStyleVar_ItemInnerSpacing, ImVec2(8, 4)); // Arrow spacing in menu bar
+	ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(
+        UIConfig::MENU_FRAME_PADDING_X * display_size.x, 
+        UIConfig::MENU_FRAME_PADDING_Y * display_size.y
+    ));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(
+        UIConfig::MENU_ITEM_SPACING, 
+        0
+    ));
+	ImGui::PushStyleVar(ImGuiStyleVar_ItemInnerSpacing, ImVec2(
+        8.0f / 1600.0f * display_size.x, 
+        4.0f / 900.0f * display_size.y
+    ));
 
 
     // Top menu bar colors
@@ -746,10 +782,10 @@ void UI::RenderTopMenu()
     
     if (ImGui::BeginMenuBar())
     {
-        ImGui::PushFont(m_fontRegular); // Ubuntu Regular 16px
+        ImGui::PushFont(m_fontRegular); // Ubuntu Regular
         
         // === ОТСТУП ПЕРВОГО ЭЛЕМЕНТА МЕНЮ ОТ ЛЕВОГО КРАЯ ===
-        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + UIConfig::MENU_LEFT_PADDING);
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + UIConfig::MENU_LEFT_PADDING * display_size.x);
         
         // === DROPDOWN MENU ITEM STYLING (применяем настройки для пунктов меню) ===
         // Временно изменяем глобальные стили для dropdown меню
@@ -760,16 +796,29 @@ void UI::RenderTopMenu()
         float old_popup_rounding = style.PopupRounding;
         float old_popup_border_size = style.PopupBorderSize;
         
-        // Применяем настройки dropdown из UI_Config.h
-        style.WindowPadding = ImVec2(UIConfig::DROPDOWN_PADDING_X, UIConfig::DROPDOWN_PADDING_Y);
-        style.WindowMinSize = ImVec2(UIConfig::DROPDOWN_MIN_WIDTH, 0.0f); // ← ПРИМЕНЯЕМ МИНИМАЛЬНУЮ ШИРИНУ!
+        // Применяем настройки dropdown из UI_Config.h (преобразуем ratio в pixels)
+        style.WindowPadding = ImVec2(
+            UIConfig::DROPDOWN_PADDING_X * display_size.x, 
+            UIConfig::DROPDOWN_PADDING_Y * display_size.y
+        );
+        style.WindowMinSize = ImVec2(UIConfig::DROPDOWN_MIN_WIDTH * display_size.x, 0.0f);
         style.WindowRounding = UIConfig::DROPDOWN_ROUNDING;
         style.PopupRounding = UIConfig::DROPDOWN_ROUNDING;
         style.PopupBorderSize = UIConfig::DROPDOWN_BORDER_SIZE;
         
-        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(UIConfig::DROPDOWN_ITEM_SPACING_X, UIConfig::DROPDOWN_ITEM_SPACING_Y));
-        ImGui::PushStyleVar(ImGuiStyleVar_ItemInnerSpacing, ImVec2(UIConfig::DROPDOWN_ITEM_INNER_SPACING, 4.0f));
-        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(UIConfig::DROPDOWN_ITEM_PADDING_X, UIConfig::DROPDOWN_ITEM_PADDING_Y));
+        
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(
+            UIConfig::DROPDOWN_ITEM_SPACING_X * display_size.x, 
+            UIConfig::DROPDOWN_ITEM_SPACING_Y * display_size.y
+        ));
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemInnerSpacing, ImVec2(
+            UIConfig::DROPDOWN_ITEM_INNER_SPACING * display_size.x, 
+            UIConfig::DROPDOWN_ITEM_INNER_SPACING * display_size.y
+        ));
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(
+            UIConfig::DROPDOWN_ITEM_PADDING_X * display_size.x, 
+            UIConfig::DROPDOWN_ITEM_PADDING_Y * display_size.y
+        ));
         
         // File menu
         if (ImGui::BeginMenu("File"))
@@ -847,10 +896,13 @@ void UI::RenderTopMenu()
 void UI::RenderBottomMenu()
 {
     ImGuiViewport* viewport = ImGui::GetMainViewport();
-    ImVec2 bottom_pos = ImVec2(viewport->Pos.x, viewport->Pos.y + viewport->Size.y - 22.0f); // 22px height
+    ImVec2 display_size = viewport->Size;
+    
+    float bottom_height = UIConfig::BOTTOM_MENU_HEIGHT * display_size.y;
+    ImVec2 bottom_pos = ImVec2(viewport->Pos.x, viewport->Pos.y + display_size.y - bottom_height);
     
     ImGui::SetNextWindowPos(bottom_pos);
-    ImGui::SetNextWindowSize(ImVec2(viewport->Size.x, UIConfig::BOTTOM_MENU_HEIGHT));
+    ImGui::SetNextWindowSize(ImVec2(display_size.x, bottom_height));
     
     ImGuiWindowFlags window_flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | 
                                     ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar | 
@@ -888,21 +940,29 @@ void UI::RenderHelpModal()
     if (!m_show_help_modal)
         return;
     
+    ImVec2 display_size = ImGui::GetIO().DisplaySize;
+    
     // Darken background - CLICKABLE to close
     ImGui::SetNextWindowPos(ImVec2(0, 0));
-    ImGui::SetNextWindowSize(ImGui::GetIO().DisplaySize);
-    ImGui::SetNextWindowBgAlpha(0.8f);
+    ImGui::SetNextWindowSize(display_size);
+    ImGui::SetNextWindowBgAlpha(UIConfig::MODAL_OVERLAY_ALPHA);
     
     ImGuiWindowFlags bg_flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | 
                                 ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar | 
                                 ImGuiWindowFlags_NoSavedSettings;
     
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.0f, 0.0f, 0.0f, 0.8f));
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.0f, 0.0f, 0.0f, UIConfig::MODAL_OVERLAY_ALPHA));
     if (ImGui::Begin("##ModalBackground", nullptr, bg_flags))
     {
-        // Check if clicked outside modal window
-        ImVec2 modal_pos = ImVec2(ImGui::GetIO().DisplaySize.x * 0.5f - 350, ImGui::GetIO().DisplaySize.y * 0.5f - 250);
-        ImVec2 modal_size = ImVec2(UIConfig::HELP_MODAL_WIDTH, UIConfig::HELP_MODAL_HEIGHT);
+        // Calculate modal size and position
+        ImVec2 modal_size = ImVec2(
+            UIConfig::HELP_MODAL_WIDTH * display_size.x, 
+            UIConfig::HELP_MODAL_HEIGHT * display_size.y
+        );
+        ImVec2 modal_pos = ImVec2(
+            (display_size.x - modal_size.x) * 0.5f,
+            (display_size.y - modal_size.y) * 0.5f
+        );
         ImVec2 mouse_pos = ImGui::GetMousePos();
         
         bool clicked_outside = ImGui::IsMouseClicked(0) &&
@@ -918,15 +978,26 @@ void UI::RenderHelpModal()
     ImGui::PopStyleColor();
     
     // Help modal window with scroll - CAPTURE MOUSE
-    ImGui::SetNextWindowPos(ImVec2(ImGui::GetIO().DisplaySize.x * 0.5f, ImGui::GetIO().DisplaySize.y * 0.5f), 
+    ImVec2 modal_size = ImVec2(
+        UIConfig::HELP_MODAL_WIDTH * display_size.x, 
+        UIConfig::HELP_MODAL_HEIGHT * display_size.y
+    );
+    
+    ImGui::SetNextWindowPos(ImVec2(display_size.x * 0.5f, display_size.y * 0.5f), 
                             ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(UIConfig::HELP_MODAL_WIDTH, UIConfig::HELP_MODAL_HEIGHT));
+    ImGui::SetNextWindowSize(modal_size);
     ImGui::SetNextWindowFocus(); // Force focus on modal
     
-    ImGuiWindowFlags modal_flags = ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse;  // ← УБРАЛИ ТРЕУГОЛЬНИК!
+    ImGuiWindowFlags modal_flags = ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse;
     
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(UIConfig::MODAL_PADDING_X, UIConfig::MODAL_PADDING_Y));
-    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(UIConfig::MODAL_ITEM_SPACING_X, UIConfig::MODAL_ITEM_SPACING_Y));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(
+        UIConfig::MODAL_PADDING_X * display_size.x, 
+        UIConfig::MODAL_PADDING_Y * display_size.y
+    ));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(
+        UIConfig::MODAL_ITEM_SPACING_X * display_size.x, 
+        UIConfig::MODAL_ITEM_SPACING_Y * display_size.y
+    ));
     
     // ПРИМЕНЯЕМ НАСТРОЙКИ ИЗ UI_CONFIG.H
     ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(UIConfig::MODAL_BG_R, UIConfig::MODAL_BG_G, UIConfig::MODAL_BG_B, UIConfig::MODAL_BG_ALPHA));
@@ -940,14 +1011,14 @@ void UI::RenderHelpModal()
     bool modal_open = true;
     if (ImGui::Begin("Keyboard Shortcuts", &modal_open, modal_flags))
     {
-        ImGui::PushFont(m_fontRegular);
+        ImGui::PushFont(m_fontUI);  // Use 16px font for modal content
         
         ImGui::TextColored(ImVec4(0.5f, 0.8f, 1.0f, 1.0f), "Camera Controls:");
         ImGui::Separator();
         ImGui::Spacing();
         
         ImGui::Columns(2, nullptr, false);
-        ImGui::SetColumnWidth(0, 250);
+        ImGui::SetColumnWidth(0, 250.0f / 1600.0f * display_size.x); // Adaptive column width
         
         ImGui::Text("W / Up Arrow");
         ImGui::NextColumn();
@@ -1025,7 +1096,7 @@ void UI::RenderHelpModal()
         ImGui::Spacing();
         
         ImGui::Columns(2, nullptr, false);
-        ImGui::SetColumnWidth(0, 250);
+        ImGui::SetColumnWidth(0, 250.0f / 1600.0f * display_size.x);
         
         ImGui::Text("T");
         ImGui::NextColumn();
@@ -1033,16 +1104,6 @@ void UI::RenderHelpModal()
         ImGui::NextColumn();
         
         ImGui::Columns(1);
-        ImGui::Spacing();
-        ImGui::Spacing();
-        ImGui::Spacing();
-        
-        ImGui::SetCursorPosX((ImGui::GetWindowWidth() - UIConfig::MODAL_BUTTON_WIDTH) * 0.5f);
-        if (ImGui::Button("Close", ImVec2(UIConfig::MODAL_BUTTON_WIDTH, UIConfig::MODAL_BUTTON_HEIGHT)))
-        {
-            m_show_help_modal = false;
-        }
-        
         
         ImGui::PopFont();
     }

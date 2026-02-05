@@ -3,9 +3,16 @@
 // ============================================================================
 // UI CONFIGURATION
 // All user interface related constants and settings
+// Base resolution for calculations: 1600x900
 // ============================================================================
 
 namespace UIConfig {
+
+// ============================================================================
+// BASE RESOLUTION (for ratio calculations)
+// ============================================================================
+static constexpr float BASE_WIDTH = 1600.0f;
+static constexpr float BASE_HEIGHT = 900.0f;
 
 // ============================================================================
 // APPLICATION INFO
@@ -14,28 +21,32 @@ static constexpr const char* APP_VERSION = "v0.7.0";
 static constexpr const char* APP_NAME = "R.A.J.A Prime";
 
 // ============================================================================
-// FONT SETTINGS
+// FONT SETTINGS (as ratios of screen height)
 // ============================================================================
-static constexpr float FONT_SIZE_REGULAR = 16.0f;    // Main UI font
-static constexpr float FONT_SIZE_TITLE = 24.0f;      // Titles and headers
-static constexpr float FONT_SIZE_RACE = 24.0f;       // F1 font for special elements
+static constexpr float FONT_SIZE_REGULAR = 16.0f / BASE_HEIGHT;    // 0.017778 (1.78%)
+static constexpr float FONT_SIZE_TITLE = 24.0f / BASE_HEIGHT;      // 0.026667 (2.67%)
+static constexpr float FONT_SIZE_RACE = 24.0f / BASE_HEIGHT;       // 0.026667 (2.67%)
 
 // Font paths (relative to executable)
 static constexpr const char* FONT_PATH_UBUNTU_REGULAR = "styles/fonts/Ubuntu/Ubuntu-Regular.ttf";
 static constexpr const char* FONT_PATH_UBUNTU_BOLD = "styles/fonts/Ubuntu/Ubuntu-Bold.ttf";
 static constexpr const char* FONT_PATH_F1 = "styles/fonts/F1-Font-Family/Formula1-Regular-1.ttf";
+static constexpr const char* FONT_PATH_RUSSO_ONE = "styles/fonts/Russo_One/RussoOne-Regular.ttf";
 
 // ============================================================================
-// MENU BAR SETTINGS
+// MENU BAR SETTINGS (as ratios)
 // ============================================================================
-static constexpr float TOP_MENU_HEIGHT = 30.0f / 900.0f;      // Top menu bar height (like Blender)
-static constexpr float BOTTOM_MENU_HEIGHT = 22.0f / 900.0f;   // Bottom status bar height
+static constexpr float TOP_MENU_HEIGHT = 30.0f / BASE_HEIGHT;      // 0.033333 (3.33%)
+static constexpr float BOTTOM_MENU_HEIGHT = 22.0f / BASE_HEIGHT;   // 0.024444 (2.44%)
 
-// Menu spacing
-static constexpr float MENU_ITEM_SPACING = 0.0f;     // Horizontal space between menu items
-static constexpr float MENU_FRAME_PADDING_X = 10.0f;
-static constexpr float MENU_FRAME_PADDING_Y = 4.0f;
-static constexpr float MENU_LEFT_PADDING = 16.0f;     // Отступ первого элемента меню от левого края
+// Menu spacing (as ratios)
+static constexpr float MENU_ITEM_SPACING = 0.0f;
+static constexpr float MENU_FRAME_PADDING_X = 12.0f / BASE_WIDTH;   // 0.0075 (0.75%) - horizontal padding inside menu items
+static constexpr float MENU_FRAME_PADDING_Y = 9.0f / BASE_HEIGHT;   // 0.01 (1%) - vertical padding inside menu items (30-12)/2 = 9px
+static constexpr float MENU_LEFT_PADDING = 16.0f / BASE_WIDTH;      // 0.01 (1%)
+
+// Menu text size (12px at 1600x900)
+static constexpr float MENU_TEXT_SIZE = 12.0f / BASE_HEIGHT;        // 0.013333 (1.33%)
 
 // ============================================================================
 // COLORS (HEX to RGB conversion)
@@ -62,11 +73,11 @@ static constexpr float POPUP_BG_B = 0x1E / 255.0f;
 static constexpr float POPUP_BG_ALPHA = 0.98f;
 
 // ============================================================================
-// MODAL WINDOWS
+// MODAL WINDOWS (as ratios)
 // ============================================================================
-// Help modal
-static constexpr float HELP_MODAL_WIDTH = 700.0f;
-static constexpr float HELP_MODAL_HEIGHT = 500.0f;
+// Help modal (700x500 at 1600x900)
+static constexpr float HELP_MODAL_WIDTH = 700.0f / BASE_WIDTH;      // 0.4375 (43.75%)
+static constexpr float HELP_MODAL_HEIGHT = 500.0f / BASE_HEIGHT;    // 0.555556 (55.56%)
 
 // Modal background overlay
 static constexpr float MODAL_OVERLAY_ALPHA = 0.8f;   // 80% dark overlay
@@ -107,15 +118,15 @@ static constexpr float POPUP_BORDER_SIZE = 1.0f;
 static constexpr float FRAME_BORDER_SIZE = 0.0f;
 
 // ============================================================================
-// MODAL WINDOW SETTINGS (Help Modal, etc.)
+// MODAL WINDOW SETTINGS (Help Modal, etc.) - as ratios
 // ============================================================================
-// Modal window padding
-static constexpr float MODAL_PADDING_X = 20.0f;          // Horizontal padding
-static constexpr float MODAL_PADDING_Y = 15.0f;          // Vertical padding
+// Modal window padding (20x15 at 1600x900)
+static constexpr float MODAL_PADDING_X = 20.0f / BASE_WIDTH;         // 0.0125 (1.25%)
+static constexpr float MODAL_PADDING_Y = 15.0f / BASE_HEIGHT;        // 0.016667 (1.67%)
 
-// Modal item spacing
-static constexpr float MODAL_ITEM_SPACING_X = 12.0f;     // Horizontal spacing
-static constexpr float MODAL_ITEM_SPACING_Y = 12.0f;      // Vertical spacing
+// Modal item spacing (12x12 at 1600x900)
+static constexpr float MODAL_ITEM_SPACING_X = 12.0f / BASE_WIDTH;    // 0.0075 (0.75%)
+static constexpr float MODAL_ITEM_SPACING_Y = 12.0f / BASE_HEIGHT;   // 0.013333 (1.33%)
 
 // Modal colors - Background
 static constexpr float MODAL_BG_R = 0x1C / 255.0f;       // Background #1C1C1C
@@ -151,20 +162,20 @@ static constexpr float MODAL_BUTTON_ACTIVE_R = 0xB8 / 255.0f; // Active #B80000
 static constexpr float MODAL_BUTTON_ACTIVE_G = 0x00 / 255.0f;
 static constexpr float MODAL_BUTTON_ACTIVE_B = 0x00 / 255.0f;
 
-// Modal button size
-static constexpr float MODAL_BUTTON_WIDTH = 120.0f;
-static constexpr float MODAL_BUTTON_HEIGHT = 30.0f;
+// Modal button size (as ratios)
+static constexpr float MODAL_BUTTON_WIDTH = 120.0f / BASE_WIDTH;     // 0.075 (7.5%)
+static constexpr float MODAL_BUTTON_HEIGHT = 30.0f / BASE_HEIGHT;    // 0.033333 (3.33%)
 
 // ============================================================================
-// MODAL TITLE BAR SETTINGS
+// MODAL TITLE BAR SETTINGS (as ratios)
 // ============================================================================
 // Title bar padding
-static constexpr float MODAL_TITLE_PADDING_X = 10.0f;        // Horizontal padding
-static constexpr float MODAL_TITLE_PADDING_Y = 8.0f;         // Vertical padding
+static constexpr float MODAL_TITLE_PADDING_X = 10.0f / BASE_WIDTH;   // 0.00625 (0.625%)
+static constexpr float MODAL_TITLE_PADDING_Y = 8.0f / BASE_HEIGHT;   // 0.008889 (0.89%)
 
 // Close button (X) settings
-static constexpr float MODAL_CLOSE_BUTTON_SIZE = 20.0f;      // Size of X button
-static constexpr float MODAL_CLOSE_BUTTON_ROUNDING = 0.0f;   // Corner rounding (0 = flat)
+static constexpr float MODAL_CLOSE_BUTTON_SIZE = 20.0f / BASE_HEIGHT; // 0.022222 (2.22%)
+static constexpr float MODAL_CLOSE_BUTTON_ROUNDING = 0.0f;            // Corner rounding (0 = flat)
 
 // Close button colors
 static constexpr float MODAL_CLOSE_HOVER_R = 0xE8 / 255.0f;  // Hover color #E81123 (red)
@@ -176,21 +187,21 @@ static constexpr float MODAL_CLOSE_ACTIVE_G = 0x2B / 255.0f;
 static constexpr float MODAL_CLOSE_ACTIVE_B = 0x1C / 255.0f;
 
 // ============================================================================
-// DROPDOWN MENU SETTINGS
+// DROPDOWN MENU SETTINGS (as ratios)
 // ============================================================================
 // Dropdown menu size
-static constexpr float DROPDOWN_MIN_WIDTH = 600.0f;       // Minimum width of dropdown
-static constexpr float DROPDOWN_PADDING_X = 30.0f;        // Horizontal padding inside menu
-static constexpr float DROPDOWN_PADDING_Y = 8.0f;         // Vertical padding inside menu
+static constexpr float DROPDOWN_MIN_WIDTH = 600.0f / BASE_WIDTH;       // 0.375 (37.5%)
+static constexpr float DROPDOWN_PADDING_X = 30.0f / BASE_WIDTH;        // 0.01875 (1.875%)
+static constexpr float DROPDOWN_PADDING_Y = 8.0f / BASE_HEIGHT;        // 0.008889 (0.89%)
 
 // Menu item spacing
-static constexpr float DROPDOWN_ITEM_SPACING_X = 10.0f;    // Horizontal spacing between elements
-static constexpr float DROPDOWN_ITEM_SPACING_Y = 4.0f;    // Vertical spacing between items
-static constexpr float DROPDOWN_ITEM_INNER_SPACING = 10.0f; // Space between text and shortcut
+static constexpr float DROPDOWN_ITEM_SPACING_X = 10.0f / BASE_WIDTH;   // 0.00625 (0.625%)
+static constexpr float DROPDOWN_ITEM_SPACING_Y = 4.0f / BASE_HEIGHT;   // 0.004444 (0.44%)
+static constexpr float DROPDOWN_ITEM_INNER_SPACING = 10.0f / BASE_WIDTH; // 0.00625 (0.625%)
 
 // Menu item padding (inside each menu item)
-static constexpr float DROPDOWN_ITEM_PADDING_X = 10.0f;   // Horizontal padding in menu item
-static constexpr float DROPDOWN_ITEM_PADDING_Y = 6.0f;    // Vertical padding in menu item
+static constexpr float DROPDOWN_ITEM_PADDING_X = 10.0f / BASE_WIDTH;   // 0.00625 (0.625%)
+static constexpr float DROPDOWN_ITEM_PADDING_Y = 6.0f / BASE_HEIGHT;   // 0.006667 (0.67%)
 
 // Dropdown colors
 static constexpr float DROPDOWN_BG_R = 0x1E / 255.0f;     // Background #1E1E1E

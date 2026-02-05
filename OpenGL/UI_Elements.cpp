@@ -140,7 +140,9 @@ void UIElements::drawLapTimer(float current_lap_time, float last_lap_time,
     const float window_height = display_size.y * UIElementsConfig::LapTimer::HEIGHT_RATIO;
     
     // Position: top-left, under top menu bar, no spacing
-    ImVec2 window_pos = ImVec2(0, UIConfig::TOP_MENU_HEIGHT);
+    // TOP_MENU_HEIGHT is a ratio, need to multiply by display height
+    const float top_menu_height = UIConfig::TOP_MENU_HEIGHT * display_size.y;
+    ImVec2 window_pos = ImVec2(0, top_menu_height);
     
     ImGui::SetNextWindowPos(window_pos);
     ImGui::SetNextWindowSize(ImVec2(window_width, window_height));
@@ -178,6 +180,8 @@ void UIElements::drawLapTimer(float current_lap_time, float last_lap_time,
                               UIElementsConfig::LapTimer::TIME_COLOR_B, 1.0f);
     
     float current_y = top_spacing;
+    float row_height = 0.0f;      // For vertical alignment
+    float label_offset_y = 0.0f;  // For centering labels
     
     // === LAPTIME (title) ===
     ImGui::SetCursorPos(ImVec2(left_padding, current_y));
@@ -208,14 +212,16 @@ void UIElements::drawLapTimer(float current_lap_time, float last_lap_time,
     current_y += element_spacing;
     
     // === LAST LAP ===
-    ImGui::SetCursorPos(ImVec2(left_padding, current_y));
+    float row_start_y = current_y;
+    
+    // Label
+    ImGui::SetCursorPos(ImVec2(left_padding, row_start_y));
     ImGui::SetWindowFontScale(label_size / ImGui::GetFontSize());
     ImGui::TextColored(label_color, "LAST LAP");
     ImGui::SetWindowFontScale(1.0f);
     
-    // Last lap time
-    ImGui::SameLine();
-    ImGui::SetCursorPosX(left_padding + 100.0f);  // Offset for alignment
+    // Time (aligned to same baseline)
+    ImGui::SetCursorPos(ImVec2(left_padding + window_width * 0.35f, row_start_y));
     ImGui::SetWindowFontScale(time_size / ImGui::GetFontSize());
     
     if (last_lap_time > 0.0f)
@@ -231,20 +237,24 @@ void UIElements::drawLapTimer(float current_lap_time, float last_lap_time,
     }
     ImGui::SetWindowFontScale(1.0f);
     
-    current_y += time_size + element_spacing;
+    current_y += row_height + element_spacing;
     
+	// There not needs to pe a seperator line here, so we just move to the next element
     
-    //current_y += element_spacing;
+    current_y += element_spacing;
     
     // === BEST LAP ===
-    ImGui::SetCursorPos(ImVec2(left_padding, current_y));
+    row_height = time_size;
+    label_offset_y = (row_height - label_size) * 0.5f;
+    
+    // Label (vertically centered)
+    ImGui::SetCursorPos(ImVec2(left_padding, current_y + label_offset_y));
     ImGui::SetWindowFontScale(label_size / ImGui::GetFontSize());
     ImGui::TextColored(label_color, "BEST LAP");
     ImGui::SetWindowFontScale(1.0f);
     
-    // Best lap time
-    ImGui::SameLine();
-    ImGui::SetCursorPosX(left_padding + 100.0f);
+    // Time (baseline aligned)
+    ImGui::SetCursorPos(ImVec2(left_padding + window_width * 0.35f, current_y));
     ImGui::SetWindowFontScale(time_size / ImGui::GetFontSize());
     
     if (best_lap_time > 0.0f && best_lap_time < 999999.0f)
@@ -260,7 +270,7 @@ void UIElements::drawLapTimer(float current_lap_time, float last_lap_time,
     }
     ImGui::SetWindowFontScale(1.0f);
     
-    current_y += time_size + element_spacing;
+    current_y += row_height + element_spacing;
     
     // === Separator line ===
     drawSeparatorLine(window_width * 0.5f, current_y, line_width, display_size.y);
@@ -268,20 +278,23 @@ void UIElements::drawLapTimer(float current_lap_time, float last_lap_time,
     current_y += element_spacing;
     
     // === TIME DIFF ===
-    ImGui::SetCursorPos(ImVec2(left_padding, current_y));
+    row_height = time_size;
+    label_offset_y = (row_height - label_size) * 0.5f;
+    
+    // Label (vertically centered)
+    ImGui::SetCursorPos(ImVec2(left_padding, current_y + label_offset_y));
     ImGui::SetWindowFontScale(label_size / ImGui::GetFontSize());
     ImGui::TextColored(label_color, "TIME DIFF");
     ImGui::SetWindowFontScale(1.0f);
     
-    // Time difference
-    ImGui::SameLine();
-    ImGui::SetCursorPosX(left_padding + 100.0f);
+    // Time difference (baseline aligned)
+    ImGui::SetCursorPos(ImVec2(left_padding + window_width * 0.35f, current_y));
     ImGui::SetWindowFontScale(time_size / ImGui::GetFontSize());
     
     if (time_diff != 0.0f)
     {
         snprintf(time_buffer, sizeof(time_buffer), "%+.3f", time_diff);
-        ImVec4 diff_color = (time_diff < 0.0f) ? ImVec4(240.0f / 255.0f, 240.0f / 255.0f, 240.0f / 255.0f, 1.0f) : ImVec4(240.0f / 255.0f, 240.0f / 255.0f, 240.0f / 255.0f, 1.0f);
+        ImVec4 diff_color = (time_diff < 0.0f) ? ImVec4(0.0f, 1.0f, 0.0f, 1.0f) : ImVec4(1.0f, 0.0f, 0.0f, 1.0f);
         ImGui::TextColored(diff_color, "%s", time_buffer);
     }
     else
@@ -306,8 +319,10 @@ void UIElements::drawSeparatorLine(float center_x, float y_position,
     ImDrawList* draw_list = ImGui::GetWindowDrawList();
     ImVec2 window_pos = ImGui::GetWindowPos();
     
-    float line_start_x = window_pos.x + center_x - line_width * 0.5f;
-    float line_end_x = window_pos.x + center_x + line_width * 0.5f;
+    // Line starts from left padding (40px at 1600x900)
+    float left_padding = (40.0f / 1600.0f) * display_height * (16.0f / 9.0f); // Convert height to width scale
+    float line_start_x = window_pos.x + left_padding;
+    float line_end_x = line_start_x + line_width;
     float line_y = window_pos.y + y_position;
     
     ImU32 line_color = IM_COL32(
