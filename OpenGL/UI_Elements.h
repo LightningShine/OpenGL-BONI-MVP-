@@ -22,9 +22,11 @@ public:
     // Compass
     void drawCompass(float camera_yaw, const MapOrigin& origin);
     
-    // Laptimer
-    void drawLapTimer(float current_lap_time, float last_lap_time, 
-                     float best_lap_time, float time_diff);
+    // Laptimer (with default parameters for empty state)
+    void drawLapTimer(float current_lap_time = 0.0f, 
+                     float last_lap_time = -1.0f,   // -1 means no data
+                     float best_lap_time = -1.0f,   // -1 means no data
+                     float time_diff = 0.0f);
     
     // Setters
     void setFontTitle(ImFont* font) { m_font_title = font; }

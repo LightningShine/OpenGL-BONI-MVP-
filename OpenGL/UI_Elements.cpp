@@ -29,7 +29,7 @@ void UIElements::shutdown()
 }
 
 // ============================================================================
-// COMPASS
+// COMPASS with Fixed Aspect Ratio
 // ============================================================================
 
 void UIElements::drawCompass(float camera_yaw, const MapOrigin& origin)
@@ -40,14 +40,21 @@ void UIElements::drawCompass(float camera_yaw, const MapOrigin& origin)
     ImGuiIO& io = ImGui::GetIO();
     ImVec2 display_size = io.DisplaySize;
     
-    // Calculate compass size based on window size
-    const float compass_width = display_size.x * UIElementsConfig::Compass::WIDTH_RATIO;
-    const float compass_height = display_size.y * UIElementsConfig::Compass::HEIGHT_RATIO;
+    // === FIXED ASPECT RATIO SCALING ===
+    // Original compass texture: 278x246 px
+    static constexpr float COMPASS_TEXTURE_WIDTH = 278.0f;
+    static constexpr float COMPASS_TEXTURE_HEIGHT = 246.0f;
+	static constexpr float COMPASS_ASPECT_RATIO = COMPASS_TEXTURE_WIDTH / COMPASS_TEXTURE_HEIGHT; // ~1.13
+    
+    // Calculate compass size maintaining aspect ratio
+    const float base_size = display_size.y * UIElementsConfig::Compass::HEIGHT_RATIO;
+    const float compass_width = base_size * COMPASS_ASPECT_RATIO;  // Maintain aspect ratio
+    const float compass_height = base_size;
     const float spacing = display_size.x * UIElementsConfig::Compass::SPACING_RATIO;
     
     // Position in bottom-left corner (above bottom menu)
     ImVec2 compass_pos = ImVec2(spacing, 
-                                display_size.y - compass_height - UIConfig::BOTTOM_MENU_HEIGHT - spacing);
+                                display_size.y - compass_height - UIConfig::BOTTOM_MENU_HEIGHT * display_size.y - spacing);
     
     ImGui::SetNextWindowPos(compass_pos);
     ImGui::SetNextWindowSize(ImVec2(compass_width, compass_height));
@@ -80,7 +87,7 @@ void UIElements::drawCompass(float camera_yaw, const MapOrigin& origin)
     const float triangle_height = display_size.y * UIElementsConfig::Compass::TRIANGLE_HEIGHT_RATIO;
     const float arrow_offset_from_top = display_size.y * UIElementsConfig::Compass::ARROW_OFFSET_RATIO;
     
-    // Calculate rotation
+    // Calculate rotation (positive camera_yaw rotates triangle clockwise)
     float rotation_radians = glm::radians(-camera_yaw);
     
     // Distance from center to arrow tip
@@ -196,10 +203,15 @@ void UIElements::drawLapTimer(float current_lap_time, float last_lap_time,
     ImGui::SetWindowFontScale(main_time_size / ImGui::GetFontSize());
     
     // Format current lap time
+    char time_buffer[32];
     int minutes = static_cast<int>(current_lap_time / 60.0f);
     float seconds = fmodf(current_lap_time, 60.0f);
-    char time_buffer[32];
-    snprintf(time_buffer, sizeof(time_buffer), "%02d:%06.3f", minutes, seconds);
+    
+    // Dynamic formatting: "00:39.279" when < 60s, "1:34.150" when >= 60s
+    if (minutes == 0)
+        snprintf(time_buffer, sizeof(time_buffer), "00:%06.3f", seconds);
+    else
+        snprintf(time_buffer, sizeof(time_buffer), "%d:%06.3f", minutes, seconds);
     
     ImGui::TextColored(time_color, "%s", time_buffer);
     ImGui::SetWindowFontScale(1.0f);
@@ -224,16 +236,22 @@ void UIElements::drawLapTimer(float current_lap_time, float last_lap_time,
     ImGui::SetCursorPos(ImVec2(left_padding + window_width * 0.35f, row_start_y));
     ImGui::SetWindowFontScale(time_size / ImGui::GetFontSize());
     
-    if (last_lap_time > 0.0f)
+    if (last_lap_time >= 0.0f)  // Check if data exists (-1 = no data)
     {
         int last_min = static_cast<int>(last_lap_time / 60.0f);
         float last_sec = fmodf(last_lap_time, 60.0f);
-        snprintf(time_buffer, sizeof(time_buffer), "%d:%06.3f", last_min, last_sec);
+        
+        // Dynamic formatting: "00:39.279" when < 60s, "1:34.150" when >= 60s
+        if (last_min == 0)
+            snprintf(time_buffer, sizeof(time_buffer), "00:%06.3f", last_sec);
+        else
+            snprintf(time_buffer, sizeof(time_buffer), "%d:%06.3f", last_min, last_sec);
+            
         ImGui::TextColored(time_color, "%s", time_buffer);
     }
     else
     {
-        ImGui::TextColored(time_color, "--:--:-- ---");
+        ImGui::TextColored(time_color, "--:--:---");
     }
     ImGui::SetWindowFontScale(1.0f);
     
@@ -257,16 +275,22 @@ void UIElements::drawLapTimer(float current_lap_time, float last_lap_time,
     ImGui::SetCursorPos(ImVec2(left_padding + window_width * 0.35f, current_y));
     ImGui::SetWindowFontScale(time_size / ImGui::GetFontSize());
     
-    if (best_lap_time > 0.0f && best_lap_time < 999999.0f)
+    if (best_lap_time >= 0.0f)  // Check if data exists (-1 = no data)
     {
         int best_min = static_cast<int>(best_lap_time / 60.0f);
         float best_sec = fmodf(best_lap_time, 60.0f);
-        snprintf(time_buffer, sizeof(time_buffer), "%d:%06.3f", best_min, best_sec);
+        
+        // Dynamic formatting: "00:39.279" when < 60s, "1:34.150" when >= 60s
+        if (best_min == 0)
+            snprintf(time_buffer, sizeof(time_buffer), "00:%06.3f", best_sec);
+        else
+            snprintf(time_buffer, sizeof(time_buffer), "%d:%06.3f", best_min, best_sec);
+            
         ImGui::TextColored(time_color, "%s", time_buffer);
     }
     else
     {
-        ImGui::TextColored(time_color, "--:--:-- ---");
+        ImGui::TextColored(time_color, "--:--:---");
     }
     ImGui::SetWindowFontScale(1.0f);
     
@@ -294,7 +318,7 @@ void UIElements::drawLapTimer(float current_lap_time, float last_lap_time,
     if (time_diff != 0.0f)
     {
         snprintf(time_buffer, sizeof(time_buffer), "%+.3f", time_diff);
-        ImVec4 diff_color = (time_diff < 0.0f) ? ImVec4(0.0f, 1.0f, 0.0f, 1.0f) : ImVec4(1.0f, 0.0f, 0.0f, 1.0f);
+        ImVec4 diff_color = (time_diff < 0.0f) ? ImVec4(240.0f / 255.0f, 240.0f / 255.0f, 240.0f / 255.0f, 1.0f) : ImVec4(240.0f / 255.0f, 240.0f / 255.0f, 240.0f / 255.0f, 1.0f);
         ImGui::TextColored(diff_color, "%s", time_buffer);
     }
     else

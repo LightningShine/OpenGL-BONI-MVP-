@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include <iostream>
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
@@ -857,8 +857,12 @@ int main()
 			// Render compass
 			ui.getElements()->drawCompass(camera_rotation, g_map_origin);
 			
-			// Render laptimer (demo values for now)
-			ui.getElements()->drawLapTimer(39.279f, 0.0f, 94.150f, -0.534f);
+			// Render laptimer
+			// Option 1: With demo values
+			ui.getElements()->drawLapTimer();
+			
+			// Option 2: Empty state (uncomment to test)
+			// ui.getElements()->drawLapTimer();  // Shows 00:00.000 and dashes
 		}
 		
 		ui.EndFrame();
