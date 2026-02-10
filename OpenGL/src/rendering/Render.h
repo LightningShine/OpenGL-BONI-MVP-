@@ -21,4 +21,12 @@ namespace TrackRenderer
     size_t getBorderVertexCount();
     
     size_t getAsphaltVertexCount();
+    
+    // Start/Finish Line rendering
+    void renderStartFinishLine(GLuint shader_program, const glm::mat4& viewProjection);
+    
+    // Gray line rendering (called AFTER checkered flag to render on top)
+    void renderStartFinishGrayLine(GLuint shader_program);
+    
+    void clearStartFinishLine();
 }
