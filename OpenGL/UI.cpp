@@ -1,4 +1,4 @@
-﻿#include "src/input/Input.h"
+#include "src/input/Input.h"
 #include "UI.h"
 #include "UI_Elements.h"
 #include "src/Config.h"
@@ -13,6 +13,7 @@
 #include <filesystem>
 #include <fstream>
 #include <sstream>
+#include <GeographicLib/UTMUPS.hpp>
 
 #define STB_IMAGE_IMPLEMENTATION
 #include "libraries/include/stb_image.h"
@@ -650,10 +651,33 @@ void UI::RenderMainWindow()
                         std::cout << "[TRACK] Track is CLOSED - recentering to (0, 0)" << std::endl;
                         recenterTrack(*m_points, center_info);
                         
-                        // Update origin to maintain GPS coordinates
-                        g_map_origin.m_origin_lat_dd += center_info.offset.y * (MapConstants::MAP_SIZE / 100000.0);
-                        g_map_origin.m_origin_lon_dd += center_info.offset.x * (MapConstants::MAP_SIZE / 100000.0);
-                        std::cout << "[TRACK] Origin updated to: (" << g_map_origin.m_origin_lat_dd << ", " << g_map_origin.m_origin_lon_dd << ")" << std::endl;
+                        // ✅ ПРАВИЛЬНОЕ ОБНОВЛЕНИЕ ORIGIN (UTM + GPS):
+                        // Точки смещены на offset = -center
+                        // Origin UTM должен сместиться в обратную сторону
+                        g_map_origin.m_origin_meters_easting -= center_info.offset.x * MapConstants::MAP_SIZE;
+                        g_map_origin.m_origin_meters_northing -= center_info.offset.y * MapConstants::MAP_SIZE;
+                        
+                        // Конвертируем новый UTM origin в GPS
+                        try {
+                            using namespace GeographicLib;
+                            UTMUPS::Reverse(
+                                g_map_origin.m_origin_zone_int, 
+                                true,  // northp
+                                g_map_origin.m_origin_meters_easting,
+                                g_map_origin.m_origin_meters_northing,
+                                g_map_origin.m_origin_lat_dd,
+                                g_map_origin.m_origin_lon_dd
+                            );
+                        }
+                        catch (const std::exception& e) {
+                            std::cerr << "[TRACK] GeographicLib Error: " << e.what() << std::endl;
+                        }
+                        
+                        std::cout << "[TRACK] Origin updated:" << std::endl;
+                        std::cout << "  UTM: easting=" << g_map_origin.m_origin_meters_easting 
+                                  << ", northing=" << g_map_origin.m_origin_meters_northing << std::endl;
+                        std::cout << "  GPS: lat=" << g_map_origin.m_origin_lat_dd 
+                                  << ", lon=" << g_map_origin.m_origin_lon_dd << std::endl;
                     }
                     else
                     {
@@ -1118,5 +1142,6 @@ void UI::RenderHelpModal()
     ImGui::PopStyleColor(7);
     ImGui::PopStyleVar(2);
 }
+
 
 

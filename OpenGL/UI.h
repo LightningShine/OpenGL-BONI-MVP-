@@ -32,8 +32,18 @@ public:
     // Access to UI elements
     UIElements* getElements() { return m_ui_elements; }
     
+    // Access to track data
+    std::vector<glm::vec2>* getPoints() { return m_points; }
+    std::mutex* getPointsMutex() { return m_pointsMutex; }
+    
     bool ShouldCloseSplash() const { return m_closeSplash; }
     void CloseSplash() { m_showSplash = false; m_closeSplash = true; }
+    
+    // Start/Finish line text rendering
+    void RenderStartFinishText(const std::vector<glm::vec2>& track_points, 
+                              const glm::mat4& view_matrix, 
+                              const glm::mat4& projection_matrix,
+                              float finish_line_bias = 0.0f);
 
 private:
     GLFWwindow* m_window;
@@ -82,4 +92,10 @@ private:
     bool LoadTextureFromFile(const char* filename, void** out_texture, int* out_width, int* out_height);
     void LoadResources();
     void LoadRecentFiles();
+    
+private:
+    // Helper: Project 3D world position to 2D screen space
+    glm::vec2 ProjectToScreen(const glm::vec3& world_pos, 
+                             const glm::mat4& view, 
+                             const glm::mat4& proj) const;
 };

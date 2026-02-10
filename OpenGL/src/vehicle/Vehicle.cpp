@@ -4,6 +4,7 @@
 #include <cmath>
 #include <iostream>
 #include <thread>
+#include <GeographicLib/UTMUPS.hpp>
 
 // === ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ===
 std::map<int32_t, Vehicle> g_vehicles;
@@ -26,25 +27,41 @@ Vehicle::Vehicle()
         return;
     }
     
-    // ✅ Используем координаты origin трека (первая точка)
-    m_lat_dd = g_map_origin.m_origin_lat_dd;
-    m_lon_dd = g_map_origin.m_origin_lon_dd;
+    // ✅ ИСПРАВЛЕНИЕ: Создаём машину в центре (0,0) после recentering
+    // Не используем GPS координаты origin, так как они не обновляются после recentering
+    m_normalized_x = 0.0;
+    m_normalized_y = 0.0;
+    
+    // Конвертируем обратно в GPS через origin UTM
+    m_meters_easting = g_map_origin.m_origin_meters_easting + (m_normalized_x * MapConstants::MAP_SIZE);
+    m_meters_northing = g_map_origin.m_origin_meters_northing + (m_normalized_y * MapConstants::MAP_SIZE);
+    
+    // Конвертируем UTM в GPS
+    try {
+        using namespace GeographicLib;
+        UTMUPS::Reverse(g_map_origin.m_origin_zone_int, true, 
+                       m_meters_easting, m_meters_northing, 
+                       m_lat_dd, m_lon_dd);
+    }
+    catch (const std::exception& e) {
+        std::cerr << "GeographicLib Error: " << e.what() << std::endl;
+        m_lat_dd = 0;
+        m_lon_dd = 0;
+    }
+    
     m_speed_kph = 0.0;
     m_acceleration = 0.0;
     m_g_force_x = 0.0;
     m_g_force_y = 0.0;
     m_fix_type = 1;
-    m_id = generateVehicleID(); // ✅ Автоматическая генерация ID
-    
-    coordinatesToMeters(m_lat_dd, m_lon_dd, m_meters_easting, m_meters_northing);
-    getCoordinateDifferenceFromOrigin(m_meters_easting, m_meters_northing, m_normalized_x, m_normalized_y);
+    m_id = generateVehicleID();
     
     m_last_update_time = std::chrono::steady_clock::now();
     
     // ✅ Вычисляем цвет ОДИН раз при создании
     m_cached_color = getColor();
     
-    std::cout << "Vehicle #" << m_id << " created at origin: (" << m_lat_dd << ", " << m_lon_dd << ")" << std::endl;
+    std::cout << "Vehicle #" << m_id << " created at center (0, 0), GPS: (" << m_lat_dd << ", " << m_lon_dd << ")" << std::endl;
 }
 
 Vehicle::Vehicle(const TelemetryPacket& packet)
@@ -57,8 +74,16 @@ Vehicle::Vehicle(const TelemetryPacket& packet)
     m_g_force_y = packet.gForceY / 100.0;
     m_fix_type = packet.fixtype;
     m_id = packet.ID;
+    
+    std::cout << "[VEHICLE] Creating vehicle #" << m_id << " from GPS: (" << m_lat_dd << ", " << m_lon_dd << ")" << std::endl;
+    
     coordinatesToMeters(m_lat_dd, m_lon_dd, m_meters_easting, m_meters_northing);
+    
+    std::cout << "[VEHICLE] UTM meters: (" << m_meters_easting << ", " << m_meters_northing << ")" << std::endl;
+    
     getCoordinateDifferenceFromOrigin(m_meters_easting, m_meters_northing, m_normalized_x, m_normalized_y);
+    
+    std::cout << "[VEHICLE] Normalized position: (" << m_normalized_x << ", " << m_normalized_y << ")" << std::endl;
 
     m_last_update_time = std::chrono::steady_clock::now();
     

@@ -843,14 +843,16 @@ int main()
 
 
 
+
 	if (g_is_map_loaded) { 
 		renderAllVehicles(shader_program, vao, vbo, viewProjection_world, camera_position, camera_zoom); 
 	}
 
+
 	// ========================== UI RENDERING ==========================
 		// Render UI AFTER track and vehicles so it's on top
 		ui.Render();
-		
+
 		// Render compass (show after splash, rotates based on camera yaw)
 		if (ui.ShouldCloseSplash() && ui.getElements())
 		{

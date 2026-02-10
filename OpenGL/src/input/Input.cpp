@@ -265,13 +265,22 @@ void coordinatesToMeters(double DDlat, double DDlon, double &MetrCord_est, doubl
 
 void getCoordinateDifferenceFromOrigin(double Metr_est, double Metr_north, double &normalized_x, double &normalized_y)
 {
-
 	double diff_easting = Metr_est - g_map_origin.m_origin_meters_easting;
 	double diff_northing = Metr_north - g_map_origin.m_origin_meters_northing;
 
 	normalized_x = (diff_easting / g_map_origin.m_map_size);
 	normalized_y = (diff_northing / g_map_origin.m_map_size);
-
+	
+	// Debug output (only for vehicles, not track points)
+	static int call_count = 0;
+	call_count++;
+	if (call_count > 100 && call_count < 105) { // Log only vehicles, not track loading
+		std::cout << "[COORD] UTM: (" << Metr_est << ", " << Metr_north << ")" << std::endl;
+		std::cout << "[COORD] Origin UTM: (" << g_map_origin.m_origin_meters_easting << ", " << g_map_origin.m_origin_meters_northing << ")" << std::endl;
+		std::cout << "[COORD] Diff: (" << diff_easting << ", " << diff_northing << ")" << std::endl;
+		std::cout << "[COORD] MAP_SIZE: " << g_map_origin.m_map_size << std::endl;
+		std::cout << "[COORD] Normalized: (" << normalized_x << ", " << normalized_y << ")" << std::endl;
+	}
 }
 
 void inputDataInCode(std::vector<glm::vec2>& points, std::mutex& points_mutex, std::atomic<bool>& running, double &normalized_x, double &normalized_y)
