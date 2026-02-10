@@ -2,9 +2,11 @@
 #include "src/ui/UI_Elements_Config.h"
 #include "src/ui/UI_Config.h"
 #include "src/input/Input.h"
+#include "src/rendering/Interpolation.h"  // For SplinePoint
 #include <cmath>
 #include <glm/glm.hpp>
 #include <glm/gtc/constants.hpp>
+#include <glm/gtc/matrix_transform.hpp>  // For glm::ortho, glm::translate
 #include "libraries/include/imgui/imgui.h"
 
 UIElements::UIElements()
@@ -362,4 +364,135 @@ void UIElements::drawSeparatorLine(float center_x, float y_position,
         line_color,
         UIElementsConfig::LapTimer::LINE_THICKNESS
     );
+}
+
+// ============================================================================
+// START/FINISH TEXT (Fixed Parallax with Proper MVP Transformation)
+// ============================================================================
+
+void UIElements::RenderStartFinishText(float camera_zoom, const glm::vec2& camera_pos, 
+                                       float window_width, float window_height)
+{
+    // Require smooth track points (defined externally in main.cpp)
+    extern std::vector<SplinePoint> g_smooth_track_points;
+    extern std::atomic<bool> g_is_map_loaded;
+    
+    if (!g_is_map_loaded || g_smooth_track_points.empty())
+        return;
+    
+    // ========================================================================
+    // LEVEL OF DETAIL: Don't render if too zoomed out
+    // ========================================================================
+    const float BASE_FONT_SIZE = 24.0f;
+    float fontSize = BASE_FONT_SIZE * camera_zoom;
+    
+    // Clamp font size between 10px (min readable) and 100px (max)
+    fontSize = glm::clamp(fontSize, 10.0f, 100.0f);
+    
+    // LOD: Skip rendering if text would be < 8px (unreadable)
+    if (fontSize < 8.0f)
+        return;
+    
+    // ========================================================================
+    // PROPER MVP TRANSFORMATION (CRITICAL FIX)
+    // ========================================================================
+    const SplinePoint& firstPoint = g_smooth_track_points[0];
+    glm::vec3 worldPos(firstPoint.position.x, firstPoint.position.y, 0.0f);
+    
+    // Build MVP matrix (same as rendering pipeline)
+    // 1. Projection (orthographic)
+    float aspectRatio = window_width / window_height;
+    float horizontalBound, verticalBound;
+    
+    if (aspectRatio >= 1.0f) {
+        horizontalBound = 1.0f * aspectRatio;
+        verticalBound = 1.0f;
+    } else {
+        horizontalBound = 1.0f;
+        verticalBound = 1.0f / aspectRatio;
+    }
+    
+    float zoomedHorizontal = horizontalBound / camera_zoom;
+    float zoomedVertical = verticalBound / camera_zoom;
+    
+    glm::mat4 projection = glm::ortho(
+        -zoomedHorizontal,  // left
+        zoomedHorizontal,   // right
+        -zoomedVertical,    // bottom
+        zoomedVertical,     // top
+        -1.0f, 1.0f
+    );
+    
+    // 2. View (camera transform)
+    glm::mat4 view = glm::mat4(1.0f);
+    view = glm::translate(view, glm::vec3(-camera_pos.x, -camera_pos.y, 0.0f));
+    
+    // 3. Combined MVP
+    glm::mat4 mvp = projection * view;
+    
+    // Transform world position to clip space
+    glm::vec4 clipSpace = mvp * glm::vec4(worldPos, 1.0f);
+    
+    // Perspective divide (for orthographic, w=1.0, but still correct)
+    if (clipSpace.w <= 0.0f)
+        return;  // Behind camera (shouldn't happen in ortho, but safety check)
+    
+    glm::vec3 ndc = glm::vec3(clipSpace) / clipSpace.w;
+    
+    // Convert NDC [-1, 1] to screen pixels [0, window_size]
+    float pixelX = (ndc.x + 1.0f) * 0.5f * window_width;
+    float pixelY = (1.0f - ndc.y) * 0.5f * window_height;  // Correct Y inversion
+    
+    // ========================================================================
+    // FRUSTUM CULLING: Don't render if off-screen (with margin)
+    // ========================================================================
+    const float MARGIN = 200.0f;
+    if (pixelX < -MARGIN || pixelX > window_width + MARGIN ||
+        pixelY < -MARGIN || pixelY > window_height + MARGIN)
+        return;
+    
+    // ========================================================================
+    // RENDER TEXT (Properly Centered)
+    // ========================================================================
+    
+    // Create transparent background window (renders first, behind menus)
+    ImGui::SetNextWindowPos(ImVec2(0, 0));
+    ImGui::SetNextWindowSize(ImVec2(window_width, window_height));
+    ImGui::SetNextWindowBgAlpha(0.0f);  // Fully transparent
+    
+    ImGui::Begin("##WorldTextLayer", nullptr,
+        ImGuiWindowFlags_NoTitleBar |
+        ImGuiWindowFlags_NoResize |
+        ImGuiWindowFlags_NoMove |
+        ImGuiWindowFlags_NoScrollbar |
+        ImGuiWindowFlags_NoInputs |
+        ImGuiWindowFlags_NoBringToFrontOnFocus |
+        ImGuiWindowFlags_NoSavedSettings);
+    
+    ImDrawList* drawList = ImGui::GetWindowDrawList();
+    
+    // Use title font if available, otherwise default font
+    ImFont* font = m_font_title ? m_font_title : ImGui::GetFont();
+    
+    const char* text = "START / FINISH";
+    ImVec2 textSize = font->CalcTextSizeA(fontSize, FLT_MAX, 0.0f, text);
+    
+    // **CRITICAL FIX**: Center text around anchor point
+    ImVec2 finalPos(
+        pixelX - textSize.x * 0.5f,  // Horizontal center
+        pixelY - textSize.y - 15.0f  // Above line
+    );
+    
+    // Drop shadow (2px offset, semi-transparent black)
+    drawList->AddText(font, fontSize, 
+                     ImVec2(finalPos.x + 2, finalPos.y + 2),
+                     IM_COL32(0, 0, 0, 200),
+                     text);
+    
+    // Main text (white, fully opaque)
+    drawList->AddText(font, fontSize, finalPos,
+                     IM_COL32(255, 255, 255, 255),
+                     text);
+    
+    ImGui::End();
 }

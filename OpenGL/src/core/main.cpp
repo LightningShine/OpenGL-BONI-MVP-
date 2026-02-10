@@ -288,24 +288,39 @@ void drop_callback(GLFWwindow* window, int count, const char** paths)
 const char* vertexShaderSource = R"(
     #version 460 core
     layout (location = 0) in vec2 aPos;
+    layout (location = 1) in vec2 aTexCoord;  // UV coordinates for checkered pattern
     
     uniform mat4 projection;
     
+    out vec2 vTexCoord;  // Pass to fragment shader
+    
     void main()
     {
-        gl_Position = projection * vec4(aPos.x, aPos.y, 0.0, 1.0); 
+        gl_Position = projection * vec4(aPos.x, aPos.y, 0.0, 1.0);
+        vTexCoord = aTexCoord;  // Forward UVs
     }
 )";
 
 const char* fragmentShaderSource = R"(
     #version 460 core
     out vec4 FragColor;
+    
     uniform vec3 uColor;
     uniform float uAlpha;
+    uniform bool uCheckered;  // Enable procedural checkered pattern
+    
+    in vec2 vTexCoord;  // UV coordinates from vertex shader
     
     void main()
     {
-        FragColor = vec4(uColor, uAlpha); 
+        if (uCheckered) {
+            // Procedural checkered pattern (4 squares wide, 1 tall)
+            vec2 uv_scaled = vTexCoord * vec2(4.0, 1.0);
+            float check = mod(floor(uv_scaled.x) + floor(uv_scaled.y), 2.0);
+            FragColor = vec4(vec3(check), 1.0);  // Black (0) and White (1)
+        } else {
+            FragColor = vec4(uColor, uAlpha);
+        }
     }
 )";
 
@@ -839,6 +854,17 @@ int main()
 	glUseProgram(shader_program);
 	glUniformMatrix4fv(projLoc, 1, GL_FALSE, glm::value_ptr(viewProjection_world));
 	TrackRenderer::renderCachedTrack(shader_program);
+	
+	// Render Start/Finish Line (OpenGL checkered pattern)
+	// Optimized: Geometry generated ONCE per track load, renders from GPU cache
+	TrackRenderer::renderStartFinishLine(shader_program, viewProjection_world);
+	
+	// Render gray line ON TOP of checkered flag (correct render order)
+	glUseProgram(shader_program);
+	glUniformMatrix4fv(projLoc, 1, GL_FALSE, glm::value_ptr(viewProjection_world));
+	TrackRenderer::renderStartFinishGrayLine(shader_program);
+
+
 
 
 
@@ -848,6 +874,17 @@ int main()
 	}
 
 	// ========================== UI RENDERING ==========================
+		// Render Start/Finish Text FIRST (behind UI windows)
+		// REMOVED: Text rendering - user requested removal
+		/*
+		if (ui.ShouldCloseSplash() && ui.getElements())
+		{
+			ui.getElements()->RenderStartFinishText(camera_zoom, camera_position, 
+			                                       static_cast<float>(windowswidth), 
+			                                       static_cast<float>(windowsheight));
+		}
+		*/
+		
 		// Render UI AFTER track and vehicles so it's on top
 		ui.Render();
 		

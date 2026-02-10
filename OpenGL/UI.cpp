@@ -21,6 +21,12 @@
 #include "libraries/include/imgui/backends/imgui_impl_glfw.h"
 #include "libraries/include/imgui/backends/imgui_impl_opengl3.h"
 
+// Windows API for native file dialogs (include AFTER C++ standard library)
+#define NOMINMAX  // Prevent Windows.h from defining min/max macros
+#define GLFW_EXPOSE_NATIVE_WIN32
+#include <GLFW/glfw3native.h>
+#include <commdlg.h>  // For GetOpenFileNameA
+
 static void AddDashedRect(ImDrawList* draw_list, const ImVec2& p_min, const ImVec2& p_max, ImU32 col, float thickness, float dash_len, float gap_len)
 {
     // Top
@@ -824,7 +830,77 @@ void UI::RenderTopMenu()
         if (ImGui::BeginMenu("File"))
         {
             if (ImGui::MenuItem("New", "Ctrl+N", false, false)) {}
-            if (ImGui::MenuItem("Open...", "Ctrl+O", false, false)) {}
+            
+            if (ImGui::MenuItem("Open...", "Ctrl+O"))
+            {
+                // Open native Windows file dialog in Saves folder
+                std::cout << "[UI] Opening file dialog in Saves folder..." << std::endl;
+                
+                OPENFILENAMEA ofn = {};
+                char szFile[260] = {0};
+                
+                ofn.lStructSize = sizeof(ofn);
+                ofn.hwndOwner = glfwGetWin32Window(m_window);
+                ofn.lpstrFile = szFile;
+                ofn.nMaxFile = sizeof(szFile);
+                ofn.lpstrFilter = "GPX Files\0*.gpx\0All Files\0*.*\0";
+                ofn.nFilterIndex = 1;
+                ofn.lpstrFileTitle = NULL;
+                ofn.nMaxFileTitle = 0;
+                
+                // Set initial directory to Saves folder
+                std::string savesPath = "Saves";
+                ofn.lpstrInitialDir = savesPath.c_str();
+                
+                ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
+                
+                if (GetOpenFileNameA(&ofn))
+                {
+                    std::cout << "[UI] Selected file: " << ofn.lpstrFile << std::endl;
+                    
+                    // Load the selected file
+                    if (m_points && m_pointsMutex)
+                    {
+                        std::ifstream file(ofn.lpstrFile);
+                        if (file.is_open())
+                        {
+                            std::stringstream buffer;
+                            buffer << file.rdbuf();
+                            loadTrackFromData(buffer.str(), *m_points, *m_pointsMutex);
+                            
+                            // Recenter track to (0, 0) if closed
+                            {
+                                std::lock_guard<std::mutex> lock(*m_pointsMutex);
+                                TrackCenterInfo center_info = calculateTrackCenter(*m_points);
+                                
+                                if (center_info.is_closed)
+                                {
+                                    std::cout << "[TRACK] Track is CLOSED - recentering to (0, 0)" << std::endl;
+                                    recenterTrack(*m_points, center_info);
+                                    
+                                    g_map_origin.m_origin_lat_dd += center_info.offset.y * (MapConstants::MAP_SIZE / 100000.0);
+                                    g_map_origin.m_origin_lon_dd += center_info.offset.x * (MapConstants::MAP_SIZE / 100000.0);
+                                    std::cout << "[TRACK] Origin updated to: (" << g_map_origin.m_origin_lat_dd << ", " << g_map_origin.m_origin_lon_dd << ")" << std::endl;
+                                }
+                                else
+                                {
+                                    std::cout << "[TRACK] Track is OPEN - keeping original position" << std::endl;
+                                }
+                            }
+                            
+                            TrackRenderer::rebuildTrackCache(*m_points, *m_pointsMutex);
+                            
+                            m_showSplash = false;
+                            m_closeSplash = true;
+                        }
+                        else
+                        {
+                            std::cerr << "[UI] Failed to open file: " << ofn.lpstrFile << std::endl;
+                        }
+                    }
+                }
+            }
+            
             if (ImGui::MenuItem("Save", "Ctrl+S", false, false)) {}
             if (ImGui::MenuItem("Save As...", "Shift+Ctrl+S", false, false)) {}
             ImGui::Separator();
