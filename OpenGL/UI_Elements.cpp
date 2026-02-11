@@ -3,6 +3,7 @@
 #include "src/ui/UI_Config.h"
 #include "src/input/Input.h"
 #include "src/rendering/Interpolation.h"  // For SplinePoint
+#include "src/racing/RaceManager.h"  // For RaceManager and VehicleStanding
 #include <cmath>
 #include <glm/glm.hpp>
 #include <glm/gtc/constants.hpp>

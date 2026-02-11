@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include <iostream>
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
@@ -31,6 +31,7 @@
 #include "../network/Client.h"
 #include "../network/ESP32_Code.h"
 #include "../vehicle/Vehicle.h"
+#include "../racing/RaceManager.h"
 
 
 using namespace std;
@@ -113,17 +114,19 @@ const std::vector<SplinePoint>* smooth_track = nullptr)
 		} else if (smooth_track->empty()) {
 			std::cout << "Cannot create vehicle - track not interpolated!" << std::endl;
 		} else {
-			// Create vehicle at origin
-			Vehicle new_vehicle;
-			int vehicle_id = new_vehicle.m_id;
+			// Create vehicle at START / FINISH line (first point of track)
+			const SplinePoint& start_point = (*smooth_track)[0];
 			
+			// ✅ Используем новый конструктор с начальной позицией
+			Vehicle new_vehicle(start_point.position.x, start_point.position.y);
+
+			int vehicle_id = new_vehicle.m_id;
+
 			{
 				std::lock_guard<std::mutex> lock(g_vehicles_mutex);
 				g_vehicles[vehicle_id] = new_vehicle;
 			}
-			
-			std::cout << "Vehicle #" << vehicle_id << " created - starting simulation" << std::endl;
-			
+
 			// Start automatic simulation along track
 			simulateVehicleMovement(vehicle_id, *smooth_track);
 		}
@@ -221,6 +224,38 @@ const std::vector<SplinePoint>* smooth_track = nullptr)
 	if (glfwGetKey(window, GLFW_KEY_F11) == GLFW_RELEASE)
 	{
 		was_f11_pressed = false;
+	}
+	
+	// Ctrl+P - Save race results to file
+	static bool was_ctrl_p_pressed = false;
+	if (glfwGetKey(window, GLFW_KEY_LEFT_CONTROL) == GLFW_PRESS || 
+	    glfwGetKey(window, GLFW_KEY_RIGHT_CONTROL) == GLFW_PRESS)
+	{
+		if (glfwGetKey(window, GLFW_KEY_P) == GLFW_PRESS && !was_ctrl_p_pressed)
+		{
+			was_ctrl_p_pressed = true;
+			
+			extern RaceManager* g_race_manager;
+			if (g_race_manager)
+			{
+				if (g_race_manager->SaveResultsToFile())
+				{
+					std::cout << "[INPUT] Race results saved successfully (Ctrl+P)" << std::endl;
+				}
+				else
+				{
+					std::cout << "[INPUT] Failed to save race results" << std::endl;
+				}
+			}
+			else
+			{
+				std::cout << "[INPUT] RaceManager not initialized" << std::endl;
+			}
+		}
+	}
+	else
+	{
+		was_ctrl_p_pressed = false;
 	}
 }
 
@@ -698,9 +733,14 @@ int main()
 
 	// ========================== VEHICLE SYSTEM INITIALIZATION ==========================
 	
+	
 	std::thread vehicleThread(vehicleLoop);
 	vehicleThread.detach();
 	std::cout << "vehicleLoop thread started" << std::endl;
+	
+	// ========================== RACE MANAGER INITIALIZATION ==========================
+	g_race_manager = new RaceManager();
+	std::cout << "[MAIN] Race Manager initialized" << std::endl;
 
 
 
@@ -769,9 +809,23 @@ int main()
 	std::cout << "Grid VAO/VBO created (VAO: " << grid_vao << ", VBO: " << grid_vbo << ")" << std::endl;
 
 	// ========================== RENDER LOOP ==========================
+	
+	// Delta time calculation for physics-accurate timing
+	auto lastFrameTime = std::chrono::steady_clock::now();
 
 	while (!glfwWindowShouldClose(window)) // Main loop that runs until the window is closed
 	{
+		// Calculate delta time
+		auto currentFrameTime = std::chrono::steady_clock::now();
+		float deltaTime = std::chrono::duration<float>(currentFrameTime - lastFrameTime).count();
+		lastFrameTime = currentFrameTime;
+		
+		// Update Race Manager (lap timing logic)
+		if (g_race_manager)
+		{
+			g_race_manager->Update(deltaTime);
+		}
+		
 		ui.BeginFrame();
 
 		processInput(window, camera_position, camera_zoom, camera_rotation, camera_move_speed, &g_smooth_track_points);
@@ -915,6 +969,15 @@ int main()
 	
 
 	// ========================== CLEAN UP ==========================
+	
+	// Clean up Race Manager
+	if (g_race_manager)
+	{
+		delete g_race_manager;
+		g_race_manager = nullptr;
+		std::cout << "[MAIN] Race Manager destroyed" << std::endl;
+	}
+	
 	ui.Shutdown();
 
 #if NETWORKING_ENABLED

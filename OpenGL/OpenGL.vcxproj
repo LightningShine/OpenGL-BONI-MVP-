@@ -230,6 +230,7 @@
     <ClCompile Include="src\input\Input.cpp" />
     <ClCompile Include="src\network\ESP32_Code.cpp" />
     <ClCompile Include="src\network\Server.cpp" />
+    <ClCompile Include="src\racing\RaceManager.cpp" />
     <ClCompile Include="src\rendering\Interpolation.cpp" />
     <ClCompile Include="src\rendering\Render.cpp" />
     <ClCompile Include="src\vehicle\Vehicle.cpp" />
@@ -252,6 +253,7 @@
     <ClInclude Include="src\network\Client.h" />
     <ClInclude Include="src\network\ESP32_Code.h" />
     <ClInclude Include="src\network\Server.h" />
+    <ClInclude Include="src\racing\RaceManager.h" />
     <ClInclude Include="src\rendering\Interpolation.h" />
     <ClInclude Include="src\rendering\Render.h" />
     <ClInclude Include="src\ui\UI_Config.h" />

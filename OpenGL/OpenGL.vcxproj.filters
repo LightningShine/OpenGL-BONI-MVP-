@@ -78,6 +78,7 @@
     </ClCompile>
     <ClCompile Include="src\rendering\Render.cpp" />
     <ClCompile Include="UI_Elements.cpp" />
+    <ClCompile Include="src\racing\RaceManager.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\input\Input.h">
@@ -110,6 +111,7 @@
     <ClInclude Include="src\ui\UI_Config.h" />
     <ClInclude Include="src\ui\UI_Elements_Config.h" />
     <ClInclude Include="UI_Elements.h" />
+    <ClInclude Include="src\racing\RaceManager.h" />
   </ItemGroup>
   <ItemGroup>
     <Text Include="RESTRUCTURE_SUMMARY.txt" />

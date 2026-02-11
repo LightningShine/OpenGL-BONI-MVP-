@@ -3,6 +3,7 @@
 #include "../Config.h"
 #include "../vehicle/Vehicle.h"
 #include "../input/Input.h"  //  g_is_map_loaded
+#include "../racing/RaceManager.h"  // For RaceManager
 #include <iostream>
 
 // ============================================================================
@@ -10,6 +11,7 @@
 // ============================================================================
 extern std::atomic<bool> g_is_map_loaded;       // ?? Input.cpp
 extern std::vector<SplinePoint> g_smooth_track_points;  // ?? main.cpp
+extern RaceManager* g_race_manager;  // From main.cpp
 
 namespace TrackRenderer
 {
@@ -250,6 +252,18 @@ namespace TrackRenderer
             s_start_line_initialized = true;
             std::cout << "[START/FINISH] ✓ Line initialized at (" << startPos.x << ", " << startPos.y << ")" << std::endl;
             std::cout << "[START/FINISH]   Dimensions: width=" << lineWidth << ", length=" << lineLength << std::endl;
+            
+            // ========================================================================
+            // SET RACE MANAGER START/FINISH LINE (for lap timing)
+            // The line is perpendicular to the track direction at the first point
+            // P1 = left edge, P2 = right edge (from track perspective)
+            // ========================================================================
+            if (g_race_manager)
+            {
+                glm::vec2 lineP1 = startPos - perpendicular * (lineWidth / 2.0f);
+                glm::vec2 lineP2 = startPos + perpendicular * (lineWidth / 2.0f);
+                g_race_manager->SetStartFinishLine(lineP1, lineP2);
+            }
             
             // ========================================================================
             // Create gray start/finish line with rounded caps

@@ -1204,6 +1204,22 @@ void UI::RenderHelpModal()
         ImGui::NextColumn();
         
         ImGui::Columns(1);
+        ImGui::Spacing();
+        ImGui::Spacing();
+        
+        ImGui::TextColored(ImVec4(0.5f, 0.8f, 1.0f, 1.0f), "Race Results:");
+        ImGui::Separator();
+        ImGui::Spacing();
+        
+        ImGui::Columns(2, nullptr, false);
+        ImGui::SetColumnWidth(0, 250.0f / 1600.0f * display_size.x);
+        
+        ImGui::Text("Ctrl + P");
+        ImGui::NextColumn();
+        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Save race results to file");
+        ImGui::NextColumn();
+        
+        ImGui::Columns(1);
         
         ImGui::PopFont();
     }
