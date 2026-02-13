@@ -248,7 +248,7 @@ void renderVehicle(GLuint shader_program, GLuint vao, GLuint vbo,
     const std::vector<glm::vec2>& outlineShape = vehicle.m_is_leader ? triangleOutline : circleOutline;
     const std::vector<glm::vec2>& bodyShape = vehicle.m_is_leader ? triangleBody : circleBody;
 
-    // ✅ ВЫЧИСЛЯЕМ УГОЛ ПОВОРОТА для треугольника лидера
+    // ✅ ВЫЧИСЛЯЕМ УГОЛ ПОВОРОТА для треугольника лидера (САМЫЙ ПЕРВЫЙ АЛГОРИТМ - без сглаживания)
     float rotationAngle = 0.0f;
     if (vehicle.m_is_leader)
     {
@@ -261,38 +261,10 @@ void renderVehicle(GLuint shader_program, GLuint vao, GLuint vbo,
         float length = glm::length(direction);
         if (length > 0.0001f) // Проверяем что машина движется
         {
-            // Вычисляем целевой угол поворота (в радианах)
+            // ✅ ПРЯМОЕ ВЫЧИСЛЕНИЕ УГЛА (без сглаживания - самый первый алгоритм)
             // atan2 возвращает угол от оси X
             // Вычитаем PI/2 потому что треугольник по умолчанию смотрит вверх (ось Y)
-            float targetAngle = std::atan2(direction.y, direction.x) - glm::half_pi<float>();
-            
-            // ✅ ЭКСПОНЕНЦИАЛЬНОЕ СГЛАЖИВАНИЕ для плавного поворота
-            // Это устраняет "виляние" треугольника
-            const float smoothingFactor = 0.3f; // 0.0 = мгновенный поворот, 1.0 = медленный поворот
-            
-            // Обрабатываем переход через границу -π/π
-            float angleDiff = targetAngle - vehicle.m_smoothed_rotation;
-            if (angleDiff > glm::pi<float>())
-                angleDiff -= glm::two_pi<float>();
-            else if (angleDiff < -glm::pi<float>())
-                angleDiff += glm::two_pi<float>();
-            
-            // Применяем сглаживание
-            float& smoothedAngle = const_cast<float&>(vehicle.m_smoothed_rotation);
-            smoothedAngle += angleDiff * smoothingFactor;
-            
-            // Нормализуем угол в диапазон [-π, π]
-            if (smoothedAngle > glm::pi<float>())
-                smoothedAngle -= glm::two_pi<float>();
-            else if (smoothedAngle < -glm::pi<float>())
-                smoothedAngle += glm::two_pi<float>();
-            
-            rotationAngle = vehicle.m_smoothed_rotation;
-        }
-        else
-        {
-            // Машина не движется - используем предыдущий угол
-            rotationAngle = vehicle.m_smoothed_rotation;
+            rotationAngle = std::atan2(direction.y, direction.x) - glm::half_pi<float>();
         }
     }
 

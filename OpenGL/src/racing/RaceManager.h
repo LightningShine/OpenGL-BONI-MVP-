@@ -24,8 +24,8 @@ struct VehicleStanding
     
     VehicleStanding() 
         : vehicleID(0), completedLaps(0), currentLapTime(0.0f), 
-          bestLapTime(999999.0f), totalRaceTime(0.0f), distanceFromStart(0.0), 
-          position(0), isLapped(false), hasStartedFirstLap(false) {}
+          bestLapTime(-1.0f), totalRaceTime(0.0f), distanceFromStart(0.0), 
+          position(0), isLapped(false), hasStartedFirstLap(false) {}  // -1 = no data yet
 };
 
 // ============================================================================
@@ -91,7 +91,7 @@ private:
         VehicleTimingData() 
             : currentLapTimer(0.0f), currentLapNumber(RaceConstants::LAP_START_NUMBER), completedLaps(0),
               hasStartedFirstLap(false), prevX(0.0), prevY(0.0), 
-              bestLapTime(999999.0f), isInitialized(false), prevProgress(0.0) {}
+              bestLapTime(-1.0f), isInitialized(false), prevProgress(0.0) {}  // -1 = no data yet
     };
     
     std::map<int32_t, VehicleTimingData> m_vehicleTimings;  // Per-vehicle timing data

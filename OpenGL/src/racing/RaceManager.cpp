@@ -116,8 +116,11 @@ void RaceManager::Update(float deltaTime)
                 // If ratio = 0.3, the crossing happened 30% through this frame
                 float crossingTime = timing.currentLapTimer + (deltaTime * intersectionRatio);
                 
-                // ? ?????? ?????? ????? (?? ?????? ???????????)
-                if (crossingTime > 1.0f)  // ??????? 1 ??????? ??? ????????? ?????
+                // ✅ Записываем круг если он валидный (больше минимального времени)
+                // ВАЖНО: Используем 0.1s как минимум (защита от ложных пересечений на старте)
+                const float MIN_VALID_LAP_TIME = 0.1f;  // 100ms минимум
+                
+                if (crossingTime > MIN_VALID_LAP_TIME)
                 {
                     // Store completed lap
                     LapData lapData(crossingTime, 0);  // Position calculated later
@@ -125,7 +128,7 @@ void RaceManager::Update(float deltaTime)
                     timing.completedLaps++;
                     
                     // Update best lap time
-                    if (crossingTime < timing.bestLapTime)
+                    if (crossingTime < timing.bestLapTime || timing.bestLapTime < 0.0f)
                     {
                         timing.bestLapTime = crossingTime;
                     }
@@ -176,11 +179,13 @@ void RaceManager::Update(float deltaTime)
                     timing.hasStartedFirstLap = true;
                     timing.currentLapTimer = deltaTime * (1.0f - intersectionRatio);  // Start timer at crossing point
                     
-                    // ? ?????????????? prevProgress ????? ???????? ??????? ?????????????? ?????
+                    // ✅ Инициализируем prevProgress чтобы избежать ложного циклического сброса
                     timing.prevProgress = vehicle.m_track_progress;
                     
+                    // ✅ Универсальное сообщение учитывающее LAP_START_NUMBER
                     std::cout << "[RACE MANAGER] Vehicle #" << vehicleID 
-                              << " started first lap (offset: " << timing.currentLapTimer << "s)" << std::endl;
+                              << " crossed start/finish line, starting Lap " << timing.currentLapNumber 
+                              << " (offset: " << timing.currentLapTimer << "s)" << std::endl;
                 }
                 else
                 {
@@ -326,7 +331,11 @@ std::vector<VehicleStanding> RaceManager::GetStandingsInternal() const
             const VehicleTimingData& timing = it->second;
             standing.completedLaps = timing.completedLaps;
             standing.currentLapTime = timing.currentLapTimer;
-            standing.bestLapTime = timing.bestLapTime;
+            
+            // ✅ Best lap логика зависит от LAP_START_NUMBER
+            int minCompletedLaps = (RaceConstants::LAP_START_NUMBER == 0) ? 1 : 2;
+            standing.bestLapTime = (timing.completedLaps >= minCompletedLaps) ? timing.bestLapTime : -1.0f;
+            
             standing.hasStartedFirstLap = timing.hasStartedFirstLap; // ?
             
             // Calculate total race time (sum of all completed laps ONLY)
@@ -341,7 +350,7 @@ std::vector<VehicleStanding> RaceManager::GetStandingsInternal() const
         {
             standing.completedLaps = 0;
             standing.currentLapTime = 0.0f;
-            standing.bestLapTime = 999999.0f;
+            standing.bestLapTime = -1.0f;  // -1 = no data yet
             standing.totalRaceTime = 0.0f;
             standing.hasStartedFirstLap = false; // ?
         }
@@ -459,9 +468,26 @@ float RaceManager::GetVehicleBestLapTime(int32_t vehicleID) const
 {
     auto it = m_vehicleTimings.find(vehicleID);
     if (it != m_vehicleTimings.end())
+    {
+        // ✅ Логика отображения Best Lap зависит от LAP_START_NUMBER:
+        // 
+        // LAP_START_NUMBER = 0:
+        //   После 1 круга: last = Lap 0, best = Lap 0 (показываем)
+        //   После 2 кругов: last = Lap 1, best = лучший из 0 и 1
+        // 
+        // LAP_START_NUMBER = 1:
+        //   После 1 круга: last = Lap 1, best = черточки (нет с чем сравнивать)
+        //   После 2 кругов: last = Lap 2, best = лучший из 1 и 2
+        
+        int minCompletedLaps = (RaceConstants::LAP_START_NUMBER == 0) ? 1 : 2;
+        
+        if (it->second.completedLaps < minCompletedLaps)
+            return -1.0f;  // Показываем черточки
+        
         return it->second.bestLapTime;
+    }
     
-    return 999999.0f;
+    return -1.0f;  // -1 = no data yet
 }
 
 // ============================================================================
@@ -473,8 +499,14 @@ float RaceManager::GetVehiclePreviousLapTime(int32_t vehicleID) const
     if (it != m_vehicleTimings.end())
     {
         const auto& timing = it->second;
-        // Предыдущий круг = текущий номер - 1
+        
+        // ✅ Предыдущий круг = текущий номер - 1
+        // Проверяем что предыдущий круг существует (не уходим в отрицательные)
         int previousLapNumber = timing.currentLapNumber - 1;
+        
+        // Защита: не ищем круги с номером меньше LAP_START_NUMBER
+        if (previousLapNumber < RaceConstants::LAP_START_NUMBER)
+            return -1.0f;  // Нет предыдущего круга
         
         auto lapIt = timing.laps.find(previousLapNumber);
         if (lapIt != timing.laps.end())
@@ -517,7 +549,7 @@ float RaceManager::GetVehicleDeltaTime(int32_t vehicleID) const
         }
         
         // Если нет данных для сравнения, возвращаем 0
-        if (compareTime < 0.0f || compareTime > 999000.0f)
+        if (compareTime < 0.0f)
             return 0.0f;
         
         // Разница: текущее время - эталонное время
