@@ -61,6 +61,11 @@ public:
     int GetVehicleCompletedLaps(int32_t vehicleID) const;
     float GetVehicleBestLapTime(int32_t vehicleID) const;
     
+    // ? NEW: Lap Timer Data (??? ??????????? ? UI)
+    float GetVehiclePreviousLapTime(int32_t vehicleID) const;       // ????? ??????????? ?????
+    float GetVehicleDeltaTime(int32_t vehicleID) const;             // ??????? ? ????????? ?????? (????????????? ? Config)
+    int GetVehicleCurrentLapNumber(int32_t vehicleID) const;        // ????? ???????? ?????
+    
     // ========================================================================
     // DIAGNOSTICS
     // ========================================================================
@@ -84,7 +89,7 @@ private:
         double prevProgress;                     // ? Previous track progress (for cycle detection)
         
         VehicleTimingData() 
-            : currentLapTimer(0.0f), currentLapNumber(1), completedLaps(0),
+            : currentLapTimer(0.0f), currentLapNumber(RaceConstants::LAP_START_NUMBER), completedLaps(0),
               hasStartedFirstLap(false), prevX(0.0), prevY(0.0), 
               bestLapTime(999999.0f), isInitialized(false), prevProgress(0.0) {}
     };

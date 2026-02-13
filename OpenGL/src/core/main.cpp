@@ -257,6 +257,69 @@ const std::vector<SplinePoint>* smooth_track = nullptr)
 	{
 		was_ctrl_p_pressed = false;
 	}
+
+	static bool wasPPressed = false;
+	static bool isWaitingForVehicleId = false;
+	static double focusInputStartTime = 0.0;
+	static const double FOCUS_INPUT_TIMEOUT = 10.0; // 10 seconds
+
+	// P key: Toggle focus mode or reset focus
+	if (glfwGetKey(window, GLFW_KEY_P) == GLFW_PRESS && !wasPPressed)
+	{
+		wasPPressed = true;
+
+		if (isWaitingForVehicleId) {
+			// Cancel input mode
+			isWaitingForVehicleId = false;
+			std::cout << "[FOCUS] Vehicle selection cancelled" << std::endl;
+		}
+		else if (g_focused_vehicle_id != -1) {
+			// Reset to leader
+			g_focused_vehicle_id = -1;
+			std::cout << "[FOCUS] Reset to leader tracking" << std::endl;
+		}
+		else {
+			// Start input mode
+			isWaitingForVehicleId = true;
+			focusInputStartTime = glfwGetTime();
+			std::cout << "[FOCUS] Enter vehicle ID (1-9) within 10 seconds..." << std::endl;
+		}
+	}
+	if (glfwGetKey(window, GLFW_KEY_P) == GLFW_RELEASE)
+	{
+		wasPPressed = false;
+	}
+
+	// Handle vehicle ID input (1-9)
+	if (isWaitingForVehicleId)
+	{
+		double currentTime = glfwGetTime();
+		if (currentTime - focusInputStartTime > FOCUS_INPUT_TIMEOUT) {
+			isWaitingForVehicleId = false;
+			std::cout << "[FOCUS] Input timeout - cancelled" << std::endl;
+		}
+		else {
+			// Check for number keys 1-9
+			for (int key = GLFW_KEY_1; key <= GLFW_KEY_9; key++) {
+				if (glfwGetKey(window, key) == GLFW_PRESS) {
+					int vehicleId = key - GLFW_KEY_0;
+
+					// Check if vehicle exists
+					std::lock_guard<std::mutex> lock(g_vehicles_mutex);
+					if (g_vehicles.find(vehicleId) != g_vehicles.end()) {
+						g_focused_vehicle_id = vehicleId;
+						isWaitingForVehicleId = false;
+						std::cout << "[FOCUS] Now tracking Vehicle #" << vehicleId << std::endl;
+					}
+					else {
+						isWaitingForVehicleId = false;
+						std::cout << "[FOCUS] Vehicle #" << vehicleId << " does not exist" << std::endl;
+					}
+					break;
+				}
+			}
+		}
+	}
 }
 
 // Callback for scroolling mouse wheel
@@ -886,7 +949,7 @@ int main()
 	
 	glm::mat4 viewProjection_world = projection * view_world;
 	glm::mat4 viewProjection_grid = projection * view_grid;
-
+	
 		// Track creation and drawing
 		glUseProgram(shader_program);
 
@@ -930,17 +993,7 @@ int main()
 
 
 	// ========================== UI RENDERING ==========================
-		// Render Start/Finish Text FIRST (behind UI windows)
-		// REMOVED: Text rendering - user requested removal
-		/*
-		if (ui.ShouldCloseSplash() && ui.getElements())
-		{
-			ui.getElements()->RenderStartFinishText(camera_zoom, camera_position, 
-			                                       static_cast<float>(windowswidth), 
-			                                       static_cast<float>(windowsheight));
-		}
-		*/
-		
+
 		// Render UI AFTER track and vehicles so it's on top
 		ui.Render();
 
@@ -950,12 +1003,49 @@ int main()
 			// Render compass
 			ui.getElements()->drawCompass(camera_rotation, g_map_origin);
 			
-			// Render laptimer
-			// Option 1: With demo values
-			ui.getElements()->drawLapTimer();
-			
-			// Option 2: Empty state (uncomment to test)
-			// ui.getElements()->drawLapTimer();  // Shows 00:00.000 and dashes
+			// Render compass (show after splash, rotates based on camera yaw)
+			if (ui.ShouldCloseSplash() && ui.getElements())
+			{
+				// Render compass
+				ui.getElements()->drawCompass(camera_rotation, g_map_origin);
+
+				// ✅ Render laptimer с данными выбранной/лидирующей машины
+				if (g_race_manager)
+				{
+					int trackedVehicleId = g_focused_vehicle_id;
+
+					// Если не выбрана конкретная машина, отслеживаем лидера
+					if (trackedVehicleId == -1)
+					{
+						auto standings = g_race_manager->GetStandings();
+						if (!standings.empty())
+							trackedVehicleId = standings[0].vehicleID;
+					}
+
+
+					// Получаем данные для отображения
+					if (trackedVehicleId != -1)
+					{
+						float currentLapTime = g_race_manager->GetVehicleCurrentLapTime(trackedVehicleId);
+						float previousLapTime = g_race_manager->GetVehiclePreviousLapTime(trackedVehicleId);
+						float bestLapTime = g_race_manager->GetVehicleBestLapTime(trackedVehicleId);
+						float deltaTime = g_race_manager->GetVehicleDeltaTime(trackedVehicleId);
+
+						// Отображаем Lap Timer
+						ui.getElements()->drawLapTimer(currentLapTime, previousLapTime, bestLapTime, deltaTime);
+					}
+					else
+					{
+						// Нет машин - показываем пустой lap timer
+						ui.getElements()->drawLapTimer(0.0f, -1.0f, -1.0f, 0.0f);
+					}
+				}
+				else
+				{
+					// RaceManager не инициализирован - показываем пустой lap timer comets
+					ui.getElements()->drawLapTimer(0.0f, -1.0f, -1.0f, 0.0f);
+				}
+			}
 		}
 		
 		ui.EndFrame();

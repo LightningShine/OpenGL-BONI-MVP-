@@ -1,4 +1,4 @@
-#include "RaceManager.h"
+﻿#include "RaceManager.h"
 #include "../vehicle/Vehicle.h"
 #include "../rendering/Interpolation.h"
 #include "../Config.h"
@@ -462,6 +462,79 @@ float RaceManager::GetVehicleBestLapTime(int32_t vehicleID) const
         return it->second.bestLapTime;
     
     return 999999.0f;
+}
+
+// ============================================================================
+// ✅ NEW: LAP TIMER DATA ACCESS
+// ============================================================================
+float RaceManager::GetVehiclePreviousLapTime(int32_t vehicleID) const
+{
+    auto it = m_vehicleTimings.find(vehicleID);
+    if (it != m_vehicleTimings.end())
+    {
+        const auto& timing = it->second;
+        // Предыдущий круг = текущий номер - 1
+        int previousLapNumber = timing.currentLapNumber - 1;
+        
+        auto lapIt = timing.laps.find(previousLapNumber);
+        if (lapIt != timing.laps.end())
+            return lapIt->second.lapTime;
+    }
+    
+    return -1.0f;  // -1 означает нет данных
+}
+
+float RaceManager::GetVehicleDeltaTime(int32_t vehicleID) const
+{
+    auto it = m_vehicleTimings.find(vehicleID);
+    if (it != m_vehicleTimings.end())
+    {
+        const auto& timing = it->second;
+        float currentTime = timing.currentLapTimer;
+        float compareTime = -1.0f;
+        
+        // Определяем с каким кругом сравнивать (из Config.h)
+        if (RaceConstants::LAP_DELTA_COMPARE_MODE == -1)
+        {
+            // Сравнение с лучшим кругом
+            compareTime = timing.bestLapTime;
+        }
+        else if (RaceConstants::LAP_DELTA_COMPARE_MODE == 0)
+        {
+            // Сравнение с предыдущим кругом
+            int previousLapNumber = timing.currentLapNumber - 1;
+            auto lapIt = timing.laps.find(previousLapNumber);
+            if (lapIt != timing.laps.end())
+                compareTime = lapIt->second.lapTime;
+        }
+        else
+        {
+            // Сравнение с конкретным кругом
+            int specificLap = RaceConstants::LAP_DELTA_COMPARE_MODE;
+            auto lapIt = timing.laps.find(specificLap);
+            if (lapIt != timing.laps.end())
+                compareTime = lapIt->second.lapTime;
+        }
+        
+        // Если нет данных для сравнения, возвращаем 0
+        if (compareTime < 0.0f || compareTime > 999000.0f)
+            return 0.0f;
+        
+        // Разница: текущее время - эталонное время
+        // Положительное = медленнее, отрицательное = быстрее
+        return currentTime - compareTime;
+    }
+    
+    return 0.0f;
+}
+
+int RaceManager::GetVehicleCurrentLapNumber(int32_t vehicleID) const
+{
+    auto it = m_vehicleTimings.find(vehicleID);
+    if (it != m_vehicleTimings.end())
+        return it->second.currentLapNumber;
+    
+    return 0;
 }
 
 // ============================================================================

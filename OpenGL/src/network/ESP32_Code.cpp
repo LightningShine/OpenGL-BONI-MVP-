@@ -130,13 +130,9 @@ static void simulationThreadWorker(int vehicle_id, std::vector<SplinePoint> smoo
         timeSinceLastSpeedChange += deltaTime;
         if (timeSinceLastSpeedChange >= timeUntilSpeedChange)
         {
-            double oldSpeed = currentSpeedKph;
             currentSpeedKph = speed_dist(gen);
             timeUntilSpeedChange = segment_duration_dist(gen);
             timeSinceLastSpeedChange = 0.0f;
-            
-            std::cout << "[SIM] Vehicle #" << vehicle_id << " speed change: " 
-                      << oldSpeed << " -> " << currentSpeedKph << " km/h" << std::endl;
         }
 
         // ====================================================================

@@ -9,6 +9,9 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/type_ptr.hpp>
 
+// ✅ Система выбора машины для отслеживания
+extern int g_focused_vehicle_id;  // -1 = лидер (дефолт), иначе ID машины
+
 // ============================================================================
 // LAP DATA STRUCTURE (integrated into Vehicle for storage)
 // ============================================================================
@@ -60,6 +63,9 @@ public:
 	
 	// ✅ Track progress (normalized 0.0-1.0 for accurate position determination)
 	double m_track_progress = 0.0;              // Accumulated distance along track (0.0 = start, 1.0 = full lap)
+	
+	// ✅ Smoothed rotation angle for triangle rendering (radians)
+	float m_smoothed_rotation = 0.0f;           // Сглаженный угол поворота для плавного рендеринга
 
 	glm::vec3 getColor() const;	
 };

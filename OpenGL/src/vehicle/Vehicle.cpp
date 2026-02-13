@@ -11,6 +11,9 @@ std::map<int32_t, Vehicle> g_vehicles;
 std::mutex g_vehicles_mutex;
 std::atomic<bool> g_is_vehicles_active = false;
 
+// ✅ Система выбора машины для отслеживания
+int g_focused_vehicle_id = -1;  // -1 = лидер (дефолт)
+
 // ✅ Генератор уникальных ID
 int32_t generateVehicleID()
 {
@@ -205,17 +208,20 @@ std::vector<glm::vec2> generateCircle(float radius, int segments)
 }
 
 // ✅ Генерация треугольника для лидера (вершина вверх)
+// Размер треугольника соответствует диаметру круга:
+// - Основание = 2 * size (равно диаметру круга)
+// - Высота = 1.2 * size (пропорциональный треугольник)
 std::vector<glm::vec2> generateTriangle(float size)
 {
     std::vector<glm::vec2> vertices;
     vertices.reserve(4);
     vertices.push_back(glm::vec2(0.0f, 0.0f)); // Центр
     
-    // Треугольник с вершиной вверх (направление движения)
-    vertices.push_back(glm::vec2(0.0f, size));        // Верх
-    vertices.push_back(glm::vec2(-size * 0.7f, -size * 0.5f)); // Левый низ
-    vertices.push_back(glm::vec2(size * 0.7f, -size * 0.5f));  // Правый низ
-    vertices.push_back(glm::vec2(0.0f, size));        // Замыкаем
+    // Треугольник с вершиной направленной вперёд
+    vertices.push_back(glm::vec2(0.0f, size * 1.2f));     // Верх (ОСТРЫЙ КОНЕЦ)
+    vertices.push_back(glm::vec2(-size, -size * 0.8f));   // Левый низ
+    vertices.push_back(glm::vec2(size, -size * 0.8f));    // Правый низ (основание = 2*size)
+    vertices.push_back(glm::vec2(0.0f, size * 1.2f));     // Замыкаем
     
     return vertices;
 }
@@ -223,7 +229,7 @@ std::vector<glm::vec2> generateTriangle(float size)
 void renderVehicle(GLuint shader_program, GLuint vao, GLuint vbo,
     const Vehicle& vehicle, const glm::mat4& projection)
 {
-    // ✅ Статические геометрии (генерируются один раз)
+    // ✅ Статические геометрии (генерируются один раз для производительности)
     static std::vector<glm::vec2> circleOutline = generateCircle(
         VehicleConstants::VEHICLE_OUTLINE_RADIUS, 
         VehicleConstants::VEHICLE_CIRCLE_SEGMENTS
@@ -232,12 +238,8 @@ void renderVehicle(GLuint shader_program, GLuint vao, GLuint vbo,
         VehicleConstants::VEHICLE_BODY_RADIUS, 
         VehicleConstants::VEHICLE_CIRCLE_SEGMENTS
     );
-    static std::vector<glm::vec2> triangleOutline = generateTriangle(
-        VehicleConstants::VEHICLE_OUTLINE_RADIUS
-    );
-    static std::vector<glm::vec2> triangleBody = generateTriangle(
-        VehicleConstants::VEHICLE_BODY_RADIUS
-    );
+    static std::vector<glm::vec2> triangleOutline = generateTriangle(VehicleConstants::VEHICLE_OUTLINE_RADIUS);
+    static std::vector<glm::vec2> triangleBody = generateTriangle(VehicleConstants::VEHICLE_BODY_RADIUS);
     
     // ✅ Кешируем uniform location (вычисляется только один раз)
     static GLint colorLoc = glGetUniformLocation(shader_program, "uColor");
@@ -246,13 +248,78 @@ void renderVehicle(GLuint shader_program, GLuint vao, GLuint vbo,
     const std::vector<glm::vec2>& outlineShape = vehicle.m_is_leader ? triangleOutline : circleOutline;
     const std::vector<glm::vec2>& bodyShape = vehicle.m_is_leader ? triangleBody : circleBody;
 
+    // ✅ ВЫЧИСЛЯЕМ УГОЛ ПОВОРОТА для треугольника лидера
+    float rotationAngle = 0.0f;
+    if (vehicle.m_is_leader)
+    {
+        // Вектор направления движения
+        glm::vec2 direction(
+            vehicle.m_normalized_x - vehicle.m_prev_x,
+            vehicle.m_normalized_y - vehicle.m_prev_y
+        );
+        
+        float length = glm::length(direction);
+        if (length > 0.0001f) // Проверяем что машина движется
+        {
+            // Вычисляем целевой угол поворота (в радианах)
+            // atan2 возвращает угол от оси X
+            // Вычитаем PI/2 потому что треугольник по умолчанию смотрит вверх (ось Y)
+            float targetAngle = std::atan2(direction.y, direction.x) - glm::half_pi<float>();
+            
+            // ✅ ЭКСПОНЕНЦИАЛЬНОЕ СГЛАЖИВАНИЕ для плавного поворота
+            // Это устраняет "виляние" треугольника
+            const float smoothingFactor = 0.3f; // 0.0 = мгновенный поворот, 1.0 = медленный поворот
+            
+            // Обрабатываем переход через границу -π/π
+            float angleDiff = targetAngle - vehicle.m_smoothed_rotation;
+            if (angleDiff > glm::pi<float>())
+                angleDiff -= glm::two_pi<float>();
+            else if (angleDiff < -glm::pi<float>())
+                angleDiff += glm::two_pi<float>();
+            
+            // Применяем сглаживание
+            float& smoothedAngle = const_cast<float&>(vehicle.m_smoothed_rotation);
+            smoothedAngle += angleDiff * smoothingFactor;
+            
+            // Нормализуем угол в диапазон [-π, π]
+            if (smoothedAngle > glm::pi<float>())
+                smoothedAngle -= glm::two_pi<float>();
+            else if (smoothedAngle < -glm::pi<float>())
+                smoothedAngle += glm::two_pi<float>();
+            
+            rotationAngle = vehicle.m_smoothed_rotation;
+        }
+        else
+        {
+            // Машина не движется - используем предыдущий угол
+            rotationAngle = vehicle.m_smoothed_rotation;
+        }
+    }
+
+    // ✅ ОПТИМИЗАЦИЯ: Создаем матрицу вращения один раз
+    glm::mat2 rotationMatrix(1.0f);
+    if (vehicle.m_is_leader && rotationAngle != 0.0f)
+    {
+        float cosAngle = std::cos(rotationAngle);
+        float sinAngle = std::sin(rotationAngle);
+        rotationMatrix = glm::mat2(
+            cosAngle, sinAngle,
+            -sinAngle, cosAngle
+        );
+    }
+
     // === РИСУЕМ БЕЛУЮ ОБВОДКУ ===
     std::vector<glm::vec2> outlineVertices;
     outlineVertices.reserve(outlineShape.size());
     for (const auto& vertex : outlineShape) {
+        // ✅ Применяем матрицу поворота (экономит вычисления cos/sin)
+        glm::vec2 transformedVertex = (vehicle.m_is_leader && rotationAngle != 0.0f) 
+            ? rotationMatrix * vertex 
+            : vertex;
+        
         outlineVertices.push_back(glm::vec2(
-            vertex.x + static_cast<float>(vehicle.m_normalized_x),
-            vertex.y + static_cast<float>(vehicle.m_normalized_y)
+            transformedVertex.x + static_cast<float>(vehicle.m_normalized_x),
+            transformedVertex.y + static_cast<float>(vehicle.m_normalized_y)
         ));
     }
 
@@ -260,8 +327,11 @@ void renderVehicle(GLuint shader_program, GLuint vao, GLuint vbo,
     glBufferData(GL_ARRAY_BUFFER, outlineVertices.size() * sizeof(glm::vec2),
         outlineVertices.data(), GL_DYNAMIC_DRAW);
 
-    // Белый цвет обводки
-    glUniform3f(colorLoc, 1.0f, 1.0f, 1.0f);
+    // ✅ Цвет обводки из конфига (для машины и лидера одинаковый)
+    glUniform3f(colorLoc, 
+        VehicleConstants::VEHICLE_OUTLINE_COLOR_R,
+        VehicleConstants::VEHICLE_OUTLINE_COLOR_G,
+        VehicleConstants::VEHICLE_OUTLINE_COLOR_B);
 
     glBindVertexArray(vao);
     glDrawArrays(GL_TRIANGLE_FAN, 0, static_cast<GLsizei>(outlineVertices.size()));
@@ -270,9 +340,14 @@ void renderVehicle(GLuint shader_program, GLuint vao, GLuint vbo,
     std::vector<glm::vec2> bodyVertices;
     bodyVertices.reserve(bodyShape.size());
     for (const auto& vertex : bodyShape) {
+        // ✅ Применяем матрицу поворота (экономит вычисления cos/sin)
+        glm::vec2 transformedVertex = (vehicle.m_is_leader && rotationAngle != 0.0f) 
+            ? rotationMatrix * vertex 
+            : vertex;
+        
         bodyVertices.push_back(glm::vec2(
-            vertex.x + static_cast<float>(vehicle.m_normalized_x),
-            vertex.y + static_cast<float>(vehicle.m_normalized_y)
+            transformedVertex.x + static_cast<float>(vehicle.m_normalized_x),
+            transformedVertex.y + static_cast<float>(vehicle.m_normalized_y)
         ));
     }
 

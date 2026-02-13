@@ -115,6 +115,9 @@
   </ItemGroup>
   <ItemGroup>
     <Text Include="RESTRUCTURE_SUMMARY.txt" />
+    <Text Include="src\input\VehicleFocus_Input.txt" />
+    <Text Include="src\input\VehicleFocus_Input_MultiDigit.txt" />
+    <Text Include="src\ui\LapTimer_Integration.txt" />
   </ItemGroup>
   <ItemGroup>
     <None Include="..\code_writing_guide.md" />

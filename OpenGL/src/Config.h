@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 // Map and coordinate system constants
 namespace MapConstants {
@@ -9,10 +9,16 @@ namespace MapConstants {
 
 // Vehicle rendering constants
 namespace VehicleConstants {
-    static constexpr float VEHICLE_BODY_RADIUS = 0.05f;      // 5 meters
-    static constexpr float VEHICLE_OUTLINE_RADIUS = 0.055f;  // White outline
+    static constexpr float VEHICLE_BODY_RADIUS = 0.05f;      // 5 meters (радиус тела)
+    static constexpr float VEHICLE_OUTLINE_WIDTH = 0.005f;   // ✅ Толщина обводки (белая рамка)
+    static constexpr float VEHICLE_OUTLINE_RADIUS = VEHICLE_BODY_RADIUS + VEHICLE_OUTLINE_WIDTH;  // Автоматический расчёт
     static constexpr int VEHICLE_CIRCLE_SEGMENTS = 20;
     static constexpr int VEHICLE_TIMEOUT_MS = 300;         // 30 seconds
+    
+    // ✅ Цвет обводки (RGB)
+    static constexpr float VEHICLE_OUTLINE_COLOR_R = 1.0f;
+    static constexpr float VEHICLE_OUTLINE_COLOR_G = 1.0f;
+    static constexpr float VEHICLE_OUTLINE_COLOR_B = 1.0f;
 }
 
 // Camera constants
@@ -61,6 +67,20 @@ namespace SimulationConstants {
     static constexpr double SPEED_VARIATION_KPH = 30.0;
     static constexpr double TWO_PI = 6.28318530718;
     static constexpr int PROGRESS_LOG_INTERVAL = 30;
+}
+
+// Race timing constants
+namespace RaceConstants {
+    // ✅ Настраиваемая нумерация кругов:
+    // 0 = после первого пересечения старта начинается круг 2 (круг 1 автоматически засчитан)
+    // 1 = после первого пересечения начинается круг 1 (нужно завершить круг чтобы засчитался)
+    static constexpr int LAP_START_NUMBER = 0;  // По умолчанию: круг 1 после старта
+    
+    // ✅ Lap Timer Delta Comparison Mode:
+    // -1 = сравнение с лучшим кругом (best lap)
+    // 0 = сравнение с предыдущим кругом (previous lap)
+    // N > 0 = сравнение с конкретным кругом номер N
+    static constexpr int LAP_DELTA_COMPARE_MODE = -1;  // По умолчанию: сравнение с лучшим
 }
 
 // Console colors
