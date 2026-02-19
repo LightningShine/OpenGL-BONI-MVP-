@@ -64,45 +64,22 @@ public:
     
     // ? NEW: Lap Timer Data (??? ??????????? ? UI)
     float GetVehiclePreviousLapTime(int32_t vehicleID) const;       // ????? ??????????? ?????
-    float GetVehicleDeltaTime(int32_t vehicleID) const;             // ??????? ? ????????? ?????? (????????????? ? Config)
-    int GetVehicleCurrentLapNumber(int32_t vehicleID) const;        // ????? ???????? ?????
+    float GetVehicleDeltaTime(int32_t vehicleID) const;
+    int GetVehicleCurrentLapNumber(int32_t vehicleID) const;
     
     // ========================================================================
     // DIAGNOSTICS
     // ========================================================================
-    void PrintSessionSummary() const;           // Debug output of all lap times
-    bool SaveResultsToFile() const;             // Save results to saves/VehicleResults.txt
+    void PrintSessionSummary() const;
+    bool SaveResultsToFile() const;
     
 private:
     // ========================================================================
-    // INTERNAL VEHICLE TIMING DATA
-    // ========================================================================
-    struct VehicleTimingData
-    {
-        std::map<int, LapData> laps;            // Map: lap number -> LapData
-        float currentLapTimer;                   // Current lap timer (seconds)
-        int currentLapNumber;                    // Current lap being driven (1-indexed)
-        int completedLaps;                       // Number of completed laps
-        bool hasStartedFirstLap;                 // True after first S/F crossing
-        double prevX, prevY;                     // Previous frame position (for intersection)
-        float bestLapTime;                       // Best lap time (seconds)
-        bool isInitialized;                      // ? True after first initialization
-        double prevProgress;                     // ? Previous track progress (for cycle detection)
-        
-        VehicleTimingData() 
-            : currentLapTimer(0.0f), currentLapNumber(RaceConstants::LAP_START_NUMBER), completedLaps(0),
-              hasStartedFirstLap(false), prevX(0.0), prevY(0.0), 
-              bestLapTime(-1.0f), isInitialized(false), prevProgress(0.0) {}  // -1 = no data yet
-    };
-    
-    std::map<int32_t, VehicleTimingData> m_vehicleTimings;  // Per-vehicle timing data
-    
-    // ========================================================================
     // START/FINISH LINE (defined as two points: left and right edge)
     // ========================================================================
-    glm::vec2 m_startFinishP1;                  // Left edge of finish line
-    glm::vec2 m_startFinishP2;                  // Right edge of finish line
-    bool m_lineInitialized;                      // True if line has been set
+    glm::vec2 m_startFinishP1;
+    glm::vec2 m_startFinishP2;
+    bool m_lineInitialized;
     
     // ========================================================================
     // INTERSECTION DETECTION (sub-frame accurate)

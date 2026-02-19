@@ -53,7 +53,7 @@ void RaceManager::SetStartFinishLine(const glm::vec2& p1, const glm::vec2& p2)
 }
 
 // ============================================================================
-// CORE UPDATE LOOP
+// CORE UPDATE LOOP - Reads/writes Vehicle data directly under mutex
 // ============================================================================
 void RaceManager::Update(float deltaTime)
 {
@@ -62,186 +62,124 @@ void RaceManager::Update(float deltaTime)
     
     std::lock_guard<std::mutex> lock(g_vehicles_mutex);
     
-    // Iterate over all vehicles
     for (auto& [vehicleID, vehicle] : g_vehicles)
     {
-        // Get or create timing data for this vehicle
-        VehicleTimingData& timing = m_vehicleTimings[vehicleID];
-        
-        // ? ?????????????? prevX/prevY ??? ?????? ????????
-        if (!timing.isInitialized)
+        // Initialize prev position on first frame
+        if (vehicle.m_prev_x == 0.0 && vehicle.m_prev_y == 0.0 && 
+            vehicle.m_normalized_x != 0.0 && vehicle.m_normalized_y != 0.0)
         {
-            timing.prevX = vehicle.m_normalized_x;
-            timing.prevY = vehicle.m_normalized_y;
-            timing.isInitialized = true;
-            std::cout << "[RACE MANAGER] Initialized timing data for Vehicle #" << vehicleID 
-                      << " at position (" << timing.prevX << ", " << timing.prevY << ")" << std::endl;
+            vehicle.m_prev_x = vehicle.m_normalized_x;
+            vehicle.m_prev_y = vehicle.m_normalized_y;
+            vehicle.m_prev_track_progress = vehicle.m_track_progress;
         }
         
-        // Get current position
-        double currentX = vehicle.m_normalized_x;
-        double currentY = vehicle.m_normalized_y;
+        // Check for finish line crossing
+        float intersectionRatio = 0.0f;
+        bool crossed = CheckLineSegmentIntersection(
+            glm::vec2(vehicle.m_prev_x, vehicle.m_prev_y),
+            glm::vec2(vehicle.m_normalized_x, vehicle.m_normalized_y),
+            m_startFinishP1, m_startFinishP2,
+            intersectionRatio
+        );
         
-        // Check for line crossing (if we have previous position)
-        if (timing.hasStartedFirstLap)
+        // Check for progress cycle (0.999 -> 0.001)
+        bool progressCycled = (vehicle.m_prev_track_progress > 0.85 && 
+                               vehicle.m_track_progress < 0.15);
+        
+        // ====================================================================
+        // LAP COMPLETION DETECTION
+        // ====================================================================
+        if (vehicle.m_has_started_first_lap && (crossed || progressCycled))
         {
-            // ? ????? ????????: ??????????? ??????? ????????? (0.999 -> 0.001)
-            // ??? ???????? ??? ?????? ????????? ????, ???? ???? ????????????? ?? ????????? ?????
-            double currentProgress = vehicle.m_track_progress;
-            bool progressCycled = false;
+            // Sub-frame accurate timing
+            float crossingTime = vehicle.m_current_lap_timer + (deltaTime * intersectionRatio);
             
-            if (timing.prevProgress > 0.85 && currentProgress < 0.15)
+            const float MIN_VALID_LAP_TIME = 0.1f;
+            
+            if (crossingTime > MIN_VALID_LAP_TIME)
             {
-                // ???????? ??????? ????? 0 (?????????? ?????)
-                progressCycled = true;
-            }
-            
-            // ????????? ?????????????? ??????????? ?????
-            float intersectionRatio = 0.0f;
-            bool crossed = CheckLineSegmentIntersection(
-                glm::vec2(timing.prevX, timing.prevY),
-                glm::vec2(currentX, currentY),
-                m_startFinishP1,
-                m_startFinishP2,
-                intersectionRatio
-            );
-            
-            // ? ??????????? ???? ???? ???? ????????? ?????, ???? ???????? ??????????
-            if (crossed || progressCycled)
-            {
-                // ============================================================
-                // SUB-FRAME ACCURATE TIMING
-                // ============================================================
-                // Calculate exact time of crossing:
-                // If ratio = 0.3, the crossing happened 30% through this frame
-                float crossingTime = timing.currentLapTimer + (deltaTime * intersectionRatio);
+                // Store completed lap
+                LapData lapData(crossingTime, 0);
+                vehicle.m_laps[vehicle.m_current_lap_number] = lapData;
+                vehicle.m_completed_laps++;
                 
-                // ✅ Записываем круг если он валидный (больше минимального времени)
-                // ВАЖНО: Используем 0.1s как минимум (защита от ложных пересечений на старте)
-                const float MIN_VALID_LAP_TIME = 0.1f;  // 100ms минимум
-                
-                if (crossingTime > MIN_VALID_LAP_TIME)
+                // Update best lap time
+                if (crossingTime < vehicle.m_best_lap_time || vehicle.m_best_lap_time < 0.0f)
                 {
-                    // Store completed lap
-                    LapData lapData(crossingTime, 0);  // Position calculated later
-                    timing.laps[timing.currentLapNumber] = lapData;
-                    timing.completedLaps++;
-                    
-                    // Update best lap time
-                    if (crossingTime < timing.bestLapTime || timing.bestLapTime < 0.0f)
-                    {
-                        timing.bestLapTime = crossingTime;
-                    }
-                    
-                    std::cout << "[RACE MANAGER] Vehicle #" << vehicleID 
-                              << " completed Lap " << timing.currentLapNumber
-                              << " in " << crossingTime << " seconds"
-                              << " | Total completed laps: " << timing.completedLaps << std::endl;
-                    
-                    // Start new lap
-                    timing.currentLapNumber++;
+                    vehicle.m_best_lap_time = crossingTime;
                 }
                 
-                // Reset timer after crossing
-                timing.currentLapTimer = deltaTime * (1.0f - intersectionRatio);  // Remaining time after crossing
+                std::cout << "[RACE MANAGER] Vehicle #" << vehicleID 
+                          << " completed Lap " << vehicle.m_current_lap_number
+                          << " in " << std::fixed << std::setprecision(3) << crossingTime << "s"
+                          << " | Total completed: " << vehicle.m_completed_laps << std::endl;
+                
+                // Start new lap
+                vehicle.m_current_lap_number++;
+            }
+            
+            // Reset timer after crossing
+            vehicle.m_current_lap_timer = deltaTime * (1.0f - intersectionRatio);
+        }
+        // ====================================================================
+        // FIRST LAP START DETECTION
+        // ====================================================================
+        else if (!vehicle.m_has_started_first_lap && crossed)
+        {
+            // Prevent false start on vehicle creation
+            float timeSinceCreation = vehicle.m_current_lap_timer;
+            
+            if (timeSinceCreation > 0.5f)
+            {
+                vehicle.m_has_started_first_lap = true;
+                vehicle.m_current_lap_timer = deltaTime * (1.0f - intersectionRatio);
+                vehicle.m_prev_track_progress = vehicle.m_track_progress;
+                
+                std::cout << "[RACE MANAGER] Vehicle #" << vehicleID 
+                          << " crossed start/finish line, starting Lap " << vehicle.m_current_lap_number 
+                          << std::endl;
             }
             else
             {
-                // No crossing - just accumulate time
-                timing.currentLapTimer += deltaTime;
+                vehicle.m_current_lap_timer += deltaTime;
             }
-            
-            // ? ????????? ??????? ???????? ??? ?????????? ?????
-            timing.prevProgress = currentProgress;
         }
+        // ====================================================================
+        // NORMAL TIMER INCREMENT
+        // ====================================================================
         else
         {
-            // ================================================================
-            // FIRST LAP START DETECTION
-            // ================================================================
-            float intersectionRatio = 0.0f;
-            bool crossed = CheckLineSegmentIntersection(
-                glm::vec2(timing.prevX, timing.prevY),
-                glm::vec2(currentX, currentY),
-                m_startFinishP1,
-                m_startFinishP2,
-                intersectionRatio
-            );
-            
-            if (crossed)
-            {
-                // ????????? ??? ??? ?? ?????? ??????????? ??? ??????
-                // (???? ?????? ????????? ?? ?????, ?????? ???????? ?? ?????? ????????? ???????)
-                float timeSinceCreation = timing.currentLapTimer;
-                
-                if (timeSinceCreation > 0.5f)  // ??????? 0.5 ??????? ? ??????? ????????
-                {
-                    timing.hasStartedFirstLap = true;
-                    timing.currentLapTimer = deltaTime * (1.0f - intersectionRatio);  // Start timer at crossing point
-                    
-                    // ✅ Инициализируем prevProgress чтобы избежать ложного циклического сброса
-                    timing.prevProgress = vehicle.m_track_progress;
-                    
-                    // ✅ Универсальное сообщение учитывающее LAP_START_NUMBER
-                    std::cout << "[RACE MANAGER] Vehicle #" << vehicleID 
-                              << " crossed start/finish line, starting Lap " << timing.currentLapNumber 
-                              << " (offset: " << timing.currentLapTimer << "s)" << std::endl;
-                }
-                else
-                {
-                    // ? ?????????? ??????????? ????? ?? ?????????? ?????? 0.5 ???????
-                    timing.currentLapTimer += deltaTime;
-                }
-            }
-            else
-            {
-                // ? ?????? ?? ????????? ????? - ??????????? ????? ? ??????? ????????
-                timing.currentLapTimer += deltaTime;
-            }
+            vehicle.m_current_lap_timer += deltaTime;
         }
         
         // Update previous position for next frame
-        timing.prevX = currentX;
-        timing.prevY = currentY;
+        vehicle.m_prev_x = vehicle.m_normalized_x;
+        vehicle.m_prev_y = vehicle.m_normalized_y;
+        vehicle.m_prev_track_progress = vehicle.m_track_progress;
     }
     
-    // Clean up timing data for removed vehicles
-    for (auto it = m_vehicleTimings.begin(); it != m_vehicleTimings.end(); )
-    {
-        if (g_vehicles.find(it->first) == g_vehicles.end())
-        {
-            std::cout << "[RACE MANAGER] Removed timing data for vehicle #" << it->first << std::endl;
-            it = m_vehicleTimings.erase(it);
-        }
-        else
-        {
-            ++it;
-        }
-    }
-    
-    // ? ????????? ???? ?????? ????????? ?? ?? ??????? ??? ? SaveResults
+    // Update leader and positions
     std::vector<VehicleStanding> standings = GetStandingsInternal();
     
     if (!standings.empty())
     {
-        // ?????????? ??????
         static int32_t previousLeader = -1;
         int32_t currentLeader = standings[0].vehicleID;
         
-        // ?????????? ???? ? ????
+        // Reset all leader flags
         for (auto& [id, vehicle] : g_vehicles)
         {
             vehicle.m_is_leader = false;
         }
         
-        // ????????????? ???? ??????
+        // Set current leader flag
         auto leader_it = g_vehicles.find(currentLeader);
         if (leader_it != g_vehicles.end())
         {
             leader_it->second.m_is_leader = true;
         }
         
-        // DEBUG: ??????? ??? ????? ??????
+        // Debug: print leader change
         if (currentLeader != previousLeader && previousLeader != -1)
         {
             std::cout << "\n[LEADER CHANGE] New leader: Vehicle #" << currentLeader 
@@ -249,7 +187,6 @@ void RaceManager::Update(float deltaTime)
                       << " | Progress: " << std::fixed << std::setprecision(3) << standings[0].distanceFromStart
                       << " (was Vehicle #" << previousLeader << ")" << std::endl;
             
-            // ?????????? ???-3
             size_t topCount = standings.size() < 3 ? standings.size() : 3;
             for (size_t i = 0; i < topCount; ++i)
             {
@@ -306,58 +243,49 @@ bool RaceManager::CheckLineSegmentIntersection(
 // ============================================================================
 void RaceManager::ResetSession()
 {
-    m_vehicleTimings.clear();
+    std::lock_guard<std::mutex> lock(g_vehicles_mutex);
+    
+    for (auto& [vehicleID, vehicle] : g_vehicles)
+    {
+        vehicle.m_laps.clear();
+        vehicle.m_current_lap_timer = 0.0f;
+        vehicle.m_current_lap_number = RaceConstants::LAP_START_NUMBER;
+        vehicle.m_completed_laps = 0;
+        vehicle.m_has_started_first_lap = false;
+        vehicle.m_best_lap_time = -1.0f;
+        vehicle.m_prev_track_progress = 0.0;
+    }
+    
     std::cout << "[RACE MANAGER] Session reset - all lap data cleared" << std::endl;
 }
 
 // ============================================================================
-// GET STANDINGS (sorted leaderboard) - ?????????? ?????? ??? ??????????
-// ?????????? ????? ??????? ??? ???????????? (?? Update)
+// GET STANDINGS (sorted leaderboard) - Internal version without mutex lock
 // ============================================================================
 std::vector<VehicleStanding> RaceManager::GetStandingsInternal() const
 {
     std::vector<VehicleStanding> standings;
     
-    // Build standings list
     for (const auto& [vehicleID, vehicle] : g_vehicles)
     {
         VehicleStanding standing;
         standing.vehicleID = vehicleID;
+        standing.completedLaps = vehicle.m_completed_laps;
+        standing.currentLapNumber = vehicle.m_current_lap_number;
+        standing.currentLapTime = vehicle.m_current_lap_timer;
+        standing.hasStartedFirstLap = vehicle.m_has_started_first_lap;
+        standing.distanceFromStart = vehicle.m_track_progress;
         
-        // Get timing data if exists
-        auto it = m_vehicleTimings.find(vehicleID);
-        if (it != m_vehicleTimings.end())
-        {
-            const VehicleTimingData& timing = it->second;
-            standing.completedLaps = timing.completedLaps;
-            standing.currentLapNumber = timing.currentLapNumber;
-            standing.currentLapTime = timing.currentLapTimer;
-            
-            // ✅ Best lap логика зависит от LAP_START_NUMBER
-            int minCompletedLaps = (RaceConstants::LAP_START_NUMBER == 0) ? 1 : 2;
-            standing.bestLapTime = (timing.completedLaps >= minCompletedLaps) ? timing.bestLapTime : -1.0f;
-            
-            standing.hasStartedFirstLap = timing.hasStartedFirstLap; // ?
-            
-            // Calculate total race time (sum of all completed laps ONLY)
-            standing.totalRaceTime = 0.0f;
-            for (const auto& [lapNum, lapData] : timing.laps)
-            {
-                standing.totalRaceTime += lapData.lapTime;
-            }
-            // ?? ????????? ??????? ???? - ?????? ???????????!
-        }
-        else
-        {
-            standing.completedLaps = 0;
-            standing.currentLapTime = 0.0f;
-            standing.bestLapTime = -1.0f;  // -1 = no data yet
-            standing.totalRaceTime = 0.0f;
-            standing.hasStartedFirstLap = false; // ?
-        }
+        // Best lap logic depends on LAP_START_NUMBER
+        int minCompletedLaps = (RaceConstants::LAP_START_NUMBER == 0) ? 1 : 2;
+        standing.bestLapTime = (vehicle.m_completed_laps >= minCompletedLaps) ? vehicle.m_best_lap_time : -1.0f;
         
-        // Calculate distance from start
-        standing.distanceFromStart = CalculateDistanceFromStart(vehicle);
+        // Calculate total race time (sum of all completed laps)
+        standing.totalRaceTime = 0.0f;
+        for (const auto& [lapNum, lapData] : vehicle.m_laps)
+        {
+            standing.totalRaceTime += lapData.lapTime;
+        }
         
         standings.push_back(standing);
     }
@@ -368,23 +296,18 @@ std::vector<VehicleStanding> RaceManager::GetStandingsInternal() const
     std::sort(standings.begin(), standings.end(), 
         [](const VehicleStanding& a, const VehicleStanding& b) -> bool
         {
-            // ? ?????: ??????, ??????? ?? ?????? ?????, ?????? ??????
             if (a.hasStartedFirstLap != b.hasStartedFirstLap)
                 return a.hasStartedFirstLap > b.hasStartedFirstLap;
             
-            // ?????? ????????: ?????? ?????? = ???? ???????
             if (a.completedLaps != b.completedLaps)
                 return a.completedLaps > b.completedLaps;
             
-            // ?????? ????????: ?????? ???????? ?? ??????? ????? = ???? ???????
-            // (??? ?????? ??????????? ?? ??????? ????? - ??? ???????)
             return a.distanceFromStart > b.distanceFromStart;
         }
     );
     
     // ========================================================================
-    // ASSIGN POSITIONS & DETECT LAPPED CARS (??? ?????????? ?????? ??????!)
-    // ????? ?????? ??????????? ????? UpdateLeaderFlags() ? Update()
+    // ASSIGN POSITIONS & DETECT LAPPED CARS
     // ========================================================================
     int leaderLaps = standings.empty() ? 0 : standings[0].completedLaps;
     
@@ -426,126 +349,118 @@ int RaceManager::GetLeaderLapCount() const
 {
     int maxLaps = 0;
     
-    for (const auto& [vehicleID, timing] : m_vehicleTimings)
+    for (const auto& [vehicleID, vehicle] : g_vehicles)
     {
-        if (timing.completedLaps > maxLaps)
-            maxLaps = timing.completedLaps;
+        if (vehicle.m_completed_laps > maxLaps)
+            maxLaps = vehicle.m_completed_laps;
     }
     
     return maxLaps;
 }
 
 // ============================================================================
-// LAP DATA ACCESS (for UI)
+// LAP DATA ACCESS (thread-safe, reads from Vehicle under mutex)
 // ============================================================================
 const std::map<int, LapData>* RaceManager::GetVehicleLaps(int32_t vehicleID) const
 {
-    auto it = m_vehicleTimings.find(vehicleID);
-    if (it != m_vehicleTimings.end())
-        return &(it->second.laps);
+    std::lock_guard<std::mutex> lock(g_vehicles_mutex);
+    auto it = g_vehicles.find(vehicleID);
+    if (it != g_vehicles.end())
+        return &(it->second.m_laps);
     
     return nullptr;
 }
 
 float RaceManager::GetVehicleCurrentLapTime(int32_t vehicleID) const
 {
-    auto it = m_vehicleTimings.find(vehicleID);
-    if (it != m_vehicleTimings.end())
-        return it->second.currentLapTimer;
+    std::lock_guard<std::mutex> lock(g_vehicles_mutex);
+    auto it = g_vehicles.find(vehicleID);
+    if (it != g_vehicles.end())
+        return it->second.m_current_lap_timer;
     
     return 0.0f;
 }
 
 int RaceManager::GetVehicleCompletedLaps(int32_t vehicleID) const
 {
-    auto it = m_vehicleTimings.find(vehicleID);
-    if (it != m_vehicleTimings.end())
-        return it->second.completedLaps;
+    std::lock_guard<std::mutex> lock(g_vehicles_mutex);
+    auto it = g_vehicles.find(vehicleID);
+    if (it != g_vehicles.end())
+        return it->second.m_completed_laps;
     
     return 0;
 }
 
 float RaceManager::GetVehicleBestLapTime(int32_t vehicleID) const
 {
-    auto it = m_vehicleTimings.find(vehicleID);
-    if (it != m_vehicleTimings.end())
+    std::lock_guard<std::mutex> lock(g_vehicles_mutex);
+    auto it = g_vehicles.find(vehicleID);
+    if (it != g_vehicles.end())
     {
-        
         int minCompletedLaps = (RaceConstants::LAP_START_NUMBER == 0) ? 1 : 2;
         
-        if (it->second.completedLaps < minCompletedLaps)
-            return -1.0f;  // Показываем черточки
+        if (it->second.m_completed_laps < minCompletedLaps)
+            return -1.0f;
         
-        return it->second.bestLapTime;
+        return it->second.m_best_lap_time;
     }
     
-    return -1.0f;  // -1 = no data yet
+    return -1.0f;
 }
 
-// ============================================================================
-// ✅ NEW: LAP TIMER DATA ACCESS
-// ============================================================================
 float RaceManager::GetVehiclePreviousLapTime(int32_t vehicleID) const
 {
-    auto it = m_vehicleTimings.find(vehicleID);
-    if (it != m_vehicleTimings.end())
+    std::lock_guard<std::mutex> lock(g_vehicles_mutex);
+    auto it = g_vehicles.find(vehicleID);
+    if (it != g_vehicles.end())
     {
-        const auto& timing = it->second;
+        const auto& vehicle = it->second;
+        int previousLapNumber = vehicle.m_current_lap_number - 1;
         
-        // ✅ Предыдущий круг = текущий номер - 1
-        // Проверяем что предыдущий круг существует (не уходим в отрицательные)
-        int previousLapNumber = timing.currentLapNumber - 1;
-        
-        // Защита: не ищем круги с номером меньше LAP_START_NUMBER
         if (previousLapNumber < RaceConstants::LAP_START_NUMBER)
-            return -1.0f;  // Нет предыдущего круга
+            return -1.0f;
         
-        auto lapIt = timing.laps.find(previousLapNumber);
-        if (lapIt != timing.laps.end())
+        auto lapIt = vehicle.m_laps.find(previousLapNumber);
+        if (lapIt != vehicle.m_laps.end())
             return lapIt->second.lapTime;
     }
     
-    return -1.0f;  // -1 означает нет данных
+    return -1.0f;
 }
 
 float RaceManager::GetVehicleDeltaTime(int32_t vehicleID) const
 {
-    auto it = m_vehicleTimings.find(vehicleID);
-    if (it != m_vehicleTimings.end())
+    std::lock_guard<std::mutex> lock(g_vehicles_mutex);
+    auto it = g_vehicles.find(vehicleID);
+    if (it != g_vehicles.end())
     {
-        const auto& timing = it->second;
-        float currentTime = timing.currentLapTimer;
+        const auto& vehicle = it->second;
+        float currentTime = vehicle.m_current_lap_timer;
         float compareTime = -1.0f;
         
-        // Определяем с каким кругом сравнивать (из Config.h)
+        // TODO: Implement TimeDiff logic here (stub for now)
         if (RaceConstants::LAP_DELTA_COMPARE_MODE == -1)
         {
-            // Сравнение с лучшим кругом
-            compareTime = timing.bestLapTime;
+            compareTime = vehicle.m_best_lap_time;
         }
         else if (RaceConstants::LAP_DELTA_COMPARE_MODE == 0)
         {
-            // Сравнение с предыдущим кругом
-            int previousLapNumber = timing.currentLapNumber - 1;
-            auto lapIt = timing.laps.find(previousLapNumber);
-            if (lapIt != timing.laps.end())
+            int previousLapNumber = vehicle.m_current_lap_number - 1;
+            auto lapIt = vehicle.m_laps.find(previousLapNumber);
+            if (lapIt != vehicle.m_laps.end())
                 compareTime = lapIt->second.lapTime;
         }
         else
         {
-            // Сравнение с конкретным кругом
             int specificLap = RaceConstants::LAP_DELTA_COMPARE_MODE;
-            auto lapIt = timing.laps.find(specificLap);
-            if (lapIt != timing.laps.end())
+            auto lapIt = vehicle.m_laps.find(specificLap);
+            if (lapIt != vehicle.m_laps.end())
                 compareTime = lapIt->second.lapTime;
         }
         
-        // Если нет данных для сравнения, возвращаем 0
         if (compareTime < 0.0f)
             return 0.0f;
         
-        // Разница: текущее время - эталонное время
-        // Положительное = медленнее, отрицательное = быстрее
         return currentTime - compareTime;
     }
     
@@ -554,9 +469,10 @@ float RaceManager::GetVehicleDeltaTime(int32_t vehicleID) const
 
 int RaceManager::GetVehicleCurrentLapNumber(int32_t vehicleID) const
 {
-    auto it = m_vehicleTimings.find(vehicleID);
-    if (it != m_vehicleTimings.end())
-        return it->second.currentLapNumber;
+    std::lock_guard<std::mutex> lock(g_vehicles_mutex);
+    auto it = g_vehicles.find(vehicleID);
+    if (it != g_vehicles.end())
+        return it->second.m_current_lap_number;
     
     return 0;
 }
@@ -566,19 +482,21 @@ int RaceManager::GetVehicleCurrentLapNumber(int32_t vehicleID) const
 // ============================================================================
 void RaceManager::PrintSessionSummary() const
 {
+    std::lock_guard<std::mutex> lock(g_vehicles_mutex);
+    
     std::cout << "\n========================================" << std::endl;
     std::cout << "       RACE SESSION SUMMARY" << std::endl;
     std::cout << "========================================" << std::endl;
     
-    for (const auto& [vehicleID, timing] : m_vehicleTimings)
+    for (const auto& [vehicleID, vehicle] : g_vehicles)
     {
         std::cout << "\nVehicle #" << vehicleID << ":" << std::endl;
-        std::cout << "  Completed Laps: " << timing.completedLaps << std::endl;
-        std::cout << "  Current Lap Time: " << timing.currentLapTimer << "s" << std::endl;
-        std::cout << "  Best Lap: " << timing.bestLapTime << "s" << std::endl;
+        std::cout << "  Completed Laps: " << vehicle.m_completed_laps << std::endl;
+        std::cout << "  Current Lap Time: " << vehicle.m_current_lap_timer << "s" << std::endl;
+        std::cout << "  Best Lap: " << vehicle.m_best_lap_time << "s" << std::endl;
         
         std::cout << "  Lap Times:" << std::endl;
-        for (auto it = timing.laps.begin(); it != timing.laps.end(); ++it)
+        for (auto it = vehicle.m_laps.begin(); it != vehicle.m_laps.end(); ++it)
         {
             std::cout << "    Lap " << it->first << ": " << it->second.lapTime << "s" << std::endl;
         }
@@ -666,25 +584,28 @@ bool RaceManager::SaveResultsToFile() const
                 file << "  Best Lap Time: N/A\n";
             }
             
-            // ????????? ??????? ??????
-            auto it = m_vehicleTimings.find(standing.vehicleID);
-            if (it != m_vehicleTimings.end())
+            // Get vehicle data for detailed lap info
+            std::lock_guard<std::mutex> lock(g_vehicles_mutex);
+            auto veh_it = g_vehicles.find(standing.vehicleID);
+            if (veh_it != g_vehicles.end())
             {
-                // ?????????? ??????? (?????????????) ????
-                if (it->second.currentLapTimer > 0.0f)
+                const Vehicle& vehicle = veh_it->second;
+                
+                // Current lap (in progress)
+                if (vehicle.m_current_lap_timer > 0.0f)
                 {
-                    int current_lap_num = it->second.currentLapNumber;
-                    int current_minutes = static_cast<int>(it->second.currentLapTimer) / 60;
-                    float current_seconds = std::fmod(it->second.currentLapTimer, 60.0f);
+                    int current_lap_num = vehicle.m_current_lap_number;
+                    int current_minutes = static_cast<int>(vehicle.m_current_lap_timer) / 60;
+                    float current_seconds = std::fmod(vehicle.m_current_lap_timer, 60.0f);
                     file << "  Current Lap " << current_lap_num << ": " << current_minutes << ":" 
                          << std::fixed << std::setprecision(3) << current_seconds << " (in progress)\n";
                 }
                 
-                // ??????????? ?????
-                if (!it->second.laps.empty())
+                // Completed laps
+                if (!vehicle.m_laps.empty())
                 {
                     file << "  Lap Times:\n";
-                    for (auto lap_it = it->second.laps.begin(); lap_it != it->second.laps.end(); ++lap_it)
+                    for (auto lap_it = vehicle.m_laps.begin(); lap_it != vehicle.m_laps.end(); ++lap_it)
                     {
                         int lap_minutes = static_cast<int>(lap_it->second.lapTime) / 60;
                         float lap_seconds = std::fmod(lap_it->second.lapTime, 60.0f);

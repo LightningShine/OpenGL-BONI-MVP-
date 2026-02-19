@@ -22,6 +22,23 @@ struct LapData
 };
 
 
+struct LapInfo
+{
+	float timefromstart;
+	double progress;
+	float gForceX, gForceY;
+	float aceleration, speed;
+	int curentPosition;
+};
+
+struct CarLapSessions
+{
+	int lapnumber;
+	int globalLapnumber;
+	int bestlapID;
+	std::vector<LapInfo> samples;
+};
+
 
 
 
@@ -50,21 +67,38 @@ public:
 	bool m_is_leader = false;  
 	
 	// ========================================================================
-	// LAP TIMING DATA (managed by RaceManager, stored in Vehicle)
+	// LAP TIMING DATA (RaceManager reads/writes, Vehicle stores)
 	// ========================================================================
-	std::map<int, LapData> m_laps;              // Map: lap number -> LapData
-	float m_current_lap_timer = 0.0f;           // Current lap timer (seconds)
-	int m_current_lap_number = 1;               // Current lap being driven
-	int m_completed_laps = 0;                   // Number of completed laps
-	bool m_has_started_first_lap = false;       // True after first S/F crossing
-	double m_prev_x = 0.0;                      // Previous frame position (for intersection)
-	double m_prev_y = 0.0;                      // Previous frame position (for intersection)
-	float m_best_lap_time = 0.0f;          // Best lap time (seconds)
-	double m_track_progress = 0.0;              // Accumulated distance along track (0.0 = start, 1.0 = full lap)
-	std::map<float, double> lapHistory; // Map: lap time -> track progress at that lap time
-	std::map<float, double> bestLap; // Map: lap time -> track progress at that lap time
-
-	glm::vec3 getColor() const;	
+	std::map<int, LapData> m_laps;
+	float m_current_lap_timer = 0.0f;
+	int m_current_lap_number = 1;
+	int m_completed_laps = 0;
+	bool m_has_started_first_lap = false;
+	float m_best_lap_time = -1.0f;
+	
+	// ========================================================================
+	// POSITION TRACKING (for line crossing detection)
+	// ========================================================================
+	double m_prev_x = 0.0;
+	double m_prev_y = 0.0;
+	
+	// ========================================================================
+	// TRACK PROGRESS (0.0 = start, 1.0 = full lap)
+	// ========================================================================
+	double m_track_progress = 0.0;
+	double m_prev_track_progress = 0.0;
+	
+	// ========================================================================
+	// FUTURE: Detailed telemetry history
+	// ========================================================================
+	std::map<float, double> lapHistory;
+	std::map<float, double> bestLap;
+	std::map<int, CarLapSessions> laps;
+	
+	// ========================================================================
+	// COLOR GENERATION
+	// ========================================================================
+	glm::vec3 getColor() const;
 };
 
 

@@ -1,5 +1,6 @@
 #include "./TimeDiff.h"
 
+
 float CalculateTimeDiff(int vehicleID)
 {
 	// 1. Get best lap time from vehicle by ID
@@ -9,6 +10,9 @@ float CalculateTimeDiff(int vehicleID)
 	// 3.2 Compare current track progress with the track progress at the best lap time
 	// 4. Return the time difference
 
-	return 0.0f; // Placeholder return value
+	g_vehicles.at(vehicleID).laps.at(1).samples;
 
+	return 0.0f; // Placeholder return value
+	
+	return 0.0f;
 };

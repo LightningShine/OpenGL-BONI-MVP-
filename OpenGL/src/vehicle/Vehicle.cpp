@@ -132,9 +132,10 @@ Vehicle::Vehicle(const TelemetryPacket& packet)
     coordinatesToMeters(m_lat_dd, m_lon_dd, m_meters_easting, m_meters_northing);
     getCoordinateDifferenceFromOrigin(m_meters_easting, m_meters_northing, m_normalized_x, m_normalized_y);
 
-    m_last_update_time = std::chrono::steady_clock::now();
+    m_prev_x = m_normalized_x;
+    m_prev_y = m_normalized_y;
     
-    // ✅ Вычисляем цвет ОДИН раз при создании
+    m_last_update_time = std::chrono::steady_clock::now();
     m_cached_color = getColor();
 }
 
