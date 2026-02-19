@@ -469,15 +469,6 @@ float RaceManager::GetVehicleBestLapTime(int32_t vehicleID) const
     auto it = m_vehicleTimings.find(vehicleID);
     if (it != m_vehicleTimings.end())
     {
-        // ✅ Логика отображения Best Lap зависит от LAP_START_NUMBER:
-        // 
-        // LAP_START_NUMBER = 0:
-        //   После 1 круга: last = Lap 0, best = Lap 0 (показываем)
-        //   После 2 кругов: last = Lap 1, best = лучший из 0 и 1
-        // 
-        // LAP_START_NUMBER = 1:
-        //   После 1 круга: last = Lap 1, best = черточки (нет с чем сравнивать)
-        //   После 2 кругов: last = Lap 2, best = лучший из 1 и 2
         
         int minCompletedLaps = (RaceConstants::LAP_START_NUMBER == 0) ? 1 : 2;
         

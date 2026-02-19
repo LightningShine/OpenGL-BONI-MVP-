@@ -37,6 +37,12 @@
     <Filter Include="libaries\include\serialib">
       <UniqueIdentifier>{605eb7ea-adfa-44af-8198-a0cc4c5a86e6}</UniqueIdentifier>
     </Filter>
+    <Filter Include="src\Racing">
+      <UniqueIdentifier>{afdc78fb-759f-418e-b74d-e8fd5f9c1c79}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="src\Racing\TimeDiff">
+      <UniqueIdentifier>{3e015ab8-0ee0-4673-90f2-0bf4b42f7f7c}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\core\main.cpp">
@@ -79,6 +85,10 @@
     <ClCompile Include="src\rendering\Render.cpp" />
     <ClCompile Include="UI_Elements.cpp" />
     <ClCompile Include="src\racing\RaceManager.cpp" />
+    <ClCompile Include="TimeDiff.cpp" />
+    <ClCompile Include="src\racing\TimeDiffirence\TimeDiff.cpp">
+      <Filter>src\Racing\TimeDiff</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\input\Input.h">
@@ -112,6 +122,10 @@
     <ClInclude Include="src\ui\UI_Elements_Config.h" />
     <ClInclude Include="UI_Elements.h" />
     <ClInclude Include="src\racing\RaceManager.h" />
+    <ClInclude Include="TimeDiff.h" />
+    <ClInclude Include="src\racing\TimeDiffirence\TimeDiff.h">
+      <Filter>src\Racing\TimeDiff</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <Text Include="RESTRUCTURE_SUMMARY.txt" />

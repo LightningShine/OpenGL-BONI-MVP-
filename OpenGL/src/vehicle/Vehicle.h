@@ -9,12 +9,8 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/type_ptr.hpp>
 
-// ✅ Система выбора машины для отслеживания
 extern int g_focused_vehicle_id;  // -1 = лидер (дефолт), иначе ID машины
 
-// ============================================================================
-// LAP DATA STRUCTURE (integrated into Vehicle for storage)
-// ============================================================================
 struct LapData
 {
 	float lapTime;                              // Lap time in seconds
@@ -25,11 +21,15 @@ struct LapData
 	LapData(float time, int position) : lapTime(time), positionAtFinish(position) {}
 };
 
+
+
+
+
 class Vehicle
 {
 public:
 	Vehicle();
-	Vehicle(double normalized_x, double normalized_y); // ✅ Конструктор с начальной позицией
+	Vehicle(double normalized_x, double normalized_y); 
 	Vehicle(const TelemetryPacket& packet);
 	
 	double m_lat_dd;
@@ -46,8 +46,8 @@ public:
 	int32_t m_id;
 	std::string name = "Unknown";
 	std::chrono::steady_clock::time_point m_last_update_time = std::chrono::steady_clock::now();
-	glm::vec3 m_cached_color; // ✅ Кешируем цвет при создании
-	bool m_is_leader = false;  // ✅ Флаг лидера гонки (треугольник вместо круга)
+	glm::vec3 m_cached_color; 
+	bool m_is_leader = false;  
 	
 	// ========================================================================
 	// LAP TIMING DATA (managed by RaceManager, stored in Vehicle)
@@ -59,13 +59,10 @@ public:
 	bool m_has_started_first_lap = false;       // True after first S/F crossing
 	double m_prev_x = 0.0;                      // Previous frame position (for intersection)
 	double m_prev_y = 0.0;                      // Previous frame position (for intersection)
-	float m_best_lap_time = 999999.0f;          // Best lap time (seconds)
-	
-	// ✅ Track progress (normalized 0.0-1.0 for accurate position determination)
+	float m_best_lap_time = 0.0f;          // Best lap time (seconds)
 	double m_track_progress = 0.0;              // Accumulated distance along track (0.0 = start, 1.0 = full lap)
-	
-	// ✅ Smoothed rotation angle for triangle rendering (radians)
-	float m_smoothed_rotation = 0.0f;           // Сглаженный угол поворота для плавного рендеринга
+	std::map<float, double> lapHistory; // Map: lap time -> track progress at that lap time
+	std::map<float, double> bestLap; // Map: lap time -> track progress at that lap time
 
 	glm::vec3 getColor() const;	
 };
@@ -75,11 +72,18 @@ extern std::map<int32_t, Vehicle> g_vehicles;
 extern std::mutex g_vehicles_mutex;   
 extern std::atomic<bool> g_is_vehicles_active;
 
-// ✅ Генератор уникальных ID для машин
-int32_t generateVehicleID();
 
-// === ФУНКЦИИ ===
+
+
+
+
+
+
+
+// === Function ===
 void vehicleLoop(); // Главный цикл обновления машин
+
+int32_t generateVehicleID();
 
 std::vector<glm::vec2> generateCircle(float radius, int segments = 16);
 std::vector<glm::vec2> generateTriangle(float size); // ✅ Треугольник для лидера
