@@ -2,6 +2,7 @@
 #include "../vehicle/Vehicle.h"
 #include "../rendering/Interpolation.h"
 #include "../Config.h"
+#include "TimeDiffirence/TimeDiff.h"
 #include <iostream>
 #include <fstream>
 #include <iomanip>
@@ -73,6 +74,32 @@ void RaceManager::Update(float deltaTime)
             vehicle.m_prev_track_progress = vehicle.m_track_progress;
         }
         
+        // ====================================================================
+        // TELEMETRY RECORDING (every frame during active lap)
+        // Records vehicle state for TimeDiff calculations
+        // ====================================================================
+        if (vehicle.m_has_started_first_lap)
+        {
+            LapInfo sample;
+            sample.timefromstart = vehicle.m_current_lap_timer;
+            sample.progress = vehicle.m_track_progress;
+            sample.timestamp = std::chrono::steady_clock::now();
+            sample.total_progress = vehicle.m_total_progress;
+            sample.gForceX = static_cast<float>(vehicle.m_g_force_x);
+            sample.gForceY = static_cast<float>(vehicle.m_g_force_y);
+            sample.aceleration = static_cast<float>(vehicle.m_acceleration);
+            sample.speed = static_cast<float>(vehicle.m_speed_kph);
+            sample.curentPosition = 0; // Updated after standings sort
+            
+            // Create lap entry if it doesn't exist
+            if (vehicle.laps.find(vehicle.m_current_lap_number) == vehicle.laps.end())
+            {
+                vehicle.laps[vehicle.m_current_lap_number] = CarLapSessions();
+                vehicle.laps[vehicle.m_current_lap_number].lapnumber = vehicle.m_current_lap_number;
+            }
+            vehicle.laps[vehicle.m_current_lap_number].samples.push_back(sample);
+        }
+        
         // Check for finish line crossing
         float intersectionRatio = 0.0f;
         bool crossed = CheckLineSegmentIntersection(
@@ -103,10 +130,11 @@ void RaceManager::Update(float deltaTime)
                 vehicle.m_laps[vehicle.m_current_lap_number] = lapData;
                 vehicle.m_completed_laps++;
                 
-                // Update best lap time
+                // Update best lap time and ID
                 if (crossingTime < vehicle.m_best_lap_time || vehicle.m_best_lap_time < 0.0f)
                 {
                     vehicle.m_best_lap_time = crossingTime;
+                    vehicle.bestlapID = vehicle.m_current_lap_number; // Track which lap is best
                 }
                 
                 std::cout << "[RACE MANAGER] Vehicle #" << vehicleID 
@@ -160,6 +188,26 @@ void RaceManager::Update(float deltaTime)
     
     // Update leader and positions
     std::vector<VehicleStanding> standings = GetStandingsInternal();
+    
+    // ====================================================================
+    // UPDATE CURRENT POSITION IN TELEMETRY SAMPLES
+    // ====================================================================
+    for (size_t i = 0; i < standings.size(); ++i)
+    {
+        auto veh_it = g_vehicles.find(standings[i].vehicleID);
+        if (veh_it != g_vehicles.end())
+        {
+            auto& vehicle = veh_it->second;
+            if (vehicle.m_has_started_first_lap && !vehicle.laps.empty())
+            {
+                auto lap_it = vehicle.laps.find(vehicle.m_current_lap_number);
+                if (lap_it != vehicle.laps.end() && !lap_it->second.samples.empty())
+                {
+                    lap_it->second.samples.back().curentPosition = static_cast<int>(i + 1);
+                }
+            }
+        }
+    }
     
     if (!standings.empty())
     {
@@ -248,12 +296,15 @@ void RaceManager::ResetSession()
     for (auto& [vehicleID, vehicle] : g_vehicles)
     {
         vehicle.m_laps.clear();
+        vehicle.laps.clear(); // Clear telemetry samples
         vehicle.m_current_lap_timer = 0.0f;
         vehicle.m_current_lap_number = RaceConstants::LAP_START_NUMBER;
         vehicle.m_completed_laps = 0;
         vehicle.m_has_started_first_lap = false;
         vehicle.m_best_lap_time = -1.0f;
+        vehicle.bestlapID = -1; // Reset best lap ID
         vehicle.m_prev_track_progress = 0.0;
+        vehicle.m_total_progress = 0.0;
     }
     
     std::cout << "[RACE MANAGER] Session reset - all lap data cleared" << std::endl;
@@ -286,6 +337,12 @@ std::vector<VehicleStanding> RaceManager::GetStandingsInternal() const
         {
             standing.totalRaceTime += lapData.lapTime;
         }
+        
+        // ====================================================================
+        // CALCULATE TIME DIFFERENCES (using Internal versions - no mutex)
+        // ====================================================================
+        standing.deltaTimeToBest = CalculateLapTimeDiffInternal(vehicleID);
+        standing.deltaTimeToLeader = CalculateLeaderTimeDiffInternal(vehicleID);
         
         standings.push_back(standing);
     }
@@ -428,43 +485,17 @@ float RaceManager::GetVehiclePreviousLapTime(int32_t vehicleID) const
     return -1.0f;
 }
 
-float RaceManager::GetVehicleDeltaTime(int32_t vehicleID) const
+// ============================================================================
+// TIME DIFFERENCE CALCULATIONS (delegates to TimeDiff functions)
+// ============================================================================
+float RaceManager::GetVehicleLapDelta(int32_t vehicleID) const
 {
-    std::lock_guard<std::mutex> lock(g_vehicles_mutex);
-    auto it = g_vehicles.find(vehicleID);
-    if (it != g_vehicles.end())
-    {
-        const auto& vehicle = it->second;
-        float currentTime = vehicle.m_current_lap_timer;
-        float compareTime = -1.0f;
-        
-        // TODO: Implement TimeDiff logic here (stub for now)
-        if (RaceConstants::LAP_DELTA_COMPARE_MODE == -1)
-        {
-            compareTime = vehicle.m_best_lap_time;
-        }
-        else if (RaceConstants::LAP_DELTA_COMPARE_MODE == 0)
-        {
-            int previousLapNumber = vehicle.m_current_lap_number - 1;
-            auto lapIt = vehicle.m_laps.find(previousLapNumber);
-            if (lapIt != vehicle.m_laps.end())
-                compareTime = lapIt->second.lapTime;
-        }
-        else
-        {
-            int specificLap = RaceConstants::LAP_DELTA_COMPARE_MODE;
-            auto lapIt = vehicle.m_laps.find(specificLap);
-            if (lapIt != vehicle.m_laps.end())
-                compareTime = lapIt->second.lapTime;
-        }
-        
-        if (compareTime < 0.0f)
-            return 0.0f;
-        
-        return currentTime - compareTime;
-    }
-    
-    return 0.0f;
+    return CalculateLapTimeDiff(vehicleID); // Thread-safe (has mutex inside)
+}
+
+float RaceManager::GetVehicleLeaderDelta(int32_t vehicleID) const
+{
+    return CalculateLeaderTimeDiff(vehicleID); // Thread-safe (has mutex inside)
 }
 
 int RaceManager::GetVehicleCurrentLapNumber(int32_t vehicleID) const
@@ -562,6 +593,27 @@ bool RaceManager::SaveResultsToFile() const
             // Progress (distance from start: 0.000 to 0.999)
             file << "  Progress: " << std::fixed << std::setprecision(3) 
                  << standing.distanceFromStart << "\n";
+            
+            // ====================================================================
+            // TIME DIFFERENCES
+            // ====================================================================
+            if (standing.deltaTimeToBest != 0.0f && standing.bestLapTime > 0.0f)
+            {
+                file << "  Delta to Best: ";
+                if (standing.deltaTimeToBest > 0)
+                    file << "+" << std::fixed << std::setprecision(3) << standing.deltaTimeToBest << "s\n";
+                else
+                    file << std::fixed << std::setprecision(3) << standing.deltaTimeToBest << "s\n";
+            }
+            
+            if (!standing.isLapped && standing.deltaTimeToLeader != 0.0f)
+            {
+                file << "  Delta to Leader: ";
+                if (standing.deltaTimeToLeader > 0)
+                    file << "+" << std::fixed << std::setprecision(3) << standing.deltaTimeToLeader << "s\n";
+                else
+                    file << std::fixed << std::setprecision(3) << standing.deltaTimeToLeader << "s\n";
+            }
             
             // Total race time (sum of all laps + current lap)
             if (standing.completedLaps > 0 || standing.currentLapTime > 0.0f)

@@ -694,7 +694,7 @@ void UIElements::drawLeaderboard()
         ImGui::TextColored(text_color, "%s", name_buffer);
         ImGui::SetWindowFontScale(1.0f);
         
-        // Delta (только для не-лидеров) или "Leader" (золотой)
+        // Delta (for non-leaders) or "Leader" text (golden)
         bool is_leader = (i == 0);
         if (!is_leader)
         {
@@ -716,21 +716,23 @@ void UIElements::drawLeaderboard()
             }
             else
             {
-                // Time delta
-                float time_delta = driver.totalRaceTime + driver.currentLapTime - 
-                                  (standings[0].totalRaceTime + standings[0].currentLapTime);
+                // Use pre-calculated leader delta from TimeDiff function
+                float time_delta = driver.deltaTimeToLeader;
                 
-                snprintf(delta_buffer, sizeof(delta_buffer), "%.3f", time_delta);
-                
-                ImGui::SetCursorPos(ImVec2(delta_x, current_y - window_pos.y));
-                ImGui::SetWindowFontScale(delta_size / base_font_size);
-                ImGui::TextColored(text_color, "%s", delta_buffer);
-                ImGui::SetWindowFontScale(1.0f);
+                if (time_delta != 0.0f)
+                {
+                    snprintf(delta_buffer, sizeof(delta_buffer), "+%.3f", time_delta);
+                    
+                    ImGui::SetCursorPos(ImVec2(delta_x, current_y - window_pos.y));
+                    ImGui::SetWindowFontScale(delta_size / base_font_size);
+                    ImGui::TextColored(text_color, "%s", delta_buffer);
+                    ImGui::SetWindowFontScale(1.0f);
+                }
             }
         }
         else
         {
-            // ✅ Leader: только это слово золотое!
+            // Leader: golden text
             ImGui::SetCursorPos(ImVec2(delta_x, current_y - window_pos.y));
             ImGui::SetWindowFontScale(delta_size / base_font_size);
             ImGui::TextColored(leader_color, "Leader");

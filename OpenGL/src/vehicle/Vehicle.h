@@ -26,16 +26,18 @@ struct LapInfo
 {
 	float timefromstart;
 	double progress;
+	std::chrono::steady_clock::time_point timestamp;
+	double total_progress;
 	float gForceX, gForceY;
 	float aceleration, speed;
 	int curentPosition;
+	
 };
 
 struct CarLapSessions
 {
 	int lapnumber;
 	int globalLapnumber;
-	int bestlapID;
 	std::vector<LapInfo> samples;
 };
 
@@ -73,8 +75,11 @@ public:
 	float m_current_lap_timer = 0.0f;
 	int m_current_lap_number = 1;
 	int m_completed_laps = 0;
+	double m_total_progress = 0.0;
 	bool m_has_started_first_lap = false;
 	float m_best_lap_time = -1.0f;
+	int bestlapID = -1;
+
 	
 	// ========================================================================
 	// POSITION TRACKING (for line crossing detection)
@@ -91,8 +96,6 @@ public:
 	// ========================================================================
 	// FUTURE: Detailed telemetry history
 	// ========================================================================
-	std::map<float, double> lapHistory;
-	std::map<float, double> bestLap;
 	std::map<int, CarLapSessions> laps;
 	
 	// ========================================================================

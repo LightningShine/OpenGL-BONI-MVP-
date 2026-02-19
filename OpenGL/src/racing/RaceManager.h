@@ -21,12 +21,17 @@ struct VehicleStanding
     double distanceFromStart;        // Progress along track (0.0 to 1.0)
     int position;                    // Current race position (1st, 2nd, etc.)
     bool isLapped;                   // True if behind leader by 1+ laps
-    bool hasStartedFirstLap;         // ? True if vehicle started racing
+    bool hasStartedFirstLap;         // True if vehicle started racing
+    
+    // Time difference calculations
+    float deltaTimeToBest;           // Delta to best lap (from CalculateLapTimeDiff)
+    float deltaTimeToLeader;         // Delta to leader (from CalculateLeaderTimeDiff)
     
     VehicleStanding() 
         : vehicleID(0), completedLaps(0), currentLapNumber(0), currentLapTime(0.0f), 
           bestLapTime(-1.0f), totalRaceTime(0.0f), distanceFromStart(0.0), 
-          position(0), isLapped(false), hasStartedFirstLap(false) {}  // -1 = no data yet
+          position(0), isLapped(false), hasStartedFirstLap(false),
+          deltaTimeToBest(0.0f), deltaTimeToLeader(0.0f) {}
 };
 
 // ============================================================================
@@ -61,11 +66,12 @@ public:
     float GetVehicleCurrentLapTime(int32_t vehicleID) const;
     int GetVehicleCompletedLaps(int32_t vehicleID) const;
     float GetVehicleBestLapTime(int32_t vehicleID) const;
-    
-    // ? NEW: Lap Timer Data (??? ??????????? ? UI)
-    float GetVehiclePreviousLapTime(int32_t vehicleID) const;       // ????? ??????????? ?????
-    float GetVehicleDeltaTime(int32_t vehicleID) const;
+    float GetVehiclePreviousLapTime(int32_t vehicleID) const;
     int GetVehicleCurrentLapNumber(int32_t vehicleID) const;
+    
+    // Time difference calculations (delegates to TimeDiff functions)
+    float GetVehicleLapDelta(int32_t vehicleID) const;      // Delta to best lap
+    float GetVehicleLeaderDelta(int32_t vehicleID) const;   // Delta to leader
     
     // ========================================================================
     // DIAGNOSTICS

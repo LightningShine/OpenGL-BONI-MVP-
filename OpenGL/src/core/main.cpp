@@ -1023,20 +1023,20 @@ int main()
 					}
 
 
-					// Получаем данные для отображения
+					// Get data for lap timer display
 					if (trackedVehicleId != -1)
 					{
 						float currentLapTime = g_race_manager->GetVehicleCurrentLapTime(trackedVehicleId);
 						float previousLapTime = g_race_manager->GetVehiclePreviousLapTime(trackedVehicleId);
 						float bestLapTime = g_race_manager->GetVehicleBestLapTime(trackedVehicleId);
-						float deltaTime = g_race_manager->GetVehicleDeltaTime(trackedVehicleId);
+						float deltaTime = g_race_manager->GetVehicleLapDelta(trackedVehicleId); // Use TimeDiff function
 
-						// Отображаем Lap Timer
+						// Display Lap Timer
 						ui.getElements()->drawLapTimer(currentLapTime, previousLapTime, bestLapTime, deltaTime);
 					}
 					else
 					{
-						// Нет машин - показываем пустой lap timer
+						// No vehicles - show empty lap timer
 						ui.getElements()->drawLapTimer(0.0f, -1.0f, -1.0f, 0.0f);
 					}
 					
