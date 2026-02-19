@@ -1039,6 +1039,9 @@ int main()
 						// Нет машин - показываем пустой lap timer
 						ui.getElements()->drawLapTimer(0.0f, -1.0f, -1.0f, 0.0f);
 					}
+					
+					// ✅ Render leaderboard
+					ui.getElements()->drawLeaderboard();
 				}
 				else
 				{

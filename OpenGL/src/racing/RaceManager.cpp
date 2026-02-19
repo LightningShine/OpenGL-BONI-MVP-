@@ -330,6 +330,7 @@ std::vector<VehicleStanding> RaceManager::GetStandingsInternal() const
         {
             const VehicleTimingData& timing = it->second;
             standing.completedLaps = timing.completedLaps;
+            standing.currentLapNumber = timing.currentLapNumber;
             standing.currentLapTime = timing.currentLapTimer;
             
             // ✅ Best lap логика зависит от LAP_START_NUMBER

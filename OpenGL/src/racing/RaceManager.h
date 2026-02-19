@@ -14,6 +14,7 @@ struct VehicleStanding
 {
     int32_t vehicleID;
     int completedLaps;
+    int currentLapNumber;            // Current lap being driven
     float currentLapTime;
     float bestLapTime;
     float totalRaceTime;             // Sum of all completed lap times
@@ -23,7 +24,7 @@ struct VehicleStanding
     bool hasStartedFirstLap;         // ? True if vehicle started racing
     
     VehicleStanding() 
-        : vehicleID(0), completedLaps(0), currentLapTime(0.0f), 
+        : vehicleID(0), completedLaps(0), currentLapNumber(0), currentLapTime(0.0f), 
           bestLapTime(-1.0f), totalRaceTime(0.0f), distanceFromStart(0.0), 
           position(0), isLapped(false), hasStartedFirstLap(false) {}  // -1 = no data yet
 };

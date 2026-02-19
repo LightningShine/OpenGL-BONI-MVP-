@@ -28,6 +28,9 @@ public:
                      float best_lap_time = -1.0f,   // -1 means no data
                      float time_diff = 0.0f);
     
+    // Leaderboard
+    void drawLeaderboard();
+    
     // Start/Finish Text (scaled with zoom, behind UI)
     void RenderStartFinishText(float camera_zoom, const glm::vec2& camera_pos, 
                                float window_width, float window_height);

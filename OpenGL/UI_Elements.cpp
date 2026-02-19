@@ -1,4 +1,4 @@
-#include "UI_Elements.h"
+﻿#include "UI_Elements.h"
 #include "src/ui/UI_Elements_Config.h"
 #include "src/ui/UI_Config.h"
 #include "src/input/Input.h"
@@ -496,4 +496,257 @@ void UIElements::RenderStartFinishText(float camera_zoom, const glm::vec2& camer
                      text);
     
     ImGui::End();
+}
+
+// ============================================================================
+// LEADERBOARD with Fixed Aspect Ratio
+// ============================================================================
+
+void UIElements::drawLeaderboard()
+{
+    // Get race standings (thread-safe)
+    extern RaceManager* g_race_manager;
+    extern std::mutex g_vehicles_mutex;
+    extern int g_focused_vehicle_id;
+    
+    if (!g_race_manager)
+        return;
+    
+    std::vector<VehicleStanding> standings = g_race_manager->GetStandings();
+    
+    if (standings.empty())
+        return;
+    
+    // ✅ Нужен шрифт Russo One
+    if (!m_font_title)
+        return;
+    
+    ImGuiIO& io = ImGui::GetIO();
+    ImVec2 display_size = io.DisplaySize;
+    
+    // Calculate window dimensions maintaining aspect ratio
+    float window_height = display_size.y * UIElementsConfig::Leaderboard::HEIGHT_RATIO;
+    float window_width = display_size.x * UIElementsConfig::Leaderboard::WIDTH_RATIO;
+    
+    // Position: left margin
+    float left_margin = display_size.x * ( 1.0f - UIElementsConfig::Leaderboard::LEFT_MARGIN_RATIO ) - window_width;
+    ImVec2 window_pos(left_margin, display_size.y * 0.05f); // 5% from top
+    
+    // Setup window
+    ImGui::SetNextWindowPos(window_pos);
+    ImGui::SetNextWindowSize(ImVec2(window_width, window_height));
+    
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(
+        UIElementsConfig::Leaderboard::BG_COLOR_R,
+        UIElementsConfig::Leaderboard::BG_COLOR_G,
+        UIElementsConfig::Leaderboard::BG_COLOR_B,
+        UIElementsConfig::Leaderboard::BG_COLOR_A
+    ));
+    
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    
+    ImGui::Begin("##Leaderboard", nullptr, 
+        ImGuiWindowFlags_NoTitleBar | 
+        ImGuiWindowFlags_NoResize | 
+        ImGuiWindowFlags_NoMove | 
+        ImGuiWindowFlags_NoScrollbar |
+        ImGuiWindowFlags_NoCollapse |
+        ImGuiWindowFlags_NoSavedSettings);
+    
+    ImDrawList* draw_list = ImGui::GetWindowDrawList();
+    
+    // ✅ Используем Russo One для всего
+    ImGui::PushFont(m_font_title);
+    
+    // Text padding
+    float text_padding = window_width * (UIElementsConfig::Leaderboard::TEXT_PADDING_RATIO / UIElementsConfig::Leaderboard::WIDTH_RATIO);
+    
+    // Font sizes (относительно шрифта Russo One)
+    float base_font_size = ImGui::GetFontSize(); // Размер после PushFont
+    float header_size = display_size.y * UIElementsConfig::Leaderboard::HEADER_SIZE_RATIO;
+    float position_size = display_size.y * UIElementsConfig::Leaderboard::POSITION_SIZE_RATIO;
+    float name_size = display_size.y * UIElementsConfig::Leaderboard::NAME_SIZE_RATIO;
+    float delta_size = display_size.y * UIElementsConfig::Leaderboard::DELTA_SIZE_RATIO;
+    
+    // Row height
+    float row_height = display_size.y * UIElementsConfig::Leaderboard::ROW_HEIGHT_RATIO;
+    
+    // Colors
+    ImVec4 leader_color(
+        UIElementsConfig::Leaderboard::LEADER_COLOR_R,
+        UIElementsConfig::Leaderboard::LEADER_COLOR_G,
+        UIElementsConfig::Leaderboard::LEADER_COLOR_B,
+        1.0f
+    );
+    
+    ImVec4 text_color(
+        UIElementsConfig::Leaderboard::TEXT_COLOR_R,
+        UIElementsConfig::Leaderboard::TEXT_COLOR_G,
+        UIElementsConfig::Leaderboard::TEXT_COLOR_B,
+        1.0f
+    );
+    
+    ImVec4 lap_color(
+        UIElementsConfig::Leaderboard::LAP_COLOR_R,
+        UIElementsConfig::Leaderboard::LAP_COLOR_G,
+        UIElementsConfig::Leaderboard::LAP_COLOR_B,
+        1.0f
+    );
+    
+    ImVec4 lapped_color(
+        UIElementsConfig::Leaderboard::LAPPED_COLOR_R,
+        UIElementsConfig::Leaderboard::LAPPED_COLOR_G,
+        UIElementsConfig::Leaderboard::LAPPED_COLOR_B,
+        1.0f
+    );
+    
+    float current_y = window_pos.y + 15.0f; // Top padding
+    
+    // === HEADER: CURRENT LAP X ===
+    if (!standings.empty())
+    {
+        int leader_lap = standings[0].currentLapNumber;
+        char header_buffer[64];
+        snprintf(header_buffer, sizeof(header_buffer), "CURRENT LAP %d", leader_lap);
+        
+        ImGui::SetCursorPos(ImVec2(text_padding, current_y - window_pos.y));
+        ImGui::SetWindowFontScale(header_size / base_font_size);
+        ImGui::TextColored(lap_color, "%s", header_buffer);
+        ImGui::SetWindowFontScale(1.0f);
+        
+        current_y += header_size + 8.0f;
+    }
+    
+    // === SEPARATOR LINE ===
+    float line_y = current_y;
+    ImU32 line_color = IM_COL32(
+        static_cast<int>(UIElementsConfig::Leaderboard::LINE_COLOR_R * 255),
+        static_cast<int>(UIElementsConfig::Leaderboard::LINE_COLOR_G * 255),
+        static_cast<int>(UIElementsConfig::Leaderboard::LINE_COLOR_B * 255),
+        255
+    );
+    
+    draw_list->AddLine(
+        ImVec2(window_pos.x + text_padding, line_y),
+        ImVec2(window_pos.x + window_width - text_padding, line_y),
+        line_color,
+        UIElementsConfig::Leaderboard::LINE_THICKNESS
+    );
+    
+    current_y += 12.0f; // Space after line
+    
+    // === STANDINGS ===
+    int leader_laps = standings.empty() ? 0 : standings[0].completedLaps;
+    
+    for (size_t i = 0; i < standings.size(); i++)
+    {
+        const VehicleStanding& driver = standings[i];
+        
+        // Check if this row needs background (focused vehicle)
+        bool is_focused = (driver.vehicleID == g_focused_vehicle_id);
+        
+        if (is_focused)
+        {
+            ImU32 focus_bg = IM_COL32(
+                static_cast<int>(UIElementsConfig::Leaderboard::FOCUS_BG_R * 255),
+                static_cast<int>(UIElementsConfig::Leaderboard::FOCUS_BG_G * 255),
+                static_cast<int>(UIElementsConfig::Leaderboard::FOCUS_BG_B * 255),
+                static_cast<int>(UIElementsConfig::Leaderboard::FOCUS_BG_A * 255)
+            );
+            
+            draw_list->AddRectFilled(
+                ImVec2(window_pos.x, current_y - 2.0f),
+                ImVec2(window_pos.x + window_width, current_y + row_height),
+                focus_bg
+            );
+        }
+        
+        // ✅ Лидер: только "Leader" золотой, остальное обычный цвет
+        
+        
+        // ✅ НОВАЯ ЛОГИКА ОТСТУПОВ:
+        // Позиция: без отступа (прямо у края)
+        // Имя: с отступом
+        // Дельта: справа
+        
+        float position_x = UIElementsConfig::Leaderboard::TEXT_PADDING_RATIO * window_pos.x; // Позиция у левого края (8px от края)
+        float name_x = position_x + text_padding; // Имя с отступом
+        float delta_x = window_width * 0.5; // Дельта справа
+        //float delta_x = name_x + text_padding; // Дельта справа
+        
+        // Position number (всегда обычный цвет)
+        char pos_buffer[16];
+        snprintf(pos_buffer, sizeof(pos_buffer), "%d", driver.position);
+        
+        ImGui::SetCursorPos(ImVec2(position_x, current_y - window_pos.y));
+        ImGui::SetWindowFontScale(position_size / base_font_size);
+        ImGui::TextColored(text_color, "%s", pos_buffer);
+        ImGui::SetWindowFontScale(1.0f);
+        
+        // Driver name (всегда обычный цвет)
+        char name_buffer[16];
+        snprintf(name_buffer, sizeof(name_buffer), "CAR %d", driver.vehicleID);
+        
+        ImGui::SetCursorPos(ImVec2(name_x, current_y - window_pos.y));
+        ImGui::SetWindowFontScale(name_size / base_font_size);
+        ImGui::TextColored(text_color, "%s", name_buffer);
+        ImGui::SetWindowFontScale(1.0f);
+        
+        // Delta (только для не-лидеров) или "Leader" (золотой)
+        bool is_leader = (i == 0);
+        if (!is_leader)
+        {
+            char delta_buffer[32];
+            int lap_diff = leader_laps - driver.completedLaps;
+            
+            if (lap_diff >= 1)
+            {
+                // Lapped: show "+N LAP"
+                if (lap_diff == 1)
+                    snprintf(delta_buffer, sizeof(delta_buffer), "+1 LAP");
+                else
+                    snprintf(delta_buffer, sizeof(delta_buffer), "+%d LAPS", lap_diff);
+                
+                ImGui::SetCursorPos(ImVec2(delta_x, current_y - window_pos.y));
+                ImGui::SetWindowFontScale(delta_size / base_font_size);
+                ImGui::TextColored(lapped_color, "%s", delta_buffer);
+                ImGui::SetWindowFontScale(1.0f);
+            }
+            else
+            {
+                // Time delta
+                float time_delta = driver.totalRaceTime + driver.currentLapTime - 
+                                  (standings[0].totalRaceTime + standings[0].currentLapTime);
+                
+                snprintf(delta_buffer, sizeof(delta_buffer), "%.3f", time_delta);
+                
+                ImGui::SetCursorPos(ImVec2(delta_x, current_y - window_pos.y));
+                ImGui::SetWindowFontScale(delta_size / base_font_size);
+                ImGui::TextColored(text_color, "%s", delta_buffer);
+                ImGui::SetWindowFontScale(1.0f);
+            }
+        }
+        else
+        {
+            // ✅ Leader: только это слово золотое!
+            ImGui::SetCursorPos(ImVec2(delta_x, current_y - window_pos.y));
+            ImGui::SetWindowFontScale(delta_size / base_font_size);
+            ImGui::TextColored(leader_color, "Leader");
+            ImGui::SetWindowFontScale(1.0f);
+        }
+        
+        current_y += row_height;
+        
+        // Stop if we exceed window height
+        if (current_y > window_pos.y + window_height - 10.0f)
+            break;
+    }
+    
+    ImGui::PopFont();
+    ImGui::End();
+    
+    ImGui::PopStyleVar(3);
+    ImGui::PopStyleColor();
 }
