@@ -60,24 +60,11 @@ void RaceManager::Update(float deltaTime)
 {
     if (!g_is_map_loaded || !m_lineInitialized)
         return;
-    
+
     std::lock_guard<std::mutex> lock(g_vehicles_mutex);
-    
+
     for (auto& [vehicleID, vehicle] : g_vehicles)
     {
-        double frame_start_x = vehicle.m_normalized_x;
-        double frame_start_y = vehicle.m_normalized_y;
-        double frame_start_progress = vehicle.m_track_progress;
-
-        // Initialize prev position on first frame
-        if (vehicle.m_prev_x == 0.0 && vehicle.m_prev_y == 0.0 &&
-            vehicle.m_normalized_x != 0.0 && vehicle.m_normalized_y != 0.0)
-        {
-            vehicle.m_prev_x = vehicle.m_normalized_x;
-            vehicle.m_prev_y = vehicle.m_normalized_y;
-            vehicle.m_prev_track_progress = vehicle.m_track_progress;
-        }
-        
         // ====================================================================
         // TELEMETRY RECORDING (every frame during active lap)
         // Records vehicle state for TimeDiff calculations
@@ -183,12 +170,6 @@ void RaceManager::Update(float deltaTime)
         {
             vehicle.m_current_lap_timer += deltaTime;
         }
-        
-        // Update previous position for next frame
-        
-        vehicle.m_prev_x = frame_start_x;
-        vehicle.m_prev_y = frame_start_y;
-        vehicle.m_prev_track_progress = frame_start_progress;
 
         // ====================================================================
         // UPDATE TOTAL PROGRESS (lap number + current lap progress)

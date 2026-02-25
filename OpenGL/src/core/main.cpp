@@ -107,27 +107,29 @@ const std::vector<SplinePoint>* smooth_track = nullptr)
 	if (glfwGetKey(window, GLFW_KEY_T) == GLFW_PRESS && !wasTPressed)
 	{
 		wasTPressed = true;
-		
+
 		// Guard clauses
 		if (!g_is_map_loaded) {
 			std::cout << "Cannot create vehicle - map not loaded!" << std::endl;
 		} else if (smooth_track->empty()) {
 			std::cout << "Cannot create vehicle - track not interpolated!" << std::endl;
 		} else {
-			// Create vehicle at START / FINISH line (first point of track)
-			const SplinePoint& start_point = (*smooth_track)[0];
-			
-			// ✅ Используем новый конструктор с начальной позицией
-			Vehicle new_vehicle(start_point.position.x, start_point.position.y);
+			// Generate unique ID for simulation
+			static int next_vehicle_id = 1;
+			int vehicle_id = next_vehicle_id++;
 
-			int vehicle_id = new_vehicle.m_id;
+			// ✅ Create Vehicle with explicit ID at start position
+			const SplinePoint& start_point = (*smooth_track)[0];
+			Vehicle new_vehicle(vehicle_id, start_point.position.x, start_point.position.y);
 
 			{
 				std::lock_guard<std::mutex> lock(g_vehicles_mutex);
 				g_vehicles[vehicle_id] = new_vehicle;
 			}
 
-			// Start automatic simulation along track
+			std::cout << "[SIM] Starting vehicle #" << vehicle_id << " simulation on track" << std::endl;
+
+			// Start simulation - packets will UPDATE the vehicle (not recreate)
 			simulateVehicleMovement(vehicle_id, *smooth_track);
 		}
 	}
@@ -878,6 +880,14 @@ int main()
 
 	while (!glfwWindowShouldClose(window)) // Main loop that runs until the window is closed
 	{
+		// ✅ CRITICAL: Skip rendering when window is minimized/iconified
+		// Prevents OpenGL errors and crashes when context is unavailable
+		if (glfwGetWindowAttrib(window, GLFW_ICONIFIED))
+		{
+			glfwWaitEvents();  // Sleep until window is restored (saves CPU)
+			continue;
+		}
+
 		// Calculate delta time
 		auto currentFrameTime = std::chrono::steady_clock::now();
 		float deltaTime = std::chrono::duration<float>(currentFrameTime - lastFrameTime).count();

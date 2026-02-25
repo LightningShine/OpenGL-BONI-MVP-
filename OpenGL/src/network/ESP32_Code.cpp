@@ -57,6 +57,12 @@ void processIncomingTelemetry(const TelemetryPacket& packet)
             // Update existing vehicle
             Vehicle& vehicle = it->second;
 
+            // ✅ CRITICAL: Save old position BEFORE updating coordinates
+            // This allows RaceManager to detect line crossing and renderer to calculate direction
+            vehicle.m_prev_x = vehicle.m_normalized_x;
+            vehicle.m_prev_y = vehicle.m_normalized_y;
+            vehicle.m_prev_track_progress = vehicle.m_track_progress;
+
             vehicle.m_lat_dd = packet.lat / 1e7;
             vehicle.m_lon_dd = packet.lon / 1e7;
             vehicle.m_speed_kph = packet.speed / 100.0;
@@ -74,7 +80,13 @@ void processIncomingTelemetry(const TelemetryPacket& packet)
         else
         {
             // Create new vehicle from packet
-            g_vehicles[packet.ID] = Vehicle(packet);
+            Vehicle new_vehicle(packet);
+
+            // ✅ CRITICAL: Initialize prev position for first frame
+            new_vehicle.m_prev_x = new_vehicle.m_normalized_x;
+            new_vehicle.m_prev_y = new_vehicle.m_normalized_y;
+
+            g_vehicles[packet.ID] = new_vehicle;
 
             std::cout << "[TELEMETRY] New vehicle detected: ID #" << packet.ID << std::endl;
         }
