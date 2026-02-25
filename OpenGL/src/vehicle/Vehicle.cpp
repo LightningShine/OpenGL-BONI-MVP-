@@ -3,6 +3,7 @@
 #include "../Config.h"
 #include <cmath>
 #include <iostream>
+#include <iomanip>
 #include <thread>
 #include <GeographicLib/UTMUPS.hpp>
 
@@ -249,29 +250,80 @@ void renderVehicle(GLuint shader_program, GLuint vao, GLuint vbo,
     const std::vector<glm::vec2>& outlineShape = vehicle.m_is_leader ? triangleOutline : circleOutline;
     const std::vector<glm::vec2>& bodyShape = vehicle.m_is_leader ? triangleBody : circleBody;
 
-    // ✅ ВЫЧИСЛЯЕМ УГОЛ ПОВОРОТА для треугольника лидера (САМЫЙ ПЕРВЫЙ АЛГОРИТМ - без сглаживания)
-    float rotationAngle = 0.0f;
+    // ========================================================================
+    // ✅ CALCULATE ROTATION ANGLE WITH PERSISTENCE
+    // Caches last valid angle to prevent flickering when GPS jitter causes
+    // movement < MIN_MOVEMENT threshold. Uses exponential smoothing for gradual rotation.
+    // ========================================================================
+    float rotationAngle = vehicle.m_last_rotation_angle;  // ✅ Start with cached angle
+
     if (vehicle.m_is_leader)
     {
-        // Вектор направления движения
         glm::vec2 direction(
             vehicle.m_normalized_x - vehicle.m_prev_x,
             vehicle.m_normalized_y - vehicle.m_prev_y
         );
-        
+
         float length = glm::length(direction);
-        if (length > 0.0001f) // Проверяем что машина движется
+        const float MIN_MOVEMENT = 0.0001f;  // ~10cm at normalized scale
+
+        // ✅ TEMPORARY DEBUG (remove after testing)
+        static int debugCounter = 0;
+        if (++debugCounter % 60 == 0)  // Every ~1 second (60 FPS)
         {
-            // ✅ ПРЯМОЕ ВЫЧИСЛЕНИЕ УГЛА (без сглаживания - самый первый алгоритм)
-            // atan2 возвращает угол от оси X
-            // Вычитаем PI/2 потому что треугольник по умолчанию смотрит вверх (ось Y)
-            rotationAngle = std::atan2(direction.y, direction.x) - glm::half_pi<float>();
+            std::cout << "[ROTATION DEBUG] ID=" << vehicle.m_id
+                      << " | curr=(" << std::fixed << std::setprecision(6) 
+                      << vehicle.m_normalized_x << ", " << vehicle.m_normalized_y << ")"
+                      << " | prev=(" << vehicle.m_prev_x << ", " << vehicle.m_prev_y << ")"
+                      << " | dir=(" << direction.x << ", " << direction.y << ")"
+                      << " | len=" << length
+                      << " | threshold=" << MIN_MOVEMENT << std::endl;
         }
+
+        if (length > MIN_MOVEMENT)
+        {
+            // Calculate new angle
+            // atan2 returns angle from X-axis, subtract PI/2 because triangle points up (Y-axis)
+            float newAngle = std::atan2(direction.y, direction.x) - glm::half_pi<float>();
+
+            // ✅ SMOOTH INTERPOLATION (exponential smoothing)
+            // Prevents sudden jumps from GPS noise
+            const float SMOOTHING_FACTOR = 0.3f;  // 0.0 = no change, 1.0 = instant
+
+            // Handle angle wrapping (-PI to PI)
+            float angleDiff = newAngle - vehicle.m_last_rotation_angle;
+            if (angleDiff > glm::pi<float>())
+                angleDiff -= 2.0f * glm::pi<float>();
+            else if (angleDiff < -glm::pi<float>())
+                angleDiff += 2.0f * glm::pi<float>();
+
+            // Smooth interpolation
+            rotationAngle = vehicle.m_last_rotation_angle + angleDiff * SMOOTHING_FACTOR;
+
+            // ✅ Cache the angle for next frame (mutable allows modification in const context)
+            vehicle.m_last_rotation_angle = rotationAngle;
+
+            // ✅ DEBUG: Show angle changes
+            if (debugCounter % 60 == 0)
+            {
+                std::cout << "  -> Movement detected! newAngle=" << (newAngle * 180.0f / 3.14159f) 
+                          << "° | smoothed=" << (rotationAngle * 180.0f / 3.14159f) << "°" << std::endl;
+            }
+        }
+        else
+        {
+            // ✅ DEBUG: Movement too small
+            if (debugCounter % 60 == 0)
+            {
+                std::cout << "  -> Movement too small (< threshold)" << std::endl;
+            }
+        }
+        // ✅ ELSE: Keep last valid angle (don't reset to 0!)
     }
 
     // ✅ ОПТИМИЗАЦИЯ: Создаем матрицу вращения один раз
     glm::mat2 rotationMatrix(1.0f);
-    if (vehicle.m_is_leader && rotationAngle != 0.0f)
+    if (vehicle.m_is_leader)
     {
         float cosAngle = std::cos(rotationAngle);
         float sinAngle = std::sin(rotationAngle);
@@ -286,7 +338,7 @@ void renderVehicle(GLuint shader_program, GLuint vao, GLuint vbo,
     outlineVertices.reserve(outlineShape.size());
     for (const auto& vertex : outlineShape) {
         // ✅ Применяем матрицу поворота (экономит вычисления cos/sin)
-        glm::vec2 transformedVertex = (vehicle.m_is_leader && rotationAngle != 0.0f) 
+        glm::vec2 transformedVertex = (vehicle.m_is_leader) 
             ? rotationMatrix * vertex 
             : vertex;
         
@@ -314,7 +366,7 @@ void renderVehicle(GLuint shader_program, GLuint vao, GLuint vbo,
     bodyVertices.reserve(bodyShape.size());
     for (const auto& vertex : bodyShape) {
         // ✅ Применяем матрицу поворота (экономит вычисления cos/sin)
-        glm::vec2 transformedVertex = (vehicle.m_is_leader && rotationAngle != 0.0f) 
+        glm::vec2 transformedVertex = (vehicle.m_is_leader) 
             ? rotationMatrix * vertex 
             : vertex;
         

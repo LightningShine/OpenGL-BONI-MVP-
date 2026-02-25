@@ -66,3 +66,6 @@ void ChangeisServerRunning();
 void serverStop();
 
 void continueServerRunning();
+
+// Broadcast telemetry packet to all authenticated clients
+void BroadcastTelemetryToClients(const TelemetryPacket& packet);

@@ -4,6 +4,13 @@
 #include <limits>
 #include <mutex>
 #include <cmath>
+#include <iostream>
+#include <iomanip>
+
+// ============================================================================
+// DEBUG: Uncomment to enable detailed time diff logging
+// ============================================================================
+#define DEBUG_TIME_DIFF
 
 // Prevent Windows.h min/max macros from interfering
 #undef max
@@ -99,22 +106,35 @@ float CalculateLeaderTimeDiffInternal(int vehicleID)
 
     auto& leader = g_vehicles.at(leaderID);
 
-    double targetProgress = vehicle.m_total_progress;
+    // ========================================================================
+    // Get vehicle's CURRENT position (total_progress accounts for lap count)
+    // ========================================================================
+    double vehicleProgress = vehicle.m_total_progress;
 
-    // === Search for closest leader progress ===
-    bool found = false;
-    std::chrono::steady_clock::time_point leaderTime;
+    // ========================================================================
+    // Find when LEADER was at the SAME total_progress point
+    // Uses total_progress (not track_progress) to account for lap count
+    // This prevents cars 1 lap behind from being considered ahead
+    // ========================================================================
+    std::chrono::steady_clock::time_point leaderTimeAtThisProgress;
     double bestDiff = std::numeric_limits<double>::max();
+    bool found = false;
+    int foundLapNum = -1;
+    double foundProgress = 0.0;
 
+    // Search all leader's lap history
     for (auto& [lapNum, lap] : leader.laps)
     {
         for (auto& sample : lap.samples)
         {
-            double diff = std::abs(sample.total_progress - targetProgress);
+            double diff = std::abs(sample.total_progress - vehicleProgress);
+            
             if (diff < bestDiff)
             {
                 bestDiff = diff;
-                leaderTime = sample.timestamp;
+                leaderTimeAtThisProgress = sample.timestamp;
+                foundLapNum = lapNum;
+                foundProgress = sample.total_progress;
                 found = true;
             }
         }
@@ -122,11 +142,25 @@ float CalculateLeaderTimeDiffInternal(int vehicleID)
 
     if (!found) return 0.0f;
 
-    // === Calculate time difference ===
+    // ========================================================================
+    // Calculate time gap (in seconds)
+    // Uses SYSTEM TIME (now) to measure how long ago leader was at this position
+    // Positive = vehicle is behind (leader passed this point earlier)
+    // ========================================================================
     auto now = std::chrono::steady_clock::now();
-    std::chrono::duration<float> delta = now - leaderTime;
+    std::chrono::duration<float> timeDiff = now - leaderTimeAtThisProgress;
+    
+    float gapSeconds = timeDiff.count();
 
-    return delta.count(); // seconds
+    // Debug output to diagnose why gaps are identical
+    #ifdef DEBUG_TIME_DIFF
+    std::cout << "[TIME DIFF] Vehicle #" << vehicleID 
+              << " | Progress: " << std::fixed << std::setprecision(4) << vehicleProgress
+              << " | Leader was at " << foundProgress << " (Lap " << foundLapNum << ")"
+              << " | Gap: " << std::setprecision(3) << gapSeconds << "s" << std::endl;
+    #endif
+
+    return gapSeconds;
 }
 
 // ============================================================================
