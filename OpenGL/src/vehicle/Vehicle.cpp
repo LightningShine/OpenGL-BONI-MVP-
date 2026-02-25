@@ -117,6 +117,59 @@ Vehicle::Vehicle(double normalized_x, double normalized_y)
     std::cout << "Vehicle #" << m_id << " created at START line (" << m_normalized_x << ", " << m_normalized_y << "), GPS: (" << m_lat_dd << ", " << m_lon_dd << ")" << std::endl;
 }
 
+// ✅ Конструктор с явным ID (для симуляции)
+Vehicle::Vehicle(int32_t id, double normalized_x, double normalized_y)
+{
+    // ✅ Проверяем что карта загружена
+    if (!g_is_map_loaded)
+    {
+        std::cerr << "Error: Cannot create vehicle - map not loaded!" << std::endl;
+        return;
+    }
+
+    // ✅ Use provided ID instead of generating
+    m_id = id;
+
+    // Устанавливаем позицию из параметров
+    m_normalized_x = normalized_x;
+    m_normalized_y = normalized_y;
+
+    // Конвертируем обратно в GPS через origin UTM
+    m_meters_easting = g_map_origin.m_origin_meters_easting + (m_normalized_x * MapConstants::MAP_SIZE);
+    m_meters_northing = g_map_origin.m_origin_meters_northing + (m_normalized_y * MapConstants::MAP_SIZE);
+
+    // Конвертируем UTM в GPS
+    try {
+        using namespace GeographicLib;
+        int zone = g_map_origin.m_origin_zone_int;  // ✅ Use zone from map origin
+        bool northp = (g_map_origin.m_origin_zone_char == 'N');  // ✅ Derive hemisphere from zone letter
+        UTMUPS::Reverse(zone, northp, m_meters_easting, m_meters_northing,
+                       m_lat_dd, m_lon_dd);
+    }
+    catch (const std::exception& e) {
+        std::cerr << "GeographicLib Error: " << e.what() << std::endl;
+        m_lat_dd = 0;
+        m_lon_dd = 0;
+    }
+
+    m_speed_kph = 0.0;
+    m_acceleration = 0.0;
+    m_g_force_x = 0.0;
+    m_g_force_y = 0.0;
+    m_fix_type = 1;
+
+    // ✅ Initialize prev position to current (will be updated by first telemetry packet)
+    m_prev_x = m_normalized_x;
+    m_prev_y = m_normalized_y;
+
+    m_last_update_time = std::chrono::steady_clock::now();
+
+    // ✅ Вычисляем цвет ОДИН раз при создании
+    m_cached_color = getColor();
+
+    std::cout << "Vehicle #" << m_id << " created at START line (" << m_normalized_x << ", " << m_normalized_y << "), GPS: (" << m_lat_dd << ", " << m_lon_dd << ")" << std::endl;
+}
+
 Vehicle::Vehicle(const TelemetryPacket& packet)
 {
     m_lat_dd = packet.lat / 1e7;
@@ -265,20 +318,7 @@ void renderVehicle(GLuint shader_program, GLuint vao, GLuint vbo,
         );
 
         float length = glm::length(direction);
-        const float MIN_MOVEMENT = 0.0001f;  // ~10cm at normalized scale
-
-        // ✅ TEMPORARY DEBUG (remove after testing)
-        static int debugCounter = 0;
-        if (++debugCounter % 60 == 0)  // Every ~1 second (60 FPS)
-        {
-            std::cout << "[ROTATION DEBUG] ID=" << vehicle.m_id
-                      << " | curr=(" << std::fixed << std::setprecision(6) 
-                      << vehicle.m_normalized_x << ", " << vehicle.m_normalized_y << ")"
-                      << " | prev=(" << vehicle.m_prev_x << ", " << vehicle.m_prev_y << ")"
-                      << " | dir=(" << direction.x << ", " << direction.y << ")"
-                      << " | len=" << length
-                      << " | threshold=" << MIN_MOVEMENT << std::endl;
-        }
+        const float MIN_MOVEMENT = 0.0005f;  // ~50cm at normalized scale (increased to reduce GPS noise jitter)
 
         if (length > MIN_MOVEMENT)
         {
@@ -288,10 +328,11 @@ void renderVehicle(GLuint shader_program, GLuint vao, GLuint vbo,
 
             // ✅ SMOOTH INTERPOLATION (exponential smoothing)
             // Prevents sudden jumps from GPS noise
-            const float SMOOTHING_FACTOR = 0.3f;  // 0.0 = no change, 1.0 = instant
+            const float SMOOTHING_FACTOR = 0.3f;  // 0.0 = no change, 1.0 = instant (0.3 = good balance)
 
             // Handle angle wrapping (-PI to PI)
             float angleDiff = newAngle - vehicle.m_last_rotation_angle;
+
             if (angleDiff > glm::pi<float>())
                 angleDiff -= 2.0f * glm::pi<float>();
             else if (angleDiff < -glm::pi<float>())
@@ -302,21 +343,6 @@ void renderVehicle(GLuint shader_program, GLuint vao, GLuint vbo,
 
             // ✅ Cache the angle for next frame (mutable allows modification in const context)
             vehicle.m_last_rotation_angle = rotationAngle;
-
-            // ✅ DEBUG: Show angle changes
-            if (debugCounter % 60 == 0)
-            {
-                std::cout << "  -> Movement detected! newAngle=" << (newAngle * 180.0f / 3.14159f) 
-                          << "° | smoothed=" << (rotationAngle * 180.0f / 3.14159f) << "°" << std::endl;
-            }
-        }
-        else
-        {
-            // ✅ DEBUG: Movement too small
-            if (debugCounter % 60 == 0)
-            {
-                std::cout << "  -> Movement too small (< threshold)" << std::endl;
-            }
         }
         // ✅ ELSE: Keep last valid angle (don't reset to 0!)
     }
@@ -406,26 +432,27 @@ void renderAllVehicles(GLuint shader_program, GLuint vao, GLuint vbo,
     float minY = camera_pos.y - visibleHeight;
     float maxY = camera_pos.y + visibleHeight;
 
-    // ✅ БЫСТРОЕ копирование под мьютексом (~0.1ms)
-    std::vector<Vehicle> vehiclesToRender;
+    // ✅ Собираем УКАЗАТЕЛИ на видимые машины под мьютексом
+    // (НЕ копируем сами Vehicle - это сохраняет m_last_rotation_angle!)
+    std::vector<const Vehicle*> vehiclesToRender;
     {
         std::lock_guard<std::mutex> lock(g_vehicles_mutex);
         vehiclesToRender.reserve(g_vehicles.size());
-        
+
         for (const auto& [id, vehicle] : g_vehicles) {
             float vX = static_cast<float>(vehicle.m_normalized_x);
             float vY = static_cast<float>(vehicle.m_normalized_y);
 
             // Копируем только видимые машины
             if (vX >= minX && vX <= maxX && vY >= minY && vY <= maxY) {
-                vehiclesToRender.push_back(vehicle);
+                vehiclesToRender.push_back(&vehicle);  // ✅ Сохраняем УКАЗАТЕЛЬ!
             }
         }
-    } // ✅ Мьютекс освобожден, блокировка длилась ~0.1ms
+    } // ✅ Мьютекс освобожден
 
     // ✅ Рендеринг БЕЗ блокировки (может занять 10-20ms)
-    for (const auto& vehicle : vehiclesToRender) {
-        renderVehicle(shader_program, vao, vbo, vehicle, projection);
+    for (const Vehicle* vehicle : vehiclesToRender) {
+        renderVehicle(shader_program, vao, vbo, *vehicle, projection);  // ✅ Разыменовываем
     }
 }
 

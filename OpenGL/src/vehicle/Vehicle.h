@@ -48,7 +48,8 @@ class Vehicle
 {
 public:
 	Vehicle();
-	Vehicle(double normalized_x, double normalized_y); 
+	Vehicle(double normalized_x, double normalized_y);
+	Vehicle(int32_t id, double normalized_x, double normalized_y);  // ✅ New: with explicit ID
 	Vehicle(const TelemetryPacket& packet);
 	
 	double m_lat_dd;
