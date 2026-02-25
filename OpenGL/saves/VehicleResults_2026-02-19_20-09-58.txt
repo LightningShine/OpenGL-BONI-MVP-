@@ -1,0 +1,141 @@
+========================================
+       RACE SESSION RESULTS
+========================================
+Date: 2026-02-19 20:09:58
+========================================
+
+FINAL STANDINGS:
+----------------
+
+Position: 1
+  Vehicle ID: #9
+  Completed Laps: 2
+  Progress: 0.812
+  Delta to Best: -8.679s
+  Total Race Time: 1:33.243
+  Best Lap Time: 0:44.362
+  Current Lap 3: 0:29.880 (in progress)
+  Lap Times:
+    Lap 1: 0:48.882
+    Lap 2: 0:44.362
+
+Position: 2
+  Vehicle ID: #3
+  Completed Laps: 2
+  Progress: 0.725
+  Delta to Best: -3.932s
+  Delta to Leader: +142.242s
+  Total Race Time: 1:46.757
+  Best Lap Time: 0:50.832
+  Current Lap 3: 0:35.893 (in progress)
+  Lap Times:
+    Lap 1: 0:55.926
+    Lap 2: 0:50.832
+
+Position: 3
+  Vehicle ID: #7
+  Completed Laps: 2
+  Progress: 0.621
+  Delta to Best: -6.745s
+  Delta to Leader: +129.082s
+  Total Race Time: 1:47.520
+  Best Lap Time: 0:45.691
+  Current Lap 3: 0:21.971 (in progress)
+  Lap Times:
+    Lap 1: 1:1.829
+    Lap 2: 0:45.691
+
+Position: 4
+  Vehicle ID: #5
+  Completed Laps: 2
+  Progress: 0.555
+  Delta to Best: -0.608s
+  Delta to Leader: +121.561s
+  Total Race Time: 1:38.924
+  Best Lap Time: 0:47.589
+  Current Lap 3: 0:23.045 (in progress)
+  Lap Times:
+    Lap 1: 0:47.589
+    Lap 2: 0:51.335
+
+Position: 5
+  Vehicle ID: #11
+  Completed Laps: 2
+  Progress: 0.521
+  Delta to Best: +5.519s
+  Delta to Leader: +126.117s
+  Total Race Time: 1:38.109
+  Best Lap Time: 0:46.925
+  Current Lap 3: 0:28.417 (in progress)
+  Lap Times:
+    Lap 1: 0:46.925
+    Lap 2: 0:51.184
+
+Position: 6
+  Vehicle ID: #13
+  Completed Laps: 2
+  Progress: 0.468
+  Delta to Best: +0.414s
+  Delta to Leader: +125.472s
+  Total Race Time: 1:40.063
+  Best Lap Time: 0:48.749
+  Current Lap 3: 0:25.817 (in progress)
+  Lap Times:
+    Lap 1: 0:48.749
+    Lap 2: 0:51.314
+
+Position: 7
+  Vehicle ID: #15
+  Completed Laps: 2
+  Progress: 0.453
+  Delta to Best: -0.867s
+  Delta to Leader: +128.219s
+  Total Race Time: 1:42.110
+  Best Lap Time: 0:49.503
+  Current Lap 3: 0:26.518 (in progress)
+  Lap Times:
+    Lap 1: 0:52.607
+    Lap 2: 0:49.503
+
+Position: 8
+  Vehicle ID: #17
+  Completed Laps: 2
+  Progress: 0.257
+  Delta to Best: -3.829s
+  Delta to Leader: +128.737s
+  Total Race Time: 1:52.510
+  Best Lap Time: 0:56.180
+  Current Lap 3: 0:16.635 (in progress)
+  Lap Times:
+    Lap 1: 0:56.331
+    Lap 2: 0:56.180
+
+Position: 9
+  Vehicle ID: #1
+  Completed Laps: 2
+  Progress: 0.159
+  Delta to Best: -4.843s
+  Delta to Leader: +113.877s
+  Total Race Time: 1:44.326
+  Best Lap Time: 0:48.878
+  Current Lap 3: 0:9.959 (in progress)
+  Lap Times:
+    Lap 1: 0:55.448
+    Lap 2: 0:48.878
+
+Position: 10
+  Vehicle ID: #19
+  Completed Laps: 2
+  Progress: 0.133
+  Delta to Best: +1.620s
+  Delta to Leader: +126.769s
+  Total Race Time: 1:58.983
+  Best Lap Time: 0:47.671
+  Current Lap 3: 0:8.194 (in progress)
+  Lap Times:
+    Lap 1: 1:11.313
+    Lap 2: 0:47.671
+
+========================================
+End of Report
+========================================
