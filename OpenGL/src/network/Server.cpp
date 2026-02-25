@@ -185,6 +185,29 @@ void SendToAll(const void* pData, uint32 nSize)
 	}
 }
 
+// ============================================================================
+// BROADCAST TELEMETRY TO CLIENTS (called from processIncomingTelemetry)
+// ============================================================================
+void BroadcastTelemetryToClients(const TelemetryPacket& packet)
+{
+#if NETWORKING_ENABLED
+	// Only broadcast if server is running and has authenticated clients
+	if (!g_is_server_running) return;
+
+	bool has_authenticated_clients = false;
+	for (const auto& pair : g_authenticated_connections) {
+		if (pair.second) {
+			has_authenticated_clients = true;
+			break;
+		}
+	}
+
+	if (has_authenticated_clients) {
+		SendToAll(&packet, sizeof(TelemetryPacket));
+	}
+#endif
+}
+
 // Authenticate connection with password
 static bool authenticateConnection(HSteamNetConnection connection, const char* password)
 {
@@ -349,7 +372,6 @@ int serverWork()
 {
 
 	std::cout << "Starting GNS Server..." << std::endl;
-	TelemetryPacket myPacket;
 	SteamDatagramErrMsg errMsg;
 
 
@@ -365,29 +387,12 @@ int serverWork()
 	ManagePort(true);
 	StartServer(NetworkConstants::DEFAULT_SERVER_PORT);
 
-	int counter = 0;
+	std::cout << "[SERVER] Ready to broadcast telemetry from real/simulated vehicles" << std::endl;
+	std::cout << "[SERVER] Telemetry will be sent via processIncomingTelemetry() -> BroadcastTelemetryToClients()" << std::endl;
+
 	while (!ServerNeedStop_b)
 	{
-		if (counter >= 120)
-		{
-			// Check if there are any authenticated clients before sending
-			bool has_authenticated_clients = false;
-			for (const auto& pair : g_authenticated_connections) {
-				if (pair.second) {
-					has_authenticated_clients = true;
-					break;
-				}
-			}
-			
-			if (has_authenticated_clients) {
-				RandomTelemetryData(myPacket);
-				SendToAll(&myPacket, sizeof(TelemetryPacket));
-			}
-			counter = 0;
-		}
 		FrameUpdate();
-		++counter;
-
 		std::this_thread::sleep_for(std::chrono::milliseconds(100));
 	}
 
@@ -478,6 +483,7 @@ bool isServerRunning() { return false; }
 void ChangeisServerRunning() {}
 void serverStop() {}
 void continueServerRunning() {}
+void BroadcastTelemetryToClients(const TelemetryPacket& packet) {} // ARM64 stub
 
 #endif // NETWORKING_ENABLED
 

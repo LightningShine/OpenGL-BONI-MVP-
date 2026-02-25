@@ -69,6 +69,11 @@ public:
 	bool m_is_leader = false;  
 	
 	// ========================================================================
+	// RENDERING CACHE (for smooth triangle rotation)
+	// ========================================================================
+	mutable float m_last_rotation_angle = 0.0f;
+	
+	// ========================================================================
 	// LAP TIMING DATA (RaceManager reads/writes, Vehicle stores)
 	// ========================================================================
 	std::map<int, LapData> m_laps;

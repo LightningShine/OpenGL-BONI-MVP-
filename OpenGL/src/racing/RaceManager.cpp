@@ -65,8 +65,12 @@ void RaceManager::Update(float deltaTime)
     
     for (auto& [vehicleID, vehicle] : g_vehicles)
     {
+        double frame_start_x = vehicle.m_normalized_x;
+        double frame_start_y = vehicle.m_normalized_y;
+        double frame_start_progress = vehicle.m_track_progress;
+
         // Initialize prev position on first frame
-        if (vehicle.m_prev_x == 0.0 && vehicle.m_prev_y == 0.0 && 
+        if (vehicle.m_prev_x == 0.0 && vehicle.m_prev_y == 0.0 &&
             vehicle.m_normalized_x != 0.0 && vehicle.m_normalized_y != 0.0)
         {
             vehicle.m_prev_x = vehicle.m_normalized_x;
@@ -181,9 +185,18 @@ void RaceManager::Update(float deltaTime)
         }
         
         // Update previous position for next frame
-        vehicle.m_prev_x = vehicle.m_normalized_x;
-        vehicle.m_prev_y = vehicle.m_normalized_y;
-        vehicle.m_prev_track_progress = vehicle.m_track_progress;
+        
+        vehicle.m_prev_x = frame_start_x;
+        vehicle.m_prev_y = frame_start_y;
+        vehicle.m_prev_track_progress = frame_start_progress;
+
+        // ====================================================================
+        // UPDATE TOTAL PROGRESS (lap number + current lap progress)
+        // This is essential for CalculateLeaderTimeDiffInternal to work
+        // Total progress allows comparing vehicles on different laps
+        // Example: Lap 2, progress 0.35 -> total_progress = 2.35
+        // ====================================================================
+        vehicle.m_total_progress = vehicle.m_completed_laps + vehicle.m_track_progress;
     }
     
     // Update leader and positions
