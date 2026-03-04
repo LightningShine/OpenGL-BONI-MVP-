@@ -15,10 +15,12 @@
 #include <thread>
 #include <regex>
 #include "../Config.h"
+#include <glm/glm.hpp>     // ✅ For glm::vec2
+#include <mutex>           // ✅ For std::mutex
 
 
 // CLIENT 
-int clientStart();
+int clientStart(const std::vector<glm::vec2>& track_points, std::mutex& points_mutex);
 
 
 bool isClientRunning();

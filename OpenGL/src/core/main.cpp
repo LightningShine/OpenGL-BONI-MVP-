@@ -57,12 +57,13 @@ void framebuffer_size_callback(GLFWwindow* window, int width, int height)
 }
 
 void processInput(GLFWwindow* window, glm::vec2& camera_pos, float& zoom, float& rotation, float speed, 
-const std::vector<SplinePoint>* smooth_track = nullptr)
+const std::vector<SplinePoint>* smooth_track = nullptr, 
+const std::vector<glm::vec2>* track_points = nullptr, std::mutex* points_mutex = nullptr)
 {
 	// Close when press ESC
 	if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
 		glfwSetWindowShouldClose(window, true);
-	
+
 #if NETWORKING_ENABLED
 	bool isServerKeyPressed = glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS && glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS;
 
@@ -71,7 +72,8 @@ const std::vector<SplinePoint>* smooth_track = nullptr)
 		if (!isServerRunning())
 		{
 			continueServerRunning();
-			thread ServerThread = thread(serverWork);
+			// ✅ Pass points (track_points) and mutex to server
+			thread ServerThread = thread(serverWork, std::ref(points), std::ref(points_mutex));
 			ServerThread.detach();
 			ChangeisServerRunning();
 		}
@@ -80,7 +82,7 @@ const std::vector<SplinePoint>* smooth_track = nullptr)
 			serverStop();
 			ChangeisServerRunning();
 		}
-		
+
 	}
 
 
@@ -90,7 +92,8 @@ const std::vector<SplinePoint>* smooth_track = nullptr)
 		if (!isClientRunning())
 		{
 			continueClientRunning();
-			thread ClientThread = thread(clientStart);
+			// ✅ Pass points (track_points) and mutex to client
+			thread ClientThread = thread(clientStart, std::ref(points), std::ref(points_mutex));
 			ClientThread.detach();
 			toggleClientRunning();
 		}
@@ -901,7 +904,8 @@ int main()
 		
 		ui.BeginFrame();
 
-		processInput(window, camera_position, camera_zoom, camera_rotation, camera_move_speed, &g_smooth_track_points);
+		processInput(window, camera_position, camera_zoom, camera_rotation, camera_move_speed, 
+					&g_smooth_track_points, &points, &points_mutex);  // ✅ Pass track data for networking
 		camera_position += camera_velocity;  
 		camera_velocity *= friction;
 		

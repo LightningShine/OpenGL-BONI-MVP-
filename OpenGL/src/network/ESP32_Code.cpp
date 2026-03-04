@@ -16,6 +16,10 @@ extern std::mutex g_vehicles_mutex;
 extern MapOrigin g_map_origin;
 extern std::atomic<bool> g_is_map_loaded;
 
+// ✅ Mode flags (defined in Server.cpp)
+extern std::atomic<bool> g_is_server_mode;
+extern std::atomic<bool> g_is_client_mode;
+
 serialib serial;
 
 bool openCOMPort(const std::string& port_name)
@@ -93,7 +97,10 @@ void processIncomingTelemetry(const TelemetryPacket& packet)
     }
 
     // ✅ 2. Broadcast to network clients (if server is running)
-    BroadcastTelemetryToClients(packet);
+    // Only broadcast if in server mode (not client mode)
+    if (g_is_server_mode && !g_is_client_mode) {
+        BroadcastTelemetryToClients(packet);
+    }
 }
 
 // ============================================================================

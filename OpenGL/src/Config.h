@@ -41,12 +41,26 @@ namespace NetworkConstants {
     static constexpr const char* DEFAULT_LOCAL_SERVER_IP = "127.0.0.1";
     static constexpr const char* SERVER_PASSWORD = "mypassword123";  
     static constexpr int MAX_AUTH_ATTEMPTS = 10;
+
+    // ✅ Network performance settings
+    static constexpr int TELEMETRY_SEND_RATE_HZ = 60;  // 60 updates/sec (smooth)
+    static constexpr int TELEMETRY_SEND_INTERVAL_MS = 1000 / TELEMETRY_SEND_RATE_HZ;
+
+    // ✅ Connection reliability settings
+    static constexpr int MAP_REQUEST_TIMEOUT_MS = 10000;  // 10 seconds to receive full map
+    static constexpr int MAP_PACKET_TIMEOUT_MS = 2000;    // 2 seconds per packet
+    static constexpr int CONNECTION_TIMEOUT_MS = 5000;     // 5 seconds no packets = disconnect
+    static constexpr int MAX_MAP_RETRIES = 3;              // Retry map request 3 times
+    static constexpr int MAX_POINTS_PER_MAP_PACKET = 80;   // Max GPS points per UDP packet
 }
 
 namespace PacketMagic {
-    static constexpr uint32_t AUTH = 0x41555448;  // 'AUTH'
-    static constexpr uint32_t RESP = 0x52455350;  // 'RESP'
-    static constexpr uint32_t DATA = 0x44415441;  // 'DATA'
+    static constexpr uint32_t AUTH = 0x41555448;        // 'AUTH'
+    static constexpr uint32_t RESP = 0x52455350;        // 'RESP'
+    static constexpr uint32_t DATA = 0x44415441;        // 'DATA'
+    static constexpr uint32_t MAP_REQUEST = 0x4D415052; // 'MAPR' ✅ NEW
+    static constexpr uint32_t MAP_DATA = 0x4D415044;    // 'MAPD' ✅ NEW
+    static constexpr uint32_t MAP_POINTS = 0x4D415050;  // 'MAPP' ✅ NEW
 }
 
 // Track rendering constants
