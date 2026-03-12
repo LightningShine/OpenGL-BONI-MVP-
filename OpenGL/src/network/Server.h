@@ -55,6 +55,66 @@ struct AuthResponsePacket {
 	int attempts_remaining;
 	char message[128];
 };
+
+// Track point for network transmission
+struct TrackPointPacket {
+	float x;
+	float y;
+	float tangent_x;
+	float tangent_y;
+};
+
+// Track data header - sent first
+struct TrackDataHeader {
+	uint32_t magic_marker;   // 0x5452434B ('TRCK')
+	uint32_t point_count;    // Number of track points to follow
+	double origin_lat;       // Map origin latitude
+	double origin_lon;       // Map origin longitude
+	double origin_easting;   // Origin in UTM meters
+	double origin_northing;  // Origin in UTM meters
+	int origin_zone;         // UTM zone
+	char origin_zone_char;   // UTM zone letter
+	float start_finish_p1_x; // Start/finish line point 1
+	float start_finish_p1_y;
+	float start_finish_p2_x; // Start/finish line point 2
+	float start_finish_p2_y;
+};
+
+// Track chunk packet - contains multiple points
+#define MAX_POINTS_PER_CHUNK 100
+struct TrackChunkPacket {
+	uint32_t magic_marker;   // 0x54434855 ('TCHU')
+	uint32_t chunk_index;    // Which chunk this is
+	uint32_t points_in_chunk; // Number of points in this chunk
+	TrackPointPacket points[MAX_POINTS_PER_CHUNK];
+};
+
+// Race initialization data
+struct RaceDataPacket {
+	uint32_t magic_marker;   // 0x52414345 ('RACE')
+	bool has_start_finish_line;
+	// Add other race settings here if needed
+};
+
+// Processed vehicle state packet - used for simulated/server-authoritative vehicles.
+// Sends already normalized state so client does not need GPS->UTM conversion or
+// local nearest-segment progress reconstruction.
+struct VehicleStatePacket {
+	uint32_t magic_marker;        // 0x56535441 ('VSTA')
+	int32_t vehicle_id;
+	uint32_t server_time_ms;      // Monotonic server time in milliseconds
+	float normalized_x;
+	float normalized_y;
+	float heading;
+	float speed_kph;
+	float track_progress;         // 0..1 authoritative progress along track
+	float current_lap_time;
+	float best_lap_time;
+	int32_t completed_laps;
+	int32_t current_lap_number;
+	uint8_t has_started_first_lap;
+	uint8_t is_leader;
+};
 #pragma pack(pop)
 
 int serverWork();
@@ -69,3 +129,9 @@ void continueServerRunning();
 
 // Broadcast telemetry packet to all authenticated clients
 void BroadcastTelemetryToClients(const TelemetryPacket& packet);
+
+// Broadcast processed vehicle state to all authenticated clients
+void BroadcastVehicleStateToClients(const VehicleStatePacket& packet);
+
+// Send track and race data to newly authenticated client
+void SendTrackAndRaceData(HSteamNetConnection connection);

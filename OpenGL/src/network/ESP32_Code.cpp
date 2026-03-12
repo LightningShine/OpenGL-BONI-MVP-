@@ -1,11 +1,17 @@
 ﻿#include "../network/ESP32_Code.h"
 #include "../network/Server.h"
 #include "../vehicle/Vehicle.h"
+#include "../vehicle/VehicleInterpolator.h"
 #include "../input/Input.h"
 #include "../rendering/Interpolation.h"
 #include "../Config.h"
 #include <random>
 #include <chrono>
+#include <unordered_map>
+#include <mutex>
+#include <limits>
+#include <algorithm>
+#include <cmath>
 #include <GeographicLib/UTMUPS.hpp>  // For accurate GPS conversion
 
 // ============================================================================
@@ -15,8 +21,192 @@ extern std::map<int32_t, Vehicle> g_vehicles;
 extern std::mutex g_vehicles_mutex;
 extern MapOrigin g_map_origin;
 extern std::atomic<bool> g_is_map_loaded;
+extern std::vector<SplinePoint> g_smooth_track_points;
+extern std::mutex g_track_mutex;
 
 serialib serial;
+
+// ============================================================================
+// TIME SYNC: Map per-vehicle telemetry time (packet.time) into local steady-clock
+// domain used by VehicleInterpolator. This removes visible jitter caused by using
+// packet arrival times as timestamps.
+// ============================================================================
+namespace {
+    uint32_t getMonotonicTimeMs()
+    {
+        return static_cast<uint32_t>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now().time_since_epoch()).count());
+    }
+
+    struct VehicleTimeSync {
+        bool initialized = false;
+        double offsetSeconds = 0.0; // localTime = packetTime + offset
+    };
+
+    std::mutex g_time_sync_mutex;
+    std::unordered_map<int32_t, VehicleTimeSync> g_time_sync;
+
+    double getSynchronizedSnapshotTimeSeconds(int32_t vehicleID, uint32_t sourceTimeMs)
+    {
+        const double localNow = VehicleInterpolator::GetTime();
+
+        if (sourceTimeMs == 0) {
+            return localNow;
+        }
+
+        const double packetTimeSeconds = static_cast<double>(sourceTimeMs) / 1000.0;
+
+        std::lock_guard<std::mutex> lock(g_time_sync_mutex);
+        VehicleTimeSync& ts = g_time_sync[vehicleID];
+
+        const double sampleOffset = localNow - packetTimeSeconds;
+
+        if (!ts.initialized)
+        {
+            ts.initialized = true;
+            ts.offsetSeconds = sampleOffset;
+        }
+        else
+        {
+            // If the source clock jumped (device reboot / midnight reset), re-sync.
+            const double predictedLocal = packetTimeSeconds + ts.offsetSeconds;
+            if (std::abs(predictedLocal - localNow) > 5.0)
+            {
+                ts.offsetSeconds = sampleOffset;
+            }
+            else
+            {
+                // Smooth offset to reduce noise without adding latency.
+                ts.offsetSeconds = ts.offsetSeconds * 0.98 + sampleOffset * 0.02;
+            }
+        }
+
+        return packetTimeSeconds + ts.offsetSeconds;
+    }
+
+    // ------------------------------------------------------------------------
+    // Track progress: compute 0..1 progress from current normalized position by
+    // projecting onto the closest track segment (server and client will match
+    // as long as they share the same `g_smooth_track_points`).
+    // ------------------------------------------------------------------------
+    struct TrackProgressCache {
+        size_t pointCount = 0;
+        std::vector<float> cumulativeDistances;
+        float totalLength = 0.0f;
+    };
+
+    std::mutex g_track_progress_mutex;
+    TrackProgressCache g_track_progress_cache;
+
+    void ensureTrackProgressCacheLocked(const std::vector<SplinePoint>& track)
+    {
+        if (track.size() == g_track_progress_cache.pointCount && g_track_progress_cache.totalLength > 1e-6f) {
+            return;
+        }
+
+        g_track_progress_cache.pointCount = track.size();
+        g_track_progress_cache.cumulativeDistances.clear();
+        g_track_progress_cache.totalLength = 0.0f;
+
+        if (track.size() < 2) {
+            return;
+        }
+
+        g_track_progress_cache.cumulativeDistances.reserve(track.size());
+        g_track_progress_cache.cumulativeDistances.push_back(0.0f);
+
+        float total = 0.0f;
+        for (size_t i = 1; i < track.size(); ++i)
+        {
+            const float seg = glm::distance(track[i - 1].position, track[i].position);
+            total += seg;
+            g_track_progress_cache.cumulativeDistances.push_back(total);
+        }
+
+        g_track_progress_cache.totalLength = total;
+    }
+
+    double calculateTrackProgressFromPosition(double x, double y)
+    {
+        if (!g_is_map_loaded) {
+            return 0.0;
+        }
+
+        std::vector<SplinePoint> trackCopy;
+        {
+            std::lock_guard<std::mutex> lock(g_track_mutex);
+            trackCopy = g_smooth_track_points;
+        }
+
+        if (trackCopy.size() < 2) {
+            return 0.0;
+        }
+
+        std::lock_guard<std::mutex> lock(g_track_progress_mutex);
+        ensureTrackProgressCacheLocked(trackCopy);
+
+        if (g_track_progress_cache.totalLength <= 1e-6f) {
+            return 0.0;
+        }
+
+        const glm::vec2 p(static_cast<float>(x), static_cast<float>(y));
+
+        double bestDistSq = std::numeric_limits<double>::infinity();
+        double bestDistanceAlong = 0.0;
+
+        const size_t segmentCount = trackCopy.size() - 1;
+        for (size_t i = 0; i < segmentCount; ++i)
+        {
+            const glm::vec2 a = trackCopy[i].position;
+            const glm::vec2 b = trackCopy[i + 1].position;
+            const glm::vec2 ab = b - a;
+            const float abLenSq = glm::dot(ab, ab);
+            if (abLenSq < 1e-10f) {
+                continue;
+            }
+
+            const float t = glm::clamp(glm::dot(p - a, ab) / abLenSq, 0.0f, 1.0f);
+            const glm::vec2 proj = a + ab * t;
+            const glm::vec2 d = p - proj;
+            const double distSq = static_cast<double>(glm::dot(d, d));
+
+            if (distSq < bestDistSq)
+            {
+                bestDistSq = distSq;
+                const float segLen = std::sqrt(abLenSq);
+                bestDistanceAlong = static_cast<double>(g_track_progress_cache.cumulativeDistances[i]) + static_cast<double>(segLen * t);
+            }
+        }
+
+        double progress = bestDistanceAlong / static_cast<double>(g_track_progress_cache.totalLength);
+        progress = std::clamp(progress, 0.0, 1.0);
+        return progress;
+    }
+
+    void applyRaceStateFromPacket(Vehicle& vehicle, const VehicleStatePacket& packet)
+    {
+        vehicle.m_track_progress = packet.track_progress;
+        vehicle.m_current_lap_timer = packet.current_lap_time;
+        vehicle.m_best_lap_time = packet.best_lap_time;
+        vehicle.m_completed_laps = packet.completed_laps;
+        vehicle.m_current_lap_number = packet.current_lap_number;
+        vehicle.m_has_started_first_lap = (packet.has_started_first_lap != 0);
+        vehicle.m_is_leader = (packet.is_leader != 0);
+        vehicle.m_total_progress = vehicle.m_completed_laps + vehicle.m_track_progress;
+        vehicle.m_has_authoritative_state = true;
+    }
+
+    void fillPacketRaceStateFromVehicle(VehicleStatePacket& packet, const Vehicle& vehicle)
+    {
+        packet.current_lap_time = vehicle.m_current_lap_timer;
+        packet.best_lap_time = vehicle.m_best_lap_time;
+        packet.completed_laps = vehicle.m_completed_laps;
+        packet.current_lap_number = vehicle.m_current_lap_number;
+        packet.has_started_first_lap = vehicle.m_has_started_first_lap ? 1 : 0;
+        packet.is_leader = vehicle.m_is_leader ? 1 : 0;
+    }
+}
 
 bool openCOMPort(const std::string& port_name)
 {
@@ -46,6 +236,31 @@ bool openCOMPort(const std::string& port_name)
 // ============================================================================
 void processIncomingTelemetry(const TelemetryPacket& packet)
 {
+    // ✅ Debug: print packet info to diagnose coordinate issues
+    static int packet_count = 0;
+    packet_count++;
+    if (packet_count % 60 == 0) { // Log every 60th packet (once per second at 60Hz)
+        std::cout << "[TELEMETRY DEBUG] Packet ID=" << packet.ID 
+                  << " | GPS: (" << (packet.lat / 1e7) << ", " << (packet.lon / 1e7) << ")"
+                  << " | Speed: " << (packet.speed / 100.0) << " km/h" << std::endl;
+    }
+
+    // ✅ CRITICAL DEBUG: Check vehicle existence BEFORE lock
+    bool vehicle_exists = false;
+    {
+        std::lock_guard<std::mutex> check_lock(g_vehicles_mutex);
+        vehicle_exists = (g_vehicles.find(packet.ID) != g_vehicles.end());
+
+        // Print map contents on creation
+        if (!vehicle_exists && packet_count % 10 == 0) {
+            std::cout << "[DEBUG] Vehicle #" << packet.ID << " NOT in map. Current: ";
+            for (const auto& [id, v] : g_vehicles) {
+                std::cout << "#" << id << " ";
+            }
+            std::cout << "(total: " << g_vehicles.size() << ")" << std::endl;
+        }
+    }
+
     // ✅ 1. Update local vehicle data
     {
         std::lock_guard<std::mutex> lock(g_vehicles_mutex);
@@ -54,7 +269,7 @@ void processIncomingTelemetry(const TelemetryPacket& packet)
 
         if (it != g_vehicles.end())
         {
-            // Update existing vehicle
+            // ✅ UPDATE existing vehicle
             Vehicle& vehicle = it->second;
 
             // ✅ CRITICAL: Save old position BEFORE updating coordinates
@@ -75,25 +290,139 @@ void processIncomingTelemetry(const TelemetryPacket& packet)
             getCoordinateDifferenceFromOrigin(vehicle.m_meters_easting, vehicle.m_meters_northing,
                                              vehicle.m_normalized_x, vehicle.m_normalized_y);
 
+            // Update track progress (needed for consistent leader + lap logic on clients)
+            vehicle.m_track_progress = calculateTrackProgressFromPosition(vehicle.m_normalized_x, vehicle.m_normalized_y);
+
             vehicle.m_last_update_time = std::chrono::steady_clock::now();
+            vehicle.m_has_authoritative_state = false;
+
+            // ✅ Calculate heading from movement (only if vehicle moved significantly)
+            double dx = vehicle.m_normalized_x - vehicle.m_prev_x;
+            double dy = vehicle.m_normalized_y - vehicle.m_prev_y;
+            double distance_moved = std::sqrt(dx * dx + dy * dy);
+
+            // Only update heading if vehicle moved at least 1 meter (0.01 in normalized coords)
+            double new_heading = vehicle.m_heading; // Keep previous heading by default
+            if (distance_moved > 0.01) {
+                new_heading = std::atan2(dy, dx);
+                vehicle.m_heading = new_heading; // Update stored heading
+            }
+
+            // ✅ Add snapshot to interpolator for smooth rendering
+            VehicleSnapshot snapshot;
+            snapshot.timestamp = getSynchronizedSnapshotTimeSeconds(packet.ID, packet.time);
+            snapshot.x = vehicle.m_normalized_x;
+            snapshot.y = vehicle.m_normalized_y;
+            snapshot.speed_kph = vehicle.m_speed_kph;
+            snapshot.heading = new_heading;
+            snapshot.track_progress = vehicle.m_track_progress;
+
+            VehicleInterpolator::Get().AddSnapshot(packet.ID, snapshot);
         }
         else
         {
-            // Create new vehicle from packet
+            // ⚠️ Vehicle NOT FOUND - this happens when:
+            // 1. Server sends telemetry for vehicle that client doesn't have yet (normal - create it)
+            // 2. Vehicle was deleted by timeout (should not recreate)
+
+            #if NETWORKING_ENABLED
+            // On CLIENT: Only create vehicle if it doesn't exist (server will send all vehicles)
+            // On SERVER: Create vehicle from simulation or real data
+
+            std::cout << "[TELEMETRY] Creating new vehicle #" << packet.ID << " from network packet" << std::endl;
+
             Vehicle new_vehicle(packet);
+
+            // Compute initial track progress (needed for correct leader/standings immediately)
+            new_vehicle.m_track_progress = calculateTrackProgressFromPosition(new_vehicle.m_normalized_x, new_vehicle.m_normalized_y);
 
             // ✅ CRITICAL: Initialize prev position for first frame
             new_vehicle.m_prev_x = new_vehicle.m_normalized_x;
             new_vehicle.m_prev_y = new_vehicle.m_normalized_y;
 
-            g_vehicles[packet.ID] = new_vehicle;
+            // ✅ Add initial snapshot BEFORE moving
+            VehicleSnapshot snapshot;
+            snapshot.timestamp = getSynchronizedSnapshotTimeSeconds(packet.ID, packet.time);
+            snapshot.x = new_vehicle.m_normalized_x;
+            snapshot.y = new_vehicle.m_normalized_y;
+            snapshot.speed_kph = new_vehicle.m_speed_kph;
+            snapshot.heading = 0.0;
+            snapshot.track_progress = new_vehicle.m_track_progress;
 
-            std::cout << "[TELEMETRY] New vehicle detected: ID #" << packet.ID << std::endl;
+            new_vehicle.m_has_authoritative_state = false;
+
+            // ✅ Use emplace to avoid default constructor call!
+            g_vehicles.emplace(packet.ID, std::move(new_vehicle));
+
+            VehicleInterpolator::Get().AddSnapshot(packet.ID, snapshot);
+            #else
+            // Without networking, ignore unknown vehicles
+            std::cerr << "[TELEMETRY WARNING] Ignoring packet for unknown vehicle #" << packet.ID << std::endl;
+            #endif
         }
     }
 
     // ✅ 2. Broadcast to network clients (if server is running)
     BroadcastTelemetryToClients(packet);
+}
+
+void processIncomingVehicleState(const VehicleStatePacket& packet)
+{
+    if (packet.magic_marker != PacketMagic::VSTA)
+    {
+        return;
+    }
+
+    std::lock_guard<std::mutex> lock(g_vehicles_mutex);
+
+    auto it = g_vehicles.find(packet.vehicle_id);
+    if (it != g_vehicles.end())
+    {
+        Vehicle& vehicle = it->second;
+
+        vehicle.m_prev_x = vehicle.m_normalized_x;
+        vehicle.m_prev_y = vehicle.m_normalized_y;
+        vehicle.m_prev_track_progress = vehicle.m_track_progress;
+
+        vehicle.m_normalized_x = packet.normalized_x;
+        vehicle.m_normalized_y = packet.normalized_y;
+        vehicle.m_speed_kph = packet.speed_kph;
+        vehicle.m_heading = packet.heading;
+        vehicle.m_last_update_time = std::chrono::steady_clock::now();
+
+        applyRaceStateFromPacket(vehicle, packet);
+
+        VehicleSnapshot snapshot;
+        snapshot.timestamp = getSynchronizedSnapshotTimeSeconds(packet.vehicle_id, packet.server_time_ms);
+        snapshot.x = vehicle.m_normalized_x;
+        snapshot.y = vehicle.m_normalized_y;
+        snapshot.speed_kph = vehicle.m_speed_kph;
+        snapshot.heading = vehicle.m_heading;
+        snapshot.track_progress = vehicle.m_track_progress;
+        VehicleInterpolator::Get().AddSnapshot(packet.vehicle_id, snapshot);
+    }
+    else
+    {
+        Vehicle new_vehicle(packet.vehicle_id, packet.normalized_x, packet.normalized_y);
+        new_vehicle.m_prev_x = packet.normalized_x;
+        new_vehicle.m_prev_y = packet.normalized_y;
+        new_vehicle.m_heading = packet.heading;
+        new_vehicle.m_speed_kph = packet.speed_kph;
+        new_vehicle.m_last_update_time = std::chrono::steady_clock::now();
+
+        applyRaceStateFromPacket(new_vehicle, packet);
+
+        VehicleSnapshot snapshot;
+        snapshot.timestamp = getSynchronizedSnapshotTimeSeconds(packet.vehicle_id, packet.server_time_ms);
+        snapshot.x = new_vehicle.m_normalized_x;
+        snapshot.y = new_vehicle.m_normalized_y;
+        snapshot.speed_kph = new_vehicle.m_speed_kph;
+        snapshot.heading = new_vehicle.m_heading;
+        snapshot.track_progress = new_vehicle.m_track_progress;
+
+        g_vehicles.emplace(packet.vehicle_id, std::move(new_vehicle));
+        VehicleInterpolator::Get().AddSnapshot(packet.vehicle_id, snapshot);
+    }
 }
 
 // ============================================================================
@@ -232,13 +561,20 @@ static void updateVehiclePhysics(
     }
 }
 
-// 3. Interpolate position on track
-static glm::vec2 interpolateTrackPosition(
+// 3. Sample authoritative state on track
+struct TrackSample
+{
+    glm::vec2 position{ 0.0f, 0.0f };
+    glm::vec2 tangent{ 1.0f, 0.0f };
+};
+
+static TrackSample sampleTrackState(
     float currentDistance,
     const std::vector<SplinePoint>& track,
     const std::vector<float>& cumulative_distances)
 {
-    // Find segment
+    TrackSample sample;
+
     size_t segment_index = 0;
     for (size_t i = 1; i < cumulative_distances.size(); i++)
     {
@@ -254,7 +590,6 @@ static glm::vec2 interpolateTrackPosition(
         segment_index = track.size() - 2;
     }
 
-    // Local interpolation
     float segment_start = cumulative_distances[segment_index];
     float segment_end = cumulative_distances[segment_index + 1];
     float segment_length = segment_end - segment_start;
@@ -266,11 +601,28 @@ static glm::vec2 interpolateTrackPosition(
         local_fraction = glm::clamp(local_fraction, 0.0f, 1.0f);
     }
 
-    return glm::mix(
+    sample.position = glm::mix(
         track[segment_index].position,
         track[segment_index + 1].position,
         local_fraction
     );
+
+    glm::vec2 mixedTangent = glm::mix(
+        track[segment_index].tangent,
+        track[segment_index + 1].tangent,
+        local_fraction
+    );
+
+    if (glm::length(mixedTangent) > 1e-6f)
+    {
+        sample.tangent = glm::normalize(mixedTangent);
+    }
+    else if (glm::length(track[segment_index].tangent) > 1e-6f)
+    {
+        sample.tangent = glm::normalize(track[segment_index].tangent);
+    }
+
+    return sample;
 }
 
 // 4. Convert normalized coordinates to GPS
@@ -286,7 +638,9 @@ static bool convertNormalizedToGPS(
 
     try {
         using namespace GeographicLib;
-        UTMUPS::Reverse(g_map_origin.m_origin_zone_int, true,
+        // ✅ CRITICAL: Use origin's hemisphere, not hardcoded 'true'
+        bool northp = (g_map_origin.m_origin_zone_char >= 'N');
+        UTMUPS::Reverse(g_map_origin.m_origin_zone_int, northp,
                        meters_easting, meters_northing,
                        out_latitude, out_longitude);
         return true;
@@ -315,8 +669,35 @@ static TelemetryPacket createTelemetryPacket(
     packet.gForceX = 0;
     packet.gForceY = 0;
     packet.fixtype = 4;
-    packet.time = 0;
+    // Use a monotonic time source so client-side interpolation and lap timing can
+    // be stable even for simulated vehicles.
+    packet.time = getMonotonicTimeMs();
 
+    return packet;
+}
+
+static VehicleStatePacket createVehicleStatePacket(
+    int vehicle_id,
+    const glm::vec2& normalized_pos,
+    const glm::vec2& tangent,
+    double speed_kph,
+    float track_progress)
+{
+    VehicleStatePacket packet{};
+    packet.magic_marker = PacketMagic::VSTA;
+    packet.vehicle_id = vehicle_id;
+    packet.server_time_ms = getMonotonicTimeMs();
+    packet.normalized_x = normalized_pos.x;
+    packet.normalized_y = normalized_pos.y;
+    packet.heading = std::atan2(tangent.y, tangent.x);
+    packet.speed_kph = static_cast<float>(speed_kph);
+    packet.track_progress = track_progress;
+    packet.current_lap_time = 0.0f;
+    packet.best_lap_time = -1.0f;
+    packet.completed_laps = 0;
+    packet.current_lap_number = RaceConstants::LAP_START_NUMBER;
+    packet.has_started_first_lap = 0;
+    packet.is_leader = 0;
     return packet;
 }
 
@@ -358,15 +739,8 @@ static void simulationThreadWorker(int vehicle_id, std::vector<SplinePoint> smoo
     // ✅ 4. Main simulation loop
     while (true)
     {
-        // Check if vehicle still exists
-        {
-            std::lock_guard<std::mutex> lock(g_vehicles_mutex);
-            if (g_vehicles.find(vehicle_id) == g_vehicles.end())
-            {
-                std::cout << "[SIM] Vehicle #" << vehicle_id << " removed, stopping simulation" << std::endl;
-                return;
-            }
-        }
+        // Vehicle will be created by first telemetry packet via processIncomingTelemetry()
+        // No need to check if it exists here - simulation keeps running
 
         // ✅ Update physics
         updateVehiclePhysics(
@@ -381,44 +755,73 @@ static void simulationThreadWorker(int vehicle_id, std::vector<SplinePoint> smoo
             segment_duration_dist
         );
 
-        // ✅ Interpolate position
-        glm::vec2 current_pos = interpolateTrackPosition(
+        // ✅ Sample authoritative track state
+        TrackSample sample = sampleTrackState(
             currentDistance,
             smooth_path,
             cumulative_distances
         );
 
-        // ✅ Convert to GPS
-        double sim_lat, sim_lon;
-        if (!convertNormalizedToGPS(current_pos, sim_lat, sim_lon))
-        {
-            continue; // Skip frame on error
-        }
-
         // ✅ Calculate track progress (for RaceManager)
         float track_progress = currentDistance / total_track_length;
 
-        // ✅ Create telemetry packet
-        TelemetryPacket packet = createTelemetryPacket(
+        // ✅ Create processed authoritative state packet
+        VehicleStatePacket packet = createVehicleStatePacket(
             vehicle_id,
-            sim_lat,
-            sim_lon,
+            sample.position,
+            sample.tangent,
             currentSpeedKph,
             track_progress
         );
 
-        // ✅ Update track progress in vehicle (for lap detection)
+        // ✅ Update local authoritative server state exactly, without GPS roundtrip
         {
             std::lock_guard<std::mutex> lock(g_vehicles_mutex);
             auto it = g_vehicles.find(vehicle_id);
-            if (it != g_vehicles.end())
+
+            if (it == g_vehicles.end())
             {
-                it->second.m_track_progress = static_cast<double>(track_progress);
+                Vehicle new_vehicle(vehicle_id, sample.position.x, sample.position.y);
+                new_vehicle.m_prev_x = sample.position.x;
+                new_vehicle.m_prev_y = sample.position.y;
+                new_vehicle.m_heading = packet.heading;
+                new_vehicle.m_speed_kph = currentSpeedKph;
+                new_vehicle.m_track_progress = track_progress;
+                new_vehicle.m_prev_track_progress = track_progress;
+                new_vehicle.m_has_authoritative_state = false;
+                new_vehicle.m_last_update_time = std::chrono::steady_clock::now();
+                auto [insertedIt, inserted] = g_vehicles.emplace(vehicle_id, std::move(new_vehicle));
+                it = insertedIt;
             }
+            else
+            {
+                Vehicle& vehicle = it->second;
+                vehicle.m_prev_x = vehicle.m_normalized_x;
+                vehicle.m_prev_y = vehicle.m_normalized_y;
+                vehicle.m_prev_track_progress = vehicle.m_track_progress;
+                vehicle.m_normalized_x = sample.position.x;
+                vehicle.m_normalized_y = sample.position.y;
+                vehicle.m_heading = packet.heading;
+                vehicle.m_speed_kph = currentSpeedKph;
+                vehicle.m_track_progress = track_progress;
+                vehicle.m_has_authoritative_state = false;
+                vehicle.m_last_update_time = std::chrono::steady_clock::now();
+            }
+
+            fillPacketRaceStateFromVehicle(packet, it->second);
+
+            VehicleSnapshot snapshot;
+            snapshot.timestamp = getSynchronizedSnapshotTimeSeconds(packet.vehicle_id, packet.server_time_ms);
+            snapshot.x = sample.position.x;
+            snapshot.y = sample.position.y;
+            snapshot.speed_kph = currentSpeedKph;
+            snapshot.heading = packet.heading;
+            snapshot.track_progress = track_progress;
+            VehicleInterpolator::Get().AddSnapshot(vehicle_id, snapshot);
         }
 
-        // ✅ Process packet through unified system (same as real data!)
-        processIncomingTelemetry(packet);
+        // ✅ Broadcast processed packet to clients
+        BroadcastVehicleStateToClients(packet);
 
         // Sleep until next update
         std::this_thread::sleep_for(std::chrono::milliseconds(static_cast<int>(update_interval_ms)));

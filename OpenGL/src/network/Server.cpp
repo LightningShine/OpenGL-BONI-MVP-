@@ -1,15 +1,25 @@
 #include "../network/Server.h"
 #include "../Config.h"
+#include "../input/Input.h"
+#include "../rendering/Interpolation.h"
+#include "../racing/RaceManager.h"
 #include <cstring>
 #include <windows.h>
 
 // Console colors (anonymous namespace for internal use)
 namespace {
-    constexpr WORD CONSOLE_DEFAULT = 7;
-    constexpr WORD CONSOLE_COLOR_GREEN = 10;
-    constexpr WORD CONSOLE_COLOR_RED = 12;
-    constexpr WORD CONSOLE_COLOR_YELLOW = 14;
+	constexpr WORD CONSOLE_DEFAULT = 7;
+	constexpr WORD CONSOLE_COLOR_GREEN = 10;
+	constexpr WORD CONSOLE_COLOR_RED = 12;
+	constexpr WORD CONSOLE_COLOR_YELLOW = 14;
 }
+
+// External variables from main.cpp
+extern std::vector<SplinePoint> g_smooth_track_points;
+extern std::mutex g_track_mutex;
+extern MapOrigin g_map_origin;
+extern std::atomic<bool> g_is_map_loaded;
+extern RaceManager* g_race_manager;
 
 
 
@@ -92,6 +102,33 @@ void OnConnectionStatusChange(SteamNetConnectionStatusChangedCallback_t* pInfo)
 	default:
 		break;
 	}
+}
+
+static uint32_t GetMonotonicServerTimeMs()
+{
+	return static_cast<uint32_t>(
+		std::chrono::duration_cast<std::chrono::milliseconds>(
+			std::chrono::steady_clock::now().time_since_epoch()).count());
+}
+
+static VehicleStatePacket MakeVehicleStatePacket(const Vehicle& vehicle)
+{
+	VehicleStatePacket packet{};
+	packet.magic_marker = PacketMagic::VSTA;
+	packet.vehicle_id = vehicle.m_id;
+	packet.server_time_ms = GetMonotonicServerTimeMs();
+	packet.normalized_x = static_cast<float>(vehicle.m_normalized_x);
+	packet.normalized_y = static_cast<float>(vehicle.m_normalized_y);
+	packet.heading = static_cast<float>(vehicle.m_heading);
+	packet.speed_kph = static_cast<float>(vehicle.m_speed_kph);
+	packet.track_progress = static_cast<float>(vehicle.m_track_progress);
+	packet.current_lap_time = vehicle.m_current_lap_timer;
+	packet.best_lap_time = vehicle.m_best_lap_time;
+	packet.completed_laps = vehicle.m_completed_laps;
+	packet.current_lap_number = vehicle.m_current_lap_number;
+	packet.has_started_first_lap = vehicle.m_has_started_first_lap ? 1 : 0;
+	packet.is_leader = vehicle.m_is_leader ? 1 : 0;
+	return packet;
 }
 
 class MyServer {
@@ -208,6 +245,25 @@ void BroadcastTelemetryToClients(const TelemetryPacket& packet)
 #endif
 }
 
+void BroadcastVehicleStateToClients(const VehicleStatePacket& packet)
+{
+#if NETWORKING_ENABLED
+	if (!g_is_server_running) return;
+
+	bool has_authenticated_clients = false;
+	for (const auto& pair : g_authenticated_connections) {
+		if (pair.second) {
+			has_authenticated_clients = true;
+			break;
+		}
+	}
+
+	if (has_authenticated_clients) {
+		SendToAll(&packet, sizeof(VehicleStatePacket));
+	}
+#endif
+}
+
 // Authenticate connection with password
 static bool authenticateConnection(HSteamNetConnection connection, const char* password)
 {
@@ -237,12 +293,12 @@ static bool authenticateConnection(HSteamNetConnection connection, const char* p
 		std::cout << "Client " << connection << " authenticated successfully" << std::endl;
 		std::cout.flush();
 		SetConsoleTextAttribute(GetStdHandle(STD_OUTPUT_HANDLE), CONSOLE_DEFAULT);
-		
+
 		g_authenticated_connections[connection] = true;
 		response.is_authenticated = true;
 		response.attempts_remaining = 0;
 		strncpy_s(response.message, "Authentication successful", sizeof(response.message) - 1);
-		
+
 		// Send success response
 		SteamNetworkingSockets()->SendMessageToConnection(
 			connection,
@@ -251,10 +307,13 @@ static bool authenticateConnection(HSteamNetConnection connection, const char* p
 			k_nSteamNetworkingSend_Reliable,
 			nullptr
 		);
-		
+
+		// Send track and race data after successful authentication
+		SendTrackAndRaceData(connection);
+
 		return true;
 	}
-	
+
 	// Authentication failed
 	SetConsoleTextAttribute(GetStdHandle(STD_OUTPUT_HANDLE), CONSOLE_COLOR_RED);
 	std::cout << "Authentication failed for client " << connection 
@@ -277,17 +336,17 @@ static bool authenticateConnection(HSteamNetConnection connection, const char* p
 			k_nSteamNetworkingSend_Reliable,
 			nullptr
 		);
-		
+
 		// Give time to send before closing
 		std::this_thread::sleep_for(std::chrono::milliseconds(100));
 		SteamNetworkingSockets()->CloseConnection(connection, 0, "Max authentication attempts exceeded", false);
-		
+
 		std::cout << "Client " << connection << " disconnected - max attempts exceeded" << std::endl;
 	} else {
 		// Still has attempts remaining
 		snprintf(response.message, sizeof(response.message), 
-		         "Invalid password - %d attempts remaining", attempts_remaining);
-		
+				 "Invalid password - %d attempts remaining", attempts_remaining);
+
 		// Send response
 		SteamNetworkingSockets()->SendMessageToConnection(
 			connection,
@@ -297,8 +356,149 @@ static bool authenticateConnection(HSteamNetConnection connection, const char* p
 			nullptr
 		);
 	}
-	
+
 	return false;
+}
+
+// ============================================================================
+// SEND TRACK AND RACE DATA TO CLIENT
+// Called after successful authentication
+// ============================================================================
+void SendTrackAndRaceData(HSteamNetConnection connection)
+{
+	std::vector<SplinePoint> track_copy;
+	{
+		std::lock_guard<std::mutex> track_lock(g_track_mutex);
+		track_copy = g_smooth_track_points;
+	}
+
+	if (!g_is_map_loaded || track_copy.empty()) {
+		std::cout << "[SERVER] No track loaded - skipping track sync for client " << connection << std::endl;
+		return;
+	}
+
+	std::cout << "[SERVER] Sending track data to client " << connection << "..." << std::endl;
+
+	// 1. Send track header
+	TrackDataHeader header;
+	header.magic_marker = PacketMagic::TRCK;
+	header.point_count = static_cast<uint32_t>(track_copy.size());
+	header.origin_lat = g_map_origin.m_origin_lat_dd;
+	header.origin_lon = g_map_origin.m_origin_lon_dd;
+	header.origin_easting = g_map_origin.m_origin_meters_easting;
+	header.origin_northing = g_map_origin.m_origin_meters_northing;
+	header.origin_zone = g_map_origin.m_origin_zone_int;
+	header.origin_zone_char = g_map_origin.m_origin_zone_char;
+
+	// Get start/finish line from RaceManager
+	if (g_race_manager) {
+		// Access private members via getter if available, or use public interface
+		// For now, send zeros - you can add getter methods to RaceManager if needed
+		header.start_finish_p1_x = 0.0f;
+		header.start_finish_p1_y = 0.0f;
+		header.start_finish_p2_x = 0.0f;
+		header.start_finish_p2_y = 0.0f;
+	}
+
+	EResult result = SteamNetworkingSockets()->SendMessageToConnection(
+		connection,
+		&header,
+		sizeof(header),
+		k_nSteamNetworkingSend_Reliable,
+		nullptr
+	);
+
+	if (result != k_EResultOK) {
+		std::cerr << "[SERVER] Failed to send track header to client " << connection << std::endl;
+		return;
+	}
+
+	std::cout << "[SERVER] Track header sent: " << header.point_count << " points" << std::endl;
+
+	// 2. Send track points in chunks
+	uint32_t total_points = static_cast<uint32_t>(track_copy.size());
+	uint32_t chunks_needed = (total_points + MAX_POINTS_PER_CHUNK - 1) / MAX_POINTS_PER_CHUNK;
+
+	for (uint32_t chunk_idx = 0; chunk_idx < chunks_needed; chunk_idx++)
+	{
+		TrackChunkPacket chunk;
+		chunk.magic_marker = PacketMagic::TCHU;
+		chunk.chunk_index = chunk_idx;
+
+		uint32_t start_idx = chunk_idx * MAX_POINTS_PER_CHUNK;
+		uint32_t end_idx = std::min(start_idx + MAX_POINTS_PER_CHUNK, total_points);
+		chunk.points_in_chunk = end_idx - start_idx;
+
+		// Copy points to chunk
+		for (uint32_t i = 0; i < chunk.points_in_chunk; i++)
+		{
+			const SplinePoint& sp = track_copy[start_idx + i];
+			chunk.points[i].x = sp.position.x;
+			chunk.points[i].y = sp.position.y;
+			chunk.points[i].tangent_x = sp.tangent.x;
+			chunk.points[i].tangent_y = sp.tangent.y;
+		}
+
+		result = SteamNetworkingSockets()->SendMessageToConnection(
+			connection,
+			&chunk,
+			sizeof(chunk),
+			k_nSteamNetworkingSend_Reliable,
+			nullptr
+		);
+
+		if (result != k_EResultOK) {
+			std::cerr << "[SERVER] Failed to send track chunk " << chunk_idx << " to client " << connection << std::endl;
+			return;
+		}
+
+		// Small delay between chunks to avoid flooding
+		if (chunk_idx % 10 == 0) {
+			std::this_thread::sleep_for(std::chrono::milliseconds(10));
+		}
+	}
+
+	std::cout << "[SERVER] All track chunks sent (" << chunks_needed << " chunks)" << std::endl;
+
+	// 3. Send race data
+	RaceDataPacket race_data;
+	race_data.magic_marker = PacketMagic::RACE;
+	race_data.has_start_finish_line = (g_race_manager != nullptr);
+
+	result = SteamNetworkingSockets()->SendMessageToConnection(
+		connection,
+		&race_data,
+		sizeof(race_data),
+		k_nSteamNetworkingSend_Reliable,
+		nullptr
+	);
+
+	if (result == k_EResultOK) {
+		std::cout << "[SERVER] Race data sent to client " << connection << std::endl;
+	} else {
+		std::cerr << "[SERVER] Failed to send race data to client " << connection << std::endl;
+	}
+
+	// 4. Send current processed vehicle states once so a newly connected client does
+	// not need to wait for the next simulation tick to see cars in the right place.
+	{
+		std::lock_guard<std::mutex> vehicle_lock(g_vehicles_mutex);
+		for (const auto& [vehicleId, vehicle] : g_vehicles)
+		{
+			VehicleStatePacket statePacket = MakeVehicleStatePacket(vehicle);
+			SteamNetworkingSockets()->SendMessageToConnection(
+				connection,
+				&statePacket,
+				sizeof(statePacket),
+				k_nSteamNetworkingSend_Reliable,
+				nullptr
+			);
+		}
+	}
+
+	SetConsoleTextAttribute(GetStdHandle(STD_OUTPUT_HANDLE), CONSOLE_COLOR_GREEN);
+	std::cout << "[SERVER] ✓ Client " << connection << " fully synchronized" << std::endl;
+	SetConsoleTextAttribute(GetStdHandle(STD_OUTPUT_HANDLE), CONSOLE_DEFAULT);
 }
 
 void FrameUpdate()
@@ -388,12 +588,12 @@ int serverWork()
 	StartServer(NetworkConstants::DEFAULT_SERVER_PORT);
 
 	std::cout << "[SERVER] Ready to broadcast telemetry from real/simulated vehicles" << std::endl;
-	std::cout << "[SERVER] Telemetry will be sent via processIncomingTelemetry() -> BroadcastTelemetryToClients()" << std::endl;
+	std::cout << "[SERVER] Raw telemetry remains available; simulation now broadcasts processed vehicle states" << std::endl;
 
 	while (!ServerNeedStop_b)
 	{
 		FrameUpdate();
-		std::this_thread::sleep_for(std::chrono::milliseconds(100));
+		std::this_thread::sleep_for(std::chrono::milliseconds(NetworkConstants::SERVER_POLL_INTERVAL_MS));
 	}
 
 	ManagePort(false);
@@ -484,6 +684,7 @@ void ChangeisServerRunning() {}
 void serverStop() {}
 void continueServerRunning() {}
 void BroadcastTelemetryToClients(const TelemetryPacket& packet) {} // ARM64 stub
+void BroadcastVehicleStateToClients(const VehicleStatePacket& packet) {} // ARM64 stub
 
 #endif // NETWORKING_ENABLED
 

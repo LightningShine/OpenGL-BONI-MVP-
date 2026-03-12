@@ -1,4 +1,5 @@
 ﻿#include "../vehicle/Vehicle.h"
+#include "../vehicle/VehicleInterpolator.h"
 #include "../input/Input.h"
 #include "../Config.h"
 #include <cmath>
@@ -30,19 +31,20 @@ Vehicle::Vehicle()
         std::cerr << "Error: Cannot create vehicle - map not loaded!" << std::endl;
         return;
     }
-    
+
 
     m_normalized_x = 0.0;
     m_normalized_y = 0.0;
-    
+
     // Конвертируем обратно в GPS через origin UTM
     m_meters_easting = g_map_origin.m_origin_meters_easting + (m_normalized_x * MapConstants::MAP_SIZE);
     m_meters_northing = g_map_origin.m_origin_meters_northing + (m_normalized_y * MapConstants::MAP_SIZE);
-    
+
     // Конвертируем UTM в GPS
     try {
         using namespace GeographicLib;
-        UTMUPS::Reverse(g_map_origin.m_origin_zone_int, true, 
+        bool northp = (g_map_origin.m_origin_zone_char >= 'N');  // ✅ Use correct hemisphere
+        UTMUPS::Reverse(g_map_origin.m_origin_zone_int, northp, 
                        m_meters_easting, m_meters_northing, 
                        m_lat_dd, m_lon_dd);
     }
@@ -51,7 +53,7 @@ Vehicle::Vehicle()
         m_lat_dd = 0;
         m_lon_dd = 0;
     }
-    
+
     m_speed_kph = 0.0;
     m_acceleration = 0.0;
     m_g_force_x = 0.0;
@@ -76,19 +78,20 @@ Vehicle::Vehicle(double normalized_x, double normalized_y)
         std::cerr << "Error: Cannot create vehicle - map not loaded!" << std::endl;
         return;
     }
-    
+
     // Устанавливаем позицию из параметров
     m_normalized_x = normalized_x;
     m_normalized_y = normalized_y;
-    
+
     // Конвертируем обратно в GPS через origin UTM
     m_meters_easting = g_map_origin.m_origin_meters_easting + (m_normalized_x * MapConstants::MAP_SIZE);
     m_meters_northing = g_map_origin.m_origin_meters_northing + (m_normalized_y * MapConstants::MAP_SIZE);
-    
+
     // Конвертируем UTM в GPS
     try {
         using namespace GeographicLib;
-        UTMUPS::Reverse(g_map_origin.m_origin_zone_int, true, 
+        bool northp = (g_map_origin.m_origin_zone_char >= 'N');  // ✅ Use correct hemisphere
+        UTMUPS::Reverse(g_map_origin.m_origin_zone_int, northp, 
                        m_meters_easting, m_meters_northing, 
                        m_lat_dd, m_lon_dd);
     }
@@ -97,14 +100,14 @@ Vehicle::Vehicle(double normalized_x, double normalized_y)
         m_lat_dd = 0;
         m_lon_dd = 0;
     }
-    
+
     m_speed_kph = 0.0;
     m_acceleration = 0.0;
     m_g_force_x = 0.0;
     m_g_force_y = 0.0;
     m_fix_type = 1;
     m_id = generateVehicleID();
-    
+
     // ✅ Устанавливаем prev позицию такой же (чтобы не было ложного пересечения)
     m_prev_x = m_normalized_x;
     m_prev_y = m_normalized_y;
@@ -141,8 +144,8 @@ Vehicle::Vehicle(int32_t id, double normalized_x, double normalized_y)
     // Конвертируем UTM в GPS
     try {
         using namespace GeographicLib;
-        int zone = g_map_origin.m_origin_zone_int;  // ✅ Use zone from map origin
-        bool northp = (g_map_origin.m_origin_zone_char == 'N');  // ✅ Derive hemisphere from zone letter
+        int zone = g_map_origin.m_origin_zone_int;
+        bool northp = (g_map_origin.m_origin_zone_char >= 'N');  // ✅ Use correct hemisphere
         UTMUPS::Reverse(zone, northp, m_meters_easting, m_meters_northing,
                        m_lat_dd, m_lon_dd);
     }
@@ -180,15 +183,40 @@ Vehicle::Vehicle(const TelemetryPacket& packet)
     m_g_force_y = packet.gForceY / 100.0;
     m_fix_type = packet.fixtype;
     m_id = packet.ID;
-    
-    std::cout << "[VEHICLE] Creating vehicle #" << m_id << " from telemetry packet" << std::endl;
-    
+
+    // ⚠️ CRITICAL DEBUG: Print stack trace to find who creates this
+    std::cout << "[VEHICLE CONSTRUCTOR] Creating vehicle #" << m_id 
+              << " from TelemetryPacket (this should only happen for NEW vehicles!)" << std::endl;
+    std::cout.flush();
+
+    // Validate GPS coordinates
+    if (std::abs(m_lat_dd) < 0.0001 || std::abs(m_lon_dd) < 0.0001) {
+        std::cerr << "[VEHICLE ERROR] Invalid GPS coordinates for vehicle #" << m_id 
+                  << ": lat=" << m_lat_dd << ", lon=" << m_lon_dd << std::endl;
+    }
+
+    // Convert GPS to meters
     coordinatesToMeters(m_lat_dd, m_lon_dd, m_meters_easting, m_meters_northing);
+
+    // Check if conversion failed
+    if (std::abs(m_meters_easting) < 1.0 && std::abs(m_meters_northing) < 1.0) {
+        std::cerr << "[VEHICLE ERROR] coordinatesToMeters returned near-zero: "
+                  << "easting=" << m_meters_easting << ", northing=" << m_meters_northing << std::endl;
+    }
+
+    // Convert meters to normalized coordinates
     getCoordinateDifferenceFromOrigin(m_meters_easting, m_meters_northing, m_normalized_x, m_normalized_y);
+
+    std::cout << "[VEHICLE] Created vehicle #" << m_id << " at (" 
+              << m_normalized_x << ", " << m_normalized_y << "), GPS: (" 
+              << m_lat_dd << ", " << m_lon_dd << ")"
+              << " | UTM: (" << m_meters_easting << ", " << m_meters_northing << ")" << std::endl;
+    std::cout.flush();
 
     m_prev_x = m_normalized_x;
     m_prev_y = m_normalized_y;
-    
+    m_heading = 0.0; // Initialize heading
+
     m_last_update_time = std::chrono::steady_clock::now();
     m_cached_color = getColor();
 }
@@ -233,9 +261,16 @@ void removeVehicles()
             for (auto it = g_vehicles.begin(); it != g_vehicles.end();)
             {
                 auto timeSinceLastUpdate = std::chrono::duration_cast<std::chrono::milliseconds>(now - it->second.m_last_update_time).count();
-                if (timeSinceLastUpdate >= VehicleConstants::VEHICLE_TIMEOUT_MS)
+                const int timeoutMs = it->second.m_has_authoritative_state
+                    ? VehicleConstants::AUTHORITATIVE_VEHICLE_TIMEOUT_MS
+                    : VehicleConstants::VEHICLE_TIMEOUT_MS;
+
+                if (timeSinceLastUpdate >= timeoutMs)
                 {
-                    std::cout << "Vehicle ID " << it->second.m_id << " removed due to timeout." << std::endl;
+                    std::cout << "[TIMEOUT] Vehicle ID #" << it->second.m_id 
+                              << " removed due to timeout (" << timeSinceLastUpdate << "ms > " 
+                              << timeoutMs << "ms)" << std::endl;
+                    std::cout.flush();
                     it = g_vehicles.erase(it); // ✅ erase возвращает следующий итератор
                 }
                 else
@@ -244,7 +279,7 @@ void removeVehicles()
                 }
             }
         }
-        
+
     }
 }
 
@@ -312,39 +347,24 @@ void renderVehicle(GLuint shader_program, GLuint vao, GLuint vbo,
 
     if (vehicle.m_is_leader)
     {
-        glm::vec2 direction(
-            vehicle.m_normalized_x - vehicle.m_prev_x,
-            vehicle.m_normalized_y - vehicle.m_prev_y
-        );
+        // Use authoritative heading if available. This is more stable than deriving
+        // rotation from frame-to-frame position differences.
+        float newAngle = static_cast<float>(vehicle.m_heading) - glm::half_pi<float>();
 
-        float length = glm::length(direction);
-        const float MIN_MOVEMENT = 0.0005f;  // ~50cm at normalized scale (increased to reduce GPS noise jitter)
+        // ✅ SMOOTH INTERPOLATION (exponential smoothing)
+        const float SMOOTHING_FACTOR = 0.3f;  // 0.0 = no change, 1.0 = instant (0.3 = good balance)
 
-        if (length > MIN_MOVEMENT)
-        {
-            // Calculate new angle
-            // atan2 returns angle from X-axis, subtract PI/2 because triangle points up (Y-axis)
-            float newAngle = std::atan2(direction.y, direction.x) - glm::half_pi<float>();
+        // Handle angle wrapping (-PI to PI)
+        float angleDiff = newAngle - vehicle.m_last_rotation_angle;
 
-            // ✅ SMOOTH INTERPOLATION (exponential smoothing)
-            // Prevents sudden jumps from GPS noise
-            const float SMOOTHING_FACTOR = 0.3f;  // 0.0 = no change, 1.0 = instant (0.3 = good balance)
+        if (angleDiff > glm::pi<float>())
+            angleDiff -= 2.0f * glm::pi<float>();
+        else if (angleDiff < -glm::pi<float>())
+            angleDiff += 2.0f * glm::pi<float>();
 
-            // Handle angle wrapping (-PI to PI)
-            float angleDiff = newAngle - vehicle.m_last_rotation_angle;
+        rotationAngle = vehicle.m_last_rotation_angle + angleDiff * SMOOTHING_FACTOR;
 
-            if (angleDiff > glm::pi<float>())
-                angleDiff -= 2.0f * glm::pi<float>();
-            else if (angleDiff < -glm::pi<float>())
-                angleDiff += 2.0f * glm::pi<float>();
-
-            // Smooth interpolation
-            rotationAngle = vehicle.m_last_rotation_angle + angleDiff * SMOOTHING_FACTOR;
-
-            // ✅ Cache the angle for next frame (mutable allows modification in const context)
-            vehicle.m_last_rotation_angle = rotationAngle;
-        }
-        // ✅ ELSE: Keep last valid angle (don't reset to 0!)
+        vehicle.m_last_rotation_angle = rotationAngle;
     }
 
     // ✅ ОПТИМИЗАЦИЯ: Создаем матрицу вращения один раз
@@ -420,9 +440,9 @@ void renderAllVehicles(GLuint shader_program, GLuint vao, GLuint vbo,
     if (!g_is_map_loaded) {
         return; // Не рисуем машины если нет трека
     }
-    
-    // ✅ Не нужно вызывать glUseProgram и устанавливать projection
-    // Это уже сделано в main.cpp перед вызовом renderAllVehicles
+
+    // Get current render time for interpolation
+    double renderTime = VehicleInterpolator::GetTime();
 
     // Вычисляем границы видимости
     float visibleWidth = 1.0f / camera_zoom * 2.0f;
@@ -432,27 +452,63 @@ void renderAllVehicles(GLuint shader_program, GLuint vao, GLuint vbo,
     float minY = camera_pos.y - visibleHeight;
     float maxY = camera_pos.y + visibleHeight;
 
-    // ✅ Собираем УКАЗАТЕЛИ на видимые машины под мьютексом
-    // (НЕ копируем сами Vehicle - это сохраняет m_last_rotation_angle!)
-    std::vector<const Vehicle*> vehiclesToRender;
+    // ✅ Собираем копии машин с интерполированными позициями
+    struct RenderData {
+        Vehicle vehicle;  // Copy for thread-safe rendering
+        double interp_x, interp_y, interp_heading, interp_speed;
+        bool use_interpolation;
+    };
+
+    std::vector<RenderData> vehiclesToRender;
     {
         std::lock_guard<std::mutex> lock(g_vehicles_mutex);
         vehiclesToRender.reserve(g_vehicles.size());
 
         for (const auto& [id, vehicle] : g_vehicles) {
-            float vX = static_cast<float>(vehicle.m_normalized_x);
-            float vY = static_cast<float>(vehicle.m_normalized_y);
+            RenderData data{ vehicle, 0.0, 0.0, 0.0, 0.0, false };
 
-            // Копируем только видимые машины
-            if (vX >= minX && vX <= maxX && vY >= minY && vY <= maxY) {
-                vehiclesToRender.push_back(&vehicle);  // ✅ Сохраняем УКАЗАТЕЛЬ!
+            // Try to get interpolated position
+            if (VehicleInterpolator::Get().GetInterpolatedState(
+                id, renderTime,
+                data.interp_x, data.interp_y, 
+                data.interp_heading, data.interp_speed))
+            {
+                data.use_interpolation = true;
+
+                // Check visibility with interpolated position
+                if (data.interp_x >= minX && data.interp_x <= maxX &&
+                    data.interp_y >= minY && data.interp_y <= maxY)
+                {
+                    // ✅ Use interpolated position AND heading for rendering
+                    data.vehicle.m_normalized_x = data.interp_x;
+                    data.vehicle.m_normalized_y = data.interp_y;
+                    data.vehicle.m_speed_kph = data.interp_speed;
+                    data.vehicle.m_heading = data.interp_heading;  // ✅ Fix: update heading too!
+
+                    // Update prev position for direction calculation
+                    data.vehicle.m_prev_x = vehicle.m_prev_x;
+                    data.vehicle.m_prev_y = vehicle.m_prev_y;
+
+                    vehiclesToRender.push_back(data);
+                }
+            }
+            else
+            {
+                // ✅ Fallback to direct position (no interpolation data yet or buffer not ready)
+                // This happens in first few frames or if packets are lost
+                float vX = static_cast<float>(vehicle.m_normalized_x);
+                float vY = static_cast<float>(vehicle.m_normalized_y);
+
+                if (vX >= minX && vX <= maxX && vY >= minY && vY <= maxY) {
+                    vehiclesToRender.push_back(data);
+                }
             }
         }
     } // ✅ Мьютекс освобожден
 
     // ✅ Рендеринг БЕЗ блокировки (может занять 10-20ms)
-    for (const Vehicle* vehicle : vehiclesToRender) {
-        renderVehicle(shader_program, vao, vbo, *vehicle, projection);  // ✅ Разыменовываем
+    for (const RenderData& data : vehiclesToRender) {
+        renderVehicle(shader_program, vao, vbo, data.vehicle, projection);
     }
 }
 

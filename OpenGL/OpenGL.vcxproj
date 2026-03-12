@@ -236,6 +236,7 @@
     <ClCompile Include="src\rendering\Render.cpp" />
     <ClCompile Include="src\vehicle\Vehicle.cpp" />
     <ClCompile Include="src\thirdparty\glad.c" />
+    <ClCompile Include="src\vehicle\VehicleInterpolator.cpp" />
     <ClCompile Include="UI.cpp" />
     <ClCompile Include="libraries\include\imgui\imgui.cpp" />
     <ClCompile Include="libraries\include\imgui\imgui_demo.cpp" />
@@ -261,6 +262,7 @@
     <ClInclude Include="src\ui\UI_Config.h" />
     <ClInclude Include="src\ui\UI_Elements_Config.h" />
     <ClInclude Include="src\vehicle\Vehicle.h" />
+    <ClInclude Include="src\vehicle\VehicleInterpolator.h" />
     <ClInclude Include="UI.h" />
     <ClInclude Include="UI_Elements.h" />
   </ItemGroup>

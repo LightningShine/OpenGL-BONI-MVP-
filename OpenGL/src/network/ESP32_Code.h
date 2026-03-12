@@ -28,6 +28,9 @@ bool openCOMPort(const std::string& port_name);
 // ============================================================================
 void processIncomingTelemetry(const TelemetryPacket& packet);
 
+// Process server-authoritative normalized vehicle state (used by simulation/network)
+void processIncomingVehicleState(const VehicleStatePacket& packet);
+
 // ============================================================================
 // DATA SOURCES
 // ============================================================================

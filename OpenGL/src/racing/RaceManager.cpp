@@ -90,6 +90,14 @@ void RaceManager::Update(float deltaTime)
             }
             vehicle.laps[vehicle.m_current_lap_number].samples.push_back(sample);
         }
+
+        // Vehicles driven by processed server state already have authoritative
+        // lap/progress/timing values. Do not advance them locally on the client.
+        if (vehicle.m_has_authoritative_state)
+        {
+            vehicle.m_total_progress = vehicle.m_completed_laps + vehicle.m_track_progress;
+            continue;
+        }
         
         // Check for finish line crossing
         float intersectionRatio = 0.0f;

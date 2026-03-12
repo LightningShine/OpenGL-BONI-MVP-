@@ -49,6 +49,7 @@ struct AppContext {
 // ============================================================================
 // Smooth track points used for vehicle simulation (generated from raw track)
 std::vector<SplinePoint> g_smooth_track_points;
+std::mutex g_track_mutex;
 
 
 void framebuffer_size_callback(GLFWwindow* window, int width, int height)
@@ -118,18 +119,13 @@ const std::vector<SplinePoint>* smooth_track = nullptr)
 			static int next_vehicle_id = 1;
 			int vehicle_id = next_vehicle_id++;
 
-			// ✅ Create Vehicle with explicit ID at start position
-			const SplinePoint& start_point = (*smooth_track)[0];
-			Vehicle new_vehicle(vehicle_id, start_point.position.x, start_point.position.y);
-
-			{
-				std::lock_guard<std::mutex> lock(g_vehicles_mutex);
-				g_vehicles[vehicle_id] = new_vehicle;
-			}
-
 			std::cout << "[SIM] Starting vehicle #" << vehicle_id << " simulation on track" << std::endl;
 
-			// Start simulation - packets will UPDATE the vehicle (not recreate)
+			// ✅ DON'T create vehicle here! Let first telemetry packet create it.
+			// This avoids coordinate mismatch between normalized→GPS→normalized roundtrip.
+			// The simulation will send packets, and processIncomingTelemetry will create the vehicle.
+
+			// Start simulation - first packet will CREATE the vehicle
 			simulateVehicleMovement(vehicle_id, *smooth_track);
 		}
 	}
@@ -874,7 +870,7 @@ int main()
 	std::cout << "Grid VAO/VBO created (VAO: " << grid_vao << ", VBO: " << grid_vbo << ")" << std::endl;
 
 	// ========================== RENDER LOOP ==========================
-	
+
 	// Delta time calculation for physics-accurate timing
 	auto lastFrameTime = std::chrono::steady_clock::now();
 
@@ -888,11 +884,30 @@ int main()
 			continue;
 		}
 
+		// ✅ Build track rendering cache if track was loaded from network
+		// This must be done in main thread because OpenGL context is not thread-safe
+		if (g_is_map_loaded && !TrackRenderer::isTrackCacheValid() && !g_smooth_track_points.empty())
+		{
+			std::cout << "[MAIN] Building track rendering cache in main thread..." << std::endl;
+
+			// Copy spline points under mutex (network thread can update them during track load)
+			std::vector<SplinePoint> track_copy;
+			{
+				std::lock_guard<std::mutex> track_lock(g_track_mutex);
+				track_copy = g_smooth_track_points;
+			}
+
+			// Build cache directly from received spline points to avoid client-side reprocessing
+			TrackRenderer::rebuildTrackCacheFromSplinePoints(track_copy);
+
+			std::cout << "[MAIN] ✓ Track rendering cache built - track should now be visible!" << std::endl;
+		}
+
 		// Calculate delta time
 		auto currentFrameTime = std::chrono::steady_clock::now();
 		float deltaTime = std::chrono::duration<float>(currentFrameTime - lastFrameTime).count();
 		lastFrameTime = currentFrameTime;
-		
+
 		// Update Race Manager (lap timing logic)
 		if (g_race_manager)
 		{

@@ -73,9 +73,6 @@
     <ClCompile Include="src\network\ESP32_Code.cpp">
       <Filter>src\network</Filter>
     </ClCompile>
-    <ClCompile Include="Client.cpp">
-      <Filter>src\network</Filter>
-    </ClCompile>
     <ClCompile Include="UI.cpp">
       <Filter>src\ui</Filter>
     </ClCompile>
@@ -85,9 +82,12 @@
     <ClCompile Include="src\rendering\Render.cpp" />
     <ClCompile Include="UI_Elements.cpp" />
     <ClCompile Include="src\racing\RaceManager.cpp" />
-    <ClCompile Include="TimeDiff.cpp" />
     <ClCompile Include="src\racing\TimeDiffirence\TimeDiff.cpp">
       <Filter>src\Racing\TimeDiff</Filter>
+    </ClCompile>
+    <ClCompile Include="Client.cpp" />
+    <ClCompile Include="src\vehicle\VehicleInterpolator.cpp">
+      <Filter>src\vehicle</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
@@ -122,9 +122,11 @@
     <ClInclude Include="src\ui\UI_Elements_Config.h" />
     <ClInclude Include="UI_Elements.h" />
     <ClInclude Include="src\racing\RaceManager.h" />
-    <ClInclude Include="TimeDiff.h" />
     <ClInclude Include="src\racing\TimeDiffirence\TimeDiff.h">
       <Filter>src\Racing\TimeDiff</Filter>
+    </ClInclude>
+    <ClInclude Include="src\vehicle\VehicleInterpolator.h">
+      <Filter>src\vehicle</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
