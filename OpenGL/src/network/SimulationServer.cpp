@@ -217,10 +217,37 @@ namespace {
 // ============================================================================
 void processIncomingTelemetry(const TelemetryPacket& packet)
 {
-    if (!g_is_map_loaded) {
+    // Ignore telemetry until a track is loaded.
+    // COM port can stay connected, but we don't create/update vehicles without the map origin.
+    if (!g_is_map_loaded)
+    {
         static std::atomic<bool> warned{ false };
-        if (!warned.exchange(true)) {
-            std::cerr << "[ERROR] Telemetry received but map/track is not loaded yet. Load a track to display vehicles." << std::endl;
+        if (!warned.exchange(true))
+        {
+            std::cerr << "[TELEMETRY] Ignoring telemetry: map/track is not loaded yet." << std::endl;
+        }
+        return;
+    }
+
+    // Map prototype/device IDs (coming from hardware) to race vehicle IDs (1..N)
+    // This decouples device identity from race identity.
+    static std::mutex s_proto_map_mutex;
+    static std::unordered_map<int32_t, int32_t> s_proto_to_race_id;
+    static int32_t s_next_race_id = 1;
+
+    int32_t raceID;
+    {
+        std::lock_guard<std::mutex> lock(s_proto_map_mutex);
+        auto it = s_proto_to_race_id.find(packet.ID);
+        if (it == s_proto_to_race_id.end())
+        {
+            raceID = s_next_race_id++;
+            s_proto_to_race_id.emplace(packet.ID, raceID);
+            std::cout << "[TELEMETRY] Prototype #" << packet.ID << " assigned race vehicle #" << raceID << std::endl;
+        }
+        else
+        {
+            raceID = it->second;
         }
     }
 
@@ -228,7 +255,7 @@ void processIncomingTelemetry(const TelemetryPacket& packet)
     static int packet_count = 0;
     packet_count++;
     if (packet_count % 60 == 0) { // Log every 60th packet (once per second at 60Hz)
-        std::cout << "[TELEMETRY DEBUG] Packet ID=" << packet.ID 
+        std::cout << "[TELEMETRY DEBUG] Prototype ID=" << packet.ID << " -> Vehicle #" << raceID
                   << " | GPS: (" << (packet.lat / 1e7) << ", " << (packet.lon / 1e7) << ")"
                   << " | Speed: " << (packet.speed / 100.0) << " km/h" << std::endl;
     }
@@ -237,11 +264,11 @@ void processIncomingTelemetry(const TelemetryPacket& packet)
     bool vehicle_exists = false;
     {
         std::lock_guard<std::mutex> check_lock(g_vehicles_mutex);
-        vehicle_exists = (g_vehicles.find(packet.ID) != g_vehicles.end());
+        vehicle_exists = (g_vehicles.find(raceID) != g_vehicles.end());
 
         // Print map contents on creation
         if (!vehicle_exists && packet_count % 10 == 0) {
-            std::cout << "[DEBUG] Vehicle #" << packet.ID << " NOT in map. Current: ";
+            std::cout << "[DEBUG] Vehicle #" << raceID << " NOT in map. Current: ";
             for (const auto& [id, v] : g_vehicles) {
                 std::cout << "#" << id << " ";
             }
@@ -253,7 +280,7 @@ void processIncomingTelemetry(const TelemetryPacket& packet)
     {
         std::lock_guard<std::mutex> lock(g_vehicles_mutex);
 
-        auto it = g_vehicles.find(packet.ID);
+        auto it = g_vehicles.find(raceID);
 
         if (it != g_vehicles.end())
         {
@@ -298,14 +325,14 @@ void processIncomingTelemetry(const TelemetryPacket& packet)
 
             // ? Add snapshot to interpolator for smooth rendering
             VehicleSnapshot snapshot;
-            snapshot.timestamp = getSynchronizedSnapshotTimeSeconds(packet.ID, packet.time);
+            snapshot.timestamp = getSynchronizedSnapshotTimeSeconds(raceID, packet.time);
             snapshot.x = vehicle.m_normalized_x;
             snapshot.y = vehicle.m_normalized_y;
             snapshot.speed_kph = vehicle.m_speed_kph;
             snapshot.heading = new_heading;
             snapshot.track_progress = vehicle.m_track_progress;
 
-            VehicleInterpolator::Get().AddSnapshot(packet.ID, snapshot);
+            VehicleInterpolator::Get().AddSnapshot(raceID, snapshot);
         }
         else
         {
@@ -317,7 +344,7 @@ void processIncomingTelemetry(const TelemetryPacket& packet)
             // On CLIENT: Only create vehicle if it doesn't exist (server will send all vehicles)
             // On SERVER: Create vehicle from simulation or real data
 
-            std::cout << "[TELEMETRY] Creating new vehicle #" << packet.ID << " from network packet" << std::endl;
+            std::cout << "[TELEMETRY] Creating new vehicle #" << raceID << " from prototype #" << packet.ID << std::endl;
 
             Vehicle new_vehicle(packet);
 
@@ -330,7 +357,7 @@ void processIncomingTelemetry(const TelemetryPacket& packet)
 
             // ? Add initial snapshot BEFORE moving
             VehicleSnapshot snapshot;
-            snapshot.timestamp = getSynchronizedSnapshotTimeSeconds(packet.ID, packet.time);
+            snapshot.timestamp = getSynchronizedSnapshotTimeSeconds(raceID, packet.time);
             snapshot.x = new_vehicle.m_normalized_x;
             snapshot.y = new_vehicle.m_normalized_y;
             snapshot.speed_kph = new_vehicle.m_speed_kph;
@@ -340,12 +367,12 @@ void processIncomingTelemetry(const TelemetryPacket& packet)
             new_vehicle.m_has_authoritative_state = false;
 
             // ? Use emplace to avoid default constructor call!
-            g_vehicles.emplace(packet.ID, std::move(new_vehicle));
+            g_vehicles.emplace(raceID, std::move(new_vehicle));
 
-            VehicleInterpolator::Get().AddSnapshot(packet.ID, snapshot);
+            VehicleInterpolator::Get().AddSnapshot(raceID, snapshot);
             #else
             // Without networking, ignore unknown vehicles
-            std::cerr << "[TELEMETRY WARNING] Ignoring packet for unknown vehicle #" << packet.ID << std::endl;
+            std::cerr << "[TELEMETRY WARNING] Ignoring packet for unknown vehicle #" << raceID << std::endl;
             #endif
         }
     }
