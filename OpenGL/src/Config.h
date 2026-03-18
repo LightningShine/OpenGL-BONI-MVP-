@@ -2,7 +2,7 @@
 
 // Map and coordinate system constants
 namespace MapConstants {
-    static constexpr double MAP_SIZE = 100.0; // 100 meters = 1.0 in OpenGL coordinates
+    static constexpr double MAP_SIZE = 50.0; // 100 meters = 1.0 in OpenGL coordinates
     static constexpr float MAP_BOUND_X = 2.0f;
     static constexpr float MAP_BOUND_Y = 2.0f;
 }

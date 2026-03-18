@@ -4,6 +4,7 @@
 #include "../rendering/Interpolation.h"
 #include "../rendering/Render.h"
 #include "../network/ESP32_Code.h"
+#include "../network/SimulationServer.h"
 #include <cstring>
 #include <windows.h>
 
@@ -480,3 +481,4 @@ bool isClientRunning() { return false; }
 void continueClientRunning() {}
 
 #endif // NETWORKING_ENABLED
+

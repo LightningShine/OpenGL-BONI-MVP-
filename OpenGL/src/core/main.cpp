@@ -30,6 +30,7 @@
 #include "../network/Server.h"
 #include "../network/Client.h"
 #include "../network/ESP32_Code.h"
+#include "../network/SimulationServer.h"
 #include "../vehicle/Vehicle.h"
 #include "../racing/RaceManager.h"
 
@@ -797,6 +798,7 @@ int main()
 	
 	std::thread vehicleThread(vehicleLoop);
 	vehicleThread.detach();
+
 	std::cout << "vehicleLoop thread started" << std::endl;
 	
 	// ========================== RACE MANAGER INITIALIZATION ==========================
@@ -868,6 +870,10 @@ int main()
 	glGenVertexArrays(1, &grid_vao);
 	glGenBuffers(1, &grid_vbo);
 	std::cout << "Grid VAO/VBO created (VAO: " << grid_vao << ", VBO: " << grid_vbo << ")" << std::endl;
+
+	// ========================== START REAL DATA ======================
+	std::cout << "[MAIN] Starting ESP32 telemetry capture on COM5..." << std::endl;
+	startRealDataCapture("COM5");
 
 	// ========================== RENDER LOOP ==========================
 

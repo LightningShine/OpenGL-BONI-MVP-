@@ -43,14 +43,28 @@ struct TelemetryPacket
 };
 #pragma pack(pop)
 
+// ============================================================================
+// PACKET MAGIC MARKERS (centralized)
+//
+// NOTE: These are macros intentionally, to avoid multiple-definition/redefinition
+// issues across translation units in this project configuration.
+// ============================================================================
+#define PACKET_MAGIC_DATA 0x44415441u // 'DATA' TelemetryPacket
+#define PACKET_MAGIC_AUTH 0x41555448u // 'AUTH'
+#define PACKET_MAGIC_RESP 0x52455350u // 'RESP'
+#define PACKET_MAGIC_TRCK 0x5452434Bu // 'TRCK'
+#define PACKET_MAGIC_TCHU 0x54434855u // 'TCHU'
+#define PACKET_MAGIC_RACE 0x52414345u // 'RACE'
+#define PACKET_MAGIC_VSTA 0x56535441u // 'VSTA'
+
 #pragma pack(push, 1)
 struct AuthPacket {
-	uint32_t magic_marker;  // 0x41555448 ('AUTH')
+   uint32_t magic_marker;  // PACKET_MAGIC_AUTH
 	char password[64];
 };
 
 struct AuthResponsePacket {
-	uint32_t magic_marker;  // 0x52455350 ('RESP')
+   uint32_t magic_marker;  // PACKET_MAGIC_RESP
 	bool is_authenticated;
 	int attempts_remaining;
 	char message[128];
@@ -66,7 +80,7 @@ struct TrackPointPacket {
 
 // Track data header - sent first
 struct TrackDataHeader {
-	uint32_t magic_marker;   // 0x5452434B ('TRCK')
+  uint32_t magic_marker;   // PACKET_MAGIC_TRCK
 	uint32_t point_count;    // Number of track points to follow
 	double origin_lat;       // Map origin latitude
 	double origin_lon;       // Map origin longitude
@@ -83,7 +97,7 @@ struct TrackDataHeader {
 // Track chunk packet - contains multiple points
 #define MAX_POINTS_PER_CHUNK 100
 struct TrackChunkPacket {
-	uint32_t magic_marker;   // 0x54434855 ('TCHU')
+  uint32_t magic_marker;   // PACKET_MAGIC_TCHU
 	uint32_t chunk_index;    // Which chunk this is
 	uint32_t points_in_chunk; // Number of points in this chunk
 	TrackPointPacket points[MAX_POINTS_PER_CHUNK];
@@ -91,7 +105,7 @@ struct TrackChunkPacket {
 
 // Race initialization data
 struct RaceDataPacket {
-	uint32_t magic_marker;   // 0x52414345 ('RACE')
+  uint32_t magic_marker;   // PACKET_MAGIC_RACE
 	bool has_start_finish_line;
 	// Add other race settings here if needed
 };
@@ -100,7 +114,7 @@ struct RaceDataPacket {
 // Sends already normalized state so client does not need GPS->UTM conversion or
 // local nearest-segment progress reconstruction.
 struct VehicleStatePacket {
-	uint32_t magic_marker;        // 0x56535441 ('VSTA')
+ uint32_t magic_marker;        // PACKET_MAGIC_VSTA
 	int32_t vehicle_id;
 	uint32_t server_time_ms;      // Monotonic server time in milliseconds
 	float normalized_x;
