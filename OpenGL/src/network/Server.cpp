@@ -34,6 +34,30 @@ std::vector<HSteamNetConnection> g_hConnections;
 static std::map<HSteamNetConnection, bool> g_authenticated_connections;
 static std::map<HSteamNetConnection, int> g_auth_attempts;
 
+static std::mutex g_server_password_mutex;
+static std::string g_server_password;
+
+static std::mutex g_server_wanip_mutex;
+static std::string g_server_wan_ip;
+
+void serverSetPassword(const char* password_or_null)
+{
+	std::lock_guard<std::mutex> lock(g_server_password_mutex);
+	g_server_password = password_or_null ? password_or_null : "";
+}
+
+const char* serverGetPassword()
+{
+	std::lock_guard<std::mutex> lock(g_server_password_mutex);
+	return g_server_password.c_str();
+}
+
+const char* serverGetWanIp()
+{
+	std::lock_guard<std::mutex> lock(g_server_wanip_mutex);
+	return g_server_wan_ip.c_str();
+}
+
 bool g_is_server_running = false;
 bool ServerNeedStop_b = false;
 
@@ -285,8 +309,15 @@ static bool authenticateConnection(HSteamNetConnection connection, const char* p
 	AuthResponsePacket response;
 	response.magic_marker = PacketMagic::RESP;
 	
-	// Verify password
-	if (strcmp(password, NetworkConstants::SERVER_PASSWORD) == 0)
+  // Verify password (empty server password => allow all)
+	std::string expected;
+	{
+		std::lock_guard<std::mutex> lock(g_server_password_mutex);
+		expected = g_server_password;
+	}
+
+	const char* provided = password ? password : "";
+	if (expected.empty() || strcmp(provided, expected.c_str()) == 0)
 	{
 		// Authentication successful
 		SetConsoleTextAttribute(GetStdHandle(STD_OUTPUT_HANDLE), CONSOLE_COLOR_GREEN);
@@ -545,6 +576,11 @@ bool isServerRunning()
 	return g_is_server_running;
 }
 
+bool isServerListening()
+{
+	return g_hListenSocket != k_HSteamListenSocket_Invalid;
+}
+
 void ChangeisServerRunning()
 {
 	g_is_server_running = !g_is_server_running;
@@ -586,6 +622,12 @@ int serverWork()
 	std::cout << "GNS initialized successfully." << std::endl;
 	ManagePort(true);
 	StartServer(NetworkConstants::DEFAULT_SERVER_PORT);
+	{
+		// Ensure WAN IP is populated even if mapping fails but IGD discovery succeeded.
+		std::lock_guard<std::mutex> lock(g_server_wanip_mutex);
+		if (!g_server_wan_ip.empty())
+			std::cout << "UPNP: WAN IP: " << g_server_wan_ip << std::endl;
+	}
 
 	std::cout << "[SERVER] Ready to broadcast telemetry from real/simulated vehicles" << std::endl;
 	std::cout << "[SERVER] Raw telemetry remains available; simulation now broadcasts processed vehicle states" << std::endl;
@@ -636,40 +678,58 @@ void RandomTelemetryData(TelemetryPacket& packet)
 void ManagePort(bool open)
 {
 	int error = 0;
-	struct UPNPDev* devlist = upnpDiscover(2000, NULL, NULL, 0, 0, 2, &error);
-	struct UPNPUrls urls;
-	struct IGDdatas data;
-	char lanaddr[64];
-	char wanaddr[64];
-	int r = UPNP_AddPortMapping(NULL, NULL,
-		"777", "777", lanaddr, NULL, "UDP", NULL, "86400");
-	int status = UPNP_GetValidIGD(devlist, &urls, &data, lanaddr, sizeof(lanaddr), wanaddr, sizeof(wanaddr));
-
-	if (UPNP_GetValidIGD(devlist, &urls, &data, lanaddr, sizeof(lanaddr), wanaddr, sizeof(wanaddr)))
+  struct UPNPDev* devlist = upnpDiscover(2000, NULL, NULL, 0, 0, 2, &error);
+	if (!devlist)
 	{
-		if (open)
+		std::cout << "UPNP: No devices found (error=" << error << ")" << std::endl;
+		return;
+	}
+
+	struct UPNPUrls urls{};
+	struct IGDdatas data{};
+	char lanaddr[64] = { 0 };
+	char wanaddr[64] = { 0 };
+
+	int status = UPNP_GetValidIGD(devlist, &urls, &data, lanaddr, sizeof(lanaddr), wanaddr, sizeof(wanaddr));
+	if (status == 0)
+	{
+		std::cout << "UPNP: No valid IGD found" << std::endl;
+		freeUPNPDevlist(devlist);
+		return;
+	}
+
+	if (open)
+	{
+       int r = UPNP_AddPortMapping(
+			urls.controlURL,
+			data.first.servicetype,
+			"777",
+			"777",
+			lanaddr,
+			"MyTelemetryServer",
+			"UDP",
+			NULL,
+			"86400");
+
+		if (r != UPNPCOMMAND_SUCCESS)
 		{
-			UPNP_AddPortMapping(urls.controlURL, data.first.servicetype,
-				"777", "777", lanaddr, "MyTelemetryServer", "UDP", NULL, "86400");
-			
-			if (r != UPNPCOMMAND_SUCCESS)
-			{
-				std::cout << "AddPortMapping failed with code: " << r << " GetValidID status: " << status << std::endl;
-				std::cout << "LAN IP: " << lanaddr << std::endl;
-				std::cout << "WAN IP: " << wanaddr << std::endl;
-			}
-			else
-			{
-				std::cout << "UPNP: Port 777 opened automaticaly!" << std::endl;
-			}
+			std::cout << "UPNP: AddPortMapping failed with code: " << r << " status: " << status << std::endl;
+			std::cout << "UPNP: LAN IP: " << lanaddr << " WAN IP: " << wanaddr << std::endl;
 		}
 		else
 		{
-			UPNP_DeletePortMapping(urls.controlURL, data.first.servicetype, "777", "UDP", NULL);
-			std::cout << "UPNP: Port 777 closed." << std::endl;
+			std::cout << "UPNP: Port 777 opened automatically" << std::endl;
 		}
-		FreeUPNPUrls(&urls);
 	}
+   else
+	{
+		int r = UPNP_DeletePortMapping(urls.controlURL, data.first.servicetype, "777", "UDP", NULL);
+		if (r != UPNPCOMMAND_SUCCESS)
+			std::cout << "UPNP: DeletePortMapping failed with code: " << r << std::endl;
+		else
+			std::cout << "UPNP: Port 777 closed" << std::endl;
+	}
+	FreeUPNPUrls(&urls);
 	freeUPNPDevlist(devlist);
 }
 

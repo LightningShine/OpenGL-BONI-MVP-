@@ -14,6 +14,9 @@
 #include <algorithm>
 #include <cmath>
 #include <GeographicLib/UTMUPS.hpp>  // For accurate GPS conversion
+#include "../../UI.h"
+
+extern UI* g_ui;
 
 // ============================================================================
 // EXTERNAL GLOBALS
@@ -217,18 +220,6 @@ namespace {
 // ============================================================================
 void processIncomingTelemetry(const TelemetryPacket& packet)
 {
-    // Ignore telemetry until a track is loaded.
-    // COM port can stay connected, but we don't create/update vehicles without the map origin.
-    if (!g_is_map_loaded)
-    {
-        static std::atomic<bool> warned{ false };
-        if (!warned.exchange(true))
-        {
-            std::cerr << "[TELEMETRY] Ignoring telemetry: map/track is not loaded yet." << std::endl;
-        }
-        return;
-    }
-
     // Map prototype/device IDs (coming from hardware) to race vehicle IDs (1..N)
     // This decouples device identity from race identity.
     static std::mutex s_proto_map_mutex;
@@ -244,6 +235,22 @@ void processIncomingTelemetry(const TelemetryPacket& packet)
             raceID = s_next_race_id++;
             s_proto_to_race_id.emplace(packet.ID, raceID);
             std::cout << "[TELEMETRY] Prototype #" << packet.ID << " assigned race vehicle #" << raceID << std::endl;
+           if (g_ui) {
+                g_ui->NotifyPrototypeConnected(raceID);
+            }
+
+    // Ignore telemetry until a track is loaded.
+    // COM port can stay connected, but we don't create/update vehicles without the map origin.
+    // NOTE: Prototype->race assignment still happens above so UI can show "Connected" immediately.
+    if (!g_is_map_loaded)
+    {
+        static std::atomic<bool> warned{ false };
+        if (!warned.exchange(true))
+        {
+            std::cerr << "[TELEMETRY] Ignoring telemetry updates: map/track is not loaded yet." << std::endl;
+        }
+        return;
+    }
         }
         else
         {
@@ -378,7 +385,10 @@ void processIncomingTelemetry(const TelemetryPacket& packet)
     }
 
     // ? 2. Broadcast to network clients (if server is running)
-    BroadcastTelemetryToClients(packet);
+    // Broadcast race vehicle ID (1..N), not the prototype/device ID.
+    TelemetryPacket packet_to_send = packet;
+    packet_to_send.ID = raceID;
+    BroadcastTelemetryToClients(packet_to_send);
 }
 
 void processIncomingVehicleState(const VehicleStatePacket& packet)

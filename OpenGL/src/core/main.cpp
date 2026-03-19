@@ -37,6 +37,8 @@
 
 using namespace std;
 
+UI* g_ui = nullptr;
+
 
 struct AppContext {
     float* zoom;
@@ -66,42 +68,7 @@ const std::vector<SplinePoint>* smooth_track = nullptr)
 		glfwSetWindowShouldClose(window, true);
 	
 #if NETWORKING_ENABLED
-	bool isServerKeyPressed = glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS && glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS;
-
-	if (isServerKeyPressed)
-	{
-		if (!isServerRunning())
-		{
-			continueServerRunning();
-			thread ServerThread = thread(serverWork);
-			ServerThread.detach();
-			ChangeisServerRunning();
-		}
-		else
-		{
-			serverStop();
-			ChangeisServerRunning();
-		}
-		
-	}
-
-
-	bool isClientKeyPressed = glfwGetKey(window, GLFW_KEY_C) == GLFW_PRESS && glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS;
-	if (isClientKeyPressed)
-	{
-		if (!isClientRunning())
-		{
-			continueClientRunning();
-			thread ClientThread = thread(clientStart);
-			ClientThread.detach();
-			toggleClientRunning();
-		}
-		else
-		{
-			clientStop();
-			toggleClientRunning();
-		}
-	}
+    // Networking shortcuts are handled by UI so we can show connection/create modal.
 #endif
 	
 
@@ -706,6 +673,7 @@ int main()
 		glfwTerminate();
 		return -1;
 	}
+	g_ui = &ui;
 	
 	std::cout << "[MAIN] UI initialized successfully" << std::endl;
 

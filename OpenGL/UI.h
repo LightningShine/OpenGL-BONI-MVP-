@@ -5,6 +5,7 @@
 #include <vector>
 #include <mutex>
 #include <glm/vec2.hpp>
+#include <chrono>
 
 struct ImGuiContext;
 struct ImFont;
@@ -26,7 +27,9 @@ public:
     void Render();
     void RenderTopMenu();
     void RenderBottomMenu();
+    void RenderNetworkingModal();
     void RenderHelpModal();
+    void RenderPrototypeToast();
     void EndFrame();
     
     // Access to UI elements
@@ -37,7 +40,8 @@ public:
     std::mutex* getPointsMutex() { return m_pointsMutex; }
     
     bool ShouldCloseSplash() const { return m_closeSplash; }
-    void CloseSplash() { m_showSplash = false; m_closeSplash = true; }
+  void CloseSplash();
+    void NotifyPrototypeConnected(int raceVehicleId);
     
     // Start/Finish line text rendering
     void RenderStartFinishText(const std::vector<glm::vec2>& track_points, 
@@ -68,6 +72,8 @@ private:
     void* m_iconClose;
     void* m_iconDragDrop;
     void* m_compassTexture;
+    void* m_protoBatteryIconTexture;
+    void* m_protoPhotoTexture;
     
     // Recent files
     struct RecentFile
@@ -83,6 +89,26 @@ private:
     
     // UI Elements (Compass, Laptimer, etc.)
     UIElements* m_ui_elements;
+
+    enum class NetworkingModalMode { None, Client, Server };
+    NetworkingModalMode m_networkingModalMode;
+    bool m_show_networking_modal;
+    char m_networking_addr[128];
+    char m_networking_password[64];
+    bool m_networking_addr_invalid;
+    bool m_networking_password_invalid;
+    std::string m_external_ip;
+    std::string m_local_ip;
+    uint16_t m_display_port;
+
+    bool ParseAddressInput(const char* input, std::string& out_host, uint16_t& out_port) const;
+    void UpdateNetworkingIps();
+
+    // Prototype UI
+    bool m_showPrototypeToast;
+    bool m_allowPrototypeToast;
+    int m_lastPrototypeRaceId;
+    std::chrono::steady_clock::time_point m_prototypeToastUntil;
 
     // Methods
     void RenderSplashWindow();

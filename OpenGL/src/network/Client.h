@@ -20,6 +20,16 @@
 // CLIENT 
 int clientStart();
 
+// UI-driven connection parameters
+// If host is empty, clientStart falls back to defaults.
+void clientSetConnectParams(const char* host, uint16_t port, const char* password_or_null);
+void clientGetConnectParams(std::string& out_host, uint16_t& out_port, std::string& out_password);
+
+// Client auth/result state for UI
+bool clientIsAuthenticated();
+bool clientHadAuthFailure();
+void clientClearAuthState();
+
 
 bool isClientRunning();
 

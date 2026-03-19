@@ -135,6 +135,9 @@ int serverWork();
 
 bool isServerRunning();
 
+// True when listen socket is created and server is ready to accept connections.
+bool isServerListening();
+
 void ChangeisServerRunning();
 
 void serverStop();
@@ -149,3 +152,10 @@ void BroadcastVehicleStateToClients(const VehicleStatePacket& packet);
 
 // Send track and race data to newly authenticated client
 void SendTrackAndRaceData(HSteamNetConnection connection);
+
+// UI/runtime configurable server password (empty => allow all)
+void serverSetPassword(const char* password_or_null);
+const char* serverGetPassword();
+
+// Best-effort WAN IP discovered via UPnP (empty if unavailable)
+const char* serverGetWanIp();

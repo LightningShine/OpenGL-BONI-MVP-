@@ -13,6 +13,9 @@
 #include <filesystem>
 #include <fstream>
 #include <sstream>
+#include <regex>
+#include <winsock2.h>
+#include <ws2tcpip.h>
 #include <GeographicLib/UTMUPS.hpp>
 
 #define STB_IMAGE_IMPLEMENTATION
@@ -22,11 +25,27 @@
 #include "libraries/include/imgui/backends/imgui_impl_glfw.h"
 #include "libraries/include/imgui/backends/imgui_impl_opengl3.h"
 
+#include "src/network/Client.h"
+#include "src/network/Server.h"
+
 // Windows API for native file dialogs (include AFTER C++ standard library)
 #define NOMINMAX  // Prevent Windows.h from defining min/max macros
 #define GLFW_EXPOSE_NATIVE_WIN32
 #include <GLFW/glfw3native.h>
 #include <commdlg.h>  // For GetOpenFileNameA
+
+#ifdef min
+#undef min
+#endif
+#ifdef max
+#undef max
+#endif
+
+#pragma comment(lib, "Ws2_32.lib")
+
+#if NETWORKING_ENABLED
+extern bool g_is_server_running;
+#endif
 
 static void AddDashedRect(ImDrawList* draw_list, const ImVec2& p_min, const ImVec2& p_max, ImU32 col, float thickness, float dash_len, float gap_len)
 {
@@ -42,6 +61,503 @@ static void AddDashedRect(ImDrawList* draw_list, const ImVec2& p_min, const ImVe
     // Right
     for (float y = p_min.y; y < p_max.y; y += dash_len + gap_len)
         draw_list->AddLine(ImVec2(p_max.x, y), ImVec2(p_max.x, std::min(y + dash_len, p_max.y)), col, thickness);
+}
+
+bool UI::ParseAddressInput(const char* input, std::string& out_host, uint16_t& out_port) const
+{
+    out_host.clear();
+    out_port = 0;
+
+    if (!input)
+        return false;
+
+    std::string s(input);
+    // trim
+    auto is_ws = [](unsigned char c) { return std::isspace(c) != 0; };
+    s.erase(s.begin(), std::find_if(s.begin(), s.end(), [&](unsigned char c) { return !is_ws(c); }));
+    s.erase(std::find_if(s.rbegin(), s.rend(), [&](unsigned char c) { return !is_ws(c); }).base(), s.end());
+
+    if (s.empty())
+        return false;
+
+    // Allow "local" alias
+    if (s == "local" || s == "LOCAL" || s == "Local")
+    {
+        out_host = "127.0.0.1";
+        out_port = m_display_port;
+        return true;
+    }
+
+    // Expect host:port
+    const auto colon = s.rfind(':');
+    if (colon == std::string::npos || colon == 0 || colon + 1 >= s.size())
+        return false;
+
+    out_host = s.substr(0, colon);
+    std::string port_str = s.substr(colon + 1);
+
+    // validate port numeric
+    for (char c : port_str)
+        if (c < '0' || c > '9')
+            return false;
+
+    const int port_i = std::atoi(port_str.c_str());
+    if (port_i <= 0 || port_i > 65535)
+        return false;
+
+    out_port = static_cast<uint16_t>(port_i);
+
+    // validate host: IPv4 or hostname
+    if (out_host == "localhost")
+        return true;
+
+    // IPv4 quick check
+    sockaddr_in sa{};
+    sa.sin_family = AF_INET;
+    if (InetPtonA(AF_INET, out_host.c_str(), &sa.sin_addr) == 1)
+        return true;
+
+    // hostname sanity: letters/digits/dot/hyphen
+    static const std::regex host_re(R"(^[A-Za-z0-9][A-Za-z0-9\-\.]{0,251}[A-Za-z0-9]$)");
+    if (!std::regex_match(out_host, host_re))
+        return false;
+
+    return true;
+}
+
+void UI::UpdateNetworkingIps()
+{
+    // Local IP discovery (best-effort)
+    m_local_ip.clear();
+    {
+        WSADATA wsa{};
+        if (WSAStartup(MAKEWORD(2, 2), &wsa) == 0)
+        {
+            char hostname[256]{};
+            if (gethostname(hostname, sizeof(hostname) - 1) == 0)
+            {
+                addrinfo hints{};
+                hints.ai_family = AF_INET;
+                hints.ai_socktype = SOCK_DGRAM;
+                addrinfo* res = nullptr;
+                if (getaddrinfo(hostname, nullptr, &hints, &res) == 0)
+                {
+                    for (addrinfo* p = res; p; p = p->ai_next)
+                    {
+                        sockaddr_in* addr = reinterpret_cast<sockaddr_in*>(p->ai_addr);
+                        char ipbuf[INET_ADDRSTRLEN]{};
+                        if (inet_ntop(AF_INET, &addr->sin_addr, ipbuf, sizeof(ipbuf)))
+                        {
+                            std::string ip(ipbuf);
+                            if (ip.rfind("127.", 0) != 0)
+                            {
+                                m_local_ip = ip;
+                                break;
+                            }
+                        }
+                    }
+                    freeaddrinfo(res);
+                }
+            }
+            WSACleanup();
+        }
+    }
+
+    // External IP via server UPnP discovery (best-effort; empty if unavailable)
+#if NETWORKING_ENABLED
+    const char* wan = serverGetWanIp();
+    if (wan && wan[0] != 0)
+        m_external_ip = wan;
+#endif
+}
+
+void UI::RenderNetworkingModal()
+{
+    if (!m_show_networking_modal)
+        return;
+
+#if NETWORKING_ENABLED
+    // Auto-close on success + surface failures.
+    {
+        const bool isServer = (m_networkingModalMode == NetworkingModalMode::Server);
+        if (isServer)
+        {
+            if (isServerRunning() && isServerListening())
+                m_show_networking_modal = false;
+        }
+        else
+        {
+            if (clientIsAuthenticated())
+                m_show_networking_modal = false;
+            else if (clientHadAuthFailure())
+                m_networking_password_invalid = true;
+        }
+    }
+#endif
+
+    ImGuiIO& io = ImGui::GetIO();
+    ImVec2 display_size = io.DisplaySize;
+
+    // Window placement/size (match connection card)
+    const float win_w = display_size.x * (290.0f / 1600.0f);
+    const float win_h = display_size.y * (180.0f / 900.0f);
+    const ImVec2 win_pos((display_size.x - win_w) * 0.5f, (display_size.y - win_h) * 0.9f);
+
+    // Close on Esc
+    if (ImGui::IsKeyPressed(ImGuiKey_Escape))
+        m_show_networking_modal = false;
+
+    // Colors
+    const ImU32 gold = IM_COL32(0xDA, 0xA5, 0x40, 255);
+    const ImU32 red = IM_COL32(0x96, 0x00, 0x00, 255);
+    const ImU32 border_ok = IM_COL32(0xFF, 0xFF, 0xFF, (int)(255 * 0.21f));
+    const ImU32 text_hint = IM_COL32(0xF0, 0xF0, 0xF0, (int)(255 * 0.10f));
+
+    // Networking window (not a popup)
+    ImGui::SetNextWindowPos(win_pos);
+    ImGui::SetNextWindowSize(ImVec2(win_w, win_h));
+    ImGui::SetNextWindowBgAlpha(0.0f);
+
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+        ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
+        ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing |
+        ImGuiWindowFlags_NoBringToFrontOnFocus;
+
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 18.0f);
+
+    ImGui::Begin("##NetworkingWindow", nullptr, flags);
+    {
+        const bool isServer = (m_networkingModalMode == NetworkingModalMode::Server);
+
+        // Deterministic layout in window-local coordinates
+        ImGui::SetCursorPos(ImVec2(0, 0));
+        ImDrawList* draw = ImGui::GetWindowDrawList();
+        const ImVec2 p0 = ImGui::GetCursorScreenPos();
+        const ImVec2 p1(p0.x + win_w, p0.y + win_h);
+        draw->AddRectFilled(p0, p1, IM_COL32(20, 20, 20, 235), 18.0f);
+        draw->AddRect(p0, p1, IM_COL32(240, 240, 240, 90), 18.0f, 0, 2.0f);
+
+        const float pad_x = win_w * 0.125f; // (1 - 0.75)/2
+        const float field_w = win_w * 0.75f;
+        const float header_y = 14.0f;
+        const float header_px = 20.0f;
+        const float field_h = 34.0f;
+        const float gap_1 = 18.0f;
+        const float gap_2 = 14.0f;
+        const float button_h = 44.0f;
+        const float button_y = win_h - 20.0f - button_h;
+        const float pass_y = button_y - gap_2 - field_h;
+        const float addr_y = pass_y - gap_1 - field_h;
+
+        // Header
+        ImFont* titleFont = m_fontTitle ? m_fontTitle : ImGui::GetFont();
+        const char* header = isServer ? "Server Creation" : "Server Connection";
+        ImGui::PushFont(titleFont);
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0xF0 / 255.0f, 0xF0 / 255.0f, 0xF0 / 255.0f, 1.0f));
+        ImGui::SetWindowFontScale(header_px / ImGui::GetFontSize());
+        const float header_w = ImGui::CalcTextSize(header).x;
+        ImGui::SetCursorPos(ImVec2((win_w - header_w) * 0.5f, header_y));
+        ImGui::TextUnformatted(header);
+        ImGui::SetWindowFontScale(1.0f);
+        ImGui::PopStyleColor();
+        ImGui::PopFont();
+
+        auto drawInputFrame = [&](bool invalid) {
+            ImVec2 min = ImGui::GetItemRectMin();
+            ImVec2 max = ImGui::GetItemRectMax();
+            ImGui::GetWindowDrawList()->AddRect(min, max, invalid ? red : border_ok, 8.0f, 0, 2.0f);
+        };
+
+        // Shared input styling
+        ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0, 0, 0, 0));
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0xF0 / 255.0f, 0xF0 / 255.0f, 0xF0 / 255.0f, 0.90f));
+        ImGui::PushStyleColor(ImGuiCol_TextDisabled, ImGui::ColorConvertU32ToFloat4(text_hint));
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(14, 10));
+
+        // Address
+        {
+            const char* hint = "Server IP: 178.169.20.56:777";
+            char hint_buf[128]{};
+            if (isServer)
+            {
+                // Render as plain text when creating server (not an input)
+                const char* ip = (!m_external_ip.empty()) ? m_external_ip.c_str() : "<unknown>";
+                snprintf(hint_buf, sizeof(hint_buf), "Server IP: %s:%u", ip, (unsigned)m_display_port);
+
+                ImFont* ipFont = m_fontUI ? m_fontUI : ImGui::GetFont();
+                ImGui::PushFont(ipFont);
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0xF0 / 255.0f, 0xF0 / 255.0f, 0xF0 / 255.0f, 0.90f));
+                ImGui::SetCursorPos(ImVec2(pad_x, addr_y + 8.0f));
+                ImGui::TextUnformatted(hint_buf);
+                ImGui::PopStyleColor();
+                ImGui::PopFont();
+            }
+
+            if (!isServer)
+            {
+                ImGui::SetCursorPos(ImVec2(pad_x, addr_y));
+                ImGui::SetNextItemWidth(field_w);
+                ImGui::InputTextWithHint("##NetworkingAddr", hint, m_networking_addr, sizeof(m_networking_addr));
+                drawInputFrame(m_networking_addr_invalid);
+
+                std::string host;
+                uint16_t port = 0;
+                m_networking_addr_invalid = (m_networking_addr[0] != 0) && !ParseAddressInput(m_networking_addr, host, port);
+            }
+        }
+
+        // Password
+        {
+            ImGui::SetCursorPos(ImVec2(pad_x, pass_y));
+            ImGui::SetNextItemWidth(field_w);
+            ImGui::InputTextWithHint("##NetworkingPassword", "Server Password (Optional)", m_networking_password, sizeof(m_networking_password), ImGuiInputTextFlags_Password);
+            drawInputFrame(m_networking_password_invalid);
+        }
+
+        ImGui::PopStyleVar();
+        ImGui::PopStyleColor(3);
+
+        // Button
+        {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImGui::ColorConvertU32ToFloat4(gold));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0xDA / 255.0f, 0xA5 / 255.0f, 0x40 / 255.0f, 0.85f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0xDA / 255.0f, 0xA5 / 255.0f, 0x40 / 255.0f, 0.75f));
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
+            ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 10.0f);
+            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(18, 12));
+
+            const char* btn = isServer ? "Create" : "Connect";
+            ImGui::SetCursorPos(ImVec2(pad_x, button_y));
+            if (ImGui::Button(btn, ImVec2(field_w, button_h)))
+            {
+                m_networking_addr_invalid = false;
+                m_networking_password_invalid = false;
+
+                if (isServer)
+                {
+#if NETWORKING_ENABLED
+                    // Persist server password for auth (empty => allow all)
+                    if (m_networking_password[0] == 0)
+                        serverSetPassword(nullptr);
+                    else
+                        serverSetPassword(m_networking_password);
+
+                    if (!isServerRunning())
+                    {
+                        continueServerRunning();
+                        std::thread ServerThread = std::thread(serverWork);
+                        ServerThread.detach();
+                        ChangeisServerRunning();
+                    }
+#endif
+                    // Password persistence is handled inside server auth flow in existing code.
+                }
+                else
+                {
+                    std::string host;
+                    uint16_t port = 0;
+                    const bool ok = ParseAddressInput(m_networking_addr, host, port);
+                    if (!ok)
+                    {
+                        m_networking_addr_invalid = true;
+                    }
+                    else
+                    {
+                        // Optional password: if empty, do not send it.
+#if NETWORKING_ENABLED
+                        clientClearAuthState();
+                        if (m_networking_password[0] == 0)
+                            clientSetConnectParams(host.c_str(), port, nullptr);
+                        else
+                            clientSetConnectParams(host.c_str(), port, m_networking_password);
+
+                        if (!isClientRunning())
+                        {
+                            continueClientRunning();
+                            std::thread ClientThread = std::thread(clientStart);
+                            ClientThread.detach();
+                            toggleClientRunning();
+                        }
+                        // If client thread is already running (e.g. waiting for new password),
+                        // just updating params above is enough.
+#endif
+                    }
+                }
+
+                // Do not auto-close: keep the card visible so user can see status/errors.
+            }
+
+            ImGui::PopStyleVar(2);
+            ImGui::PopStyleColor(4);
+        }
+
+    }
+
+    ImGui::End();
+    ImGui::PopStyleVar(3);
+}
+
+void UI::RenderPrototypeToast()
+{
+ // Don't show during initial splash/track selection.
+    if (m_showSplash)
+        return;
+
+    if (!m_allowPrototypeToast)
+        return;
+
+    if (m_lastPrototypeRaceId <= 0)
+        return;
+
+    const auto now = std::chrono::steady_clock::now();
+    if (now > m_prototypeToastUntil)
+        return;
+
+    ImGuiIO& io = ImGui::GetIO();
+    ImVec2 display_size = io.DisplaySize;
+
+  // Uniform scale from reference design (1600x900). For 16:9 screens,
+    // height scaling is sufficient and avoids looking too small at 1080p.
+    // Keep the same screen-space proportions as the reference design (1600x900).
+    const float win_w_ratio = 270.0f / 1600.0f;
+    const float win_h_ratio = 170.0f / 900.0f;
+    const ImVec2 win_size(display_size.x * win_w_ratio, display_size.y * win_h_ratio);
+
+    // A uniform scale derived from the window height ratio, for pixel-like offsets.
+    const float s = win_size.y / 150.0f;
+
+    const float bottom_menu_h = UIConfig::BOTTOM_MENU_HEIGHT * display_size.y;
+    const float margin = 14.0f * s;
+    ImVec2 win_pos((display_size.x - win_size.x) * 0.5f,
+                  display_size.y - bottom_menu_h - win_size.y - margin);
+
+    ImGui::SetNextWindowPos(win_pos);
+    ImGui::SetNextWindowSize(win_size);
+    ImGui::SetNextWindowBgAlpha(0.0f);
+
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+        ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
+        ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing |
+        ImGuiWindowFlags_NoBringToFrontOnFocus;
+
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 14.0f * s);
+
+    ImGui::Begin("##PrototypeToast", nullptr, flags);
+
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    const ImVec2 p0 = win_pos;
+    const ImVec2 p1(win_pos.x + win_size.x, win_pos.y + win_size.y);
+
+    // Background (dark, rounded)
+    draw->AddRectFilled(p0, p1, IM_COL32(20, 20, 20, 220), 14.0f * s);
+    // Subtle border
+    draw->AddRect(p0, p1, IM_COL32(240, 240, 240, 40), 14.0f * s, 0, 1.0f * s);
+
+    // Colors
+    const ImU32 colHeader = IM_COL32(240, 240, 240, 255);  // #F0F0F0
+    const ImU32 colMuted = IM_COL32(134, 134, 134, 255);   // #868686
+    const ImU32 colGreen = IM_COL32(0, 132, 60, 255);      // #00843C
+
+    // Fonts scaled from reference sizes
+    ImFont* titleFont = m_fontTitle ? m_fontTitle : ImGui::GetFont();
+    ImFont* uiFont = m_fontUI ? m_fontUI : ImGui::GetFont();
+
+    const float headerPx = 20.0f * s;
+    const float statusPx = 16.0f * s;
+    const float batteryPx = 16.0f * s;
+
+    // Header
+    {
+        char header[64];
+        snprintf(header, sizeof(header), "Prototype %d", m_lastPrototypeRaceId);
+
+        ImGui::PushFont(titleFont);
+        ImGui::SetWindowFontScale(headerPx / ImGui::GetFontSize());
+        ImVec2 tsize = ImGui::CalcTextSize(header);
+        ImGui::SetCursorScreenPos(ImVec2(p0.x + (win_size.x - tsize.x) * 0.5f, p0.y + 10.0f * s));
+        ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(colHeader), "%s", header);
+        ImGui::SetWindowFontScale(1.0f);
+        ImGui::PopFont();
+    }
+
+  // Prototype photo (104x73 in reference)
+    {
+      const float imgW = 104.0f * s;
+        const float imgH = 73.0f * s;
+        ImVec2 imgMin(p0.x + (win_size.x - imgW) * 0.5f, p0.y + 28.0f * s);
+        ImVec2 imgMax(imgMin.x + imgW, imgMin.y + imgH);
+        if (m_protoPhotoTexture)
+            draw->AddImage((ImTextureID)m_protoPhotoTexture, imgMin, imgMax);
+    }
+
+ float batteryRowY = 0.0f;
+    // Battery row (icon 24x24 in reference + percent) - hardcoded for now
+    {
+        const float rowY = p0.y + 90.0f * s;
+        batteryRowY = rowY;
+        const float iconW = 24.0f * s;
+        const float iconH = 24.0f * s;
+
+        const char* pct = "100%";
+        ImGui::PushFont(uiFont);
+        ImGui::SetWindowFontScale(batteryPx / ImGui::GetFontSize());
+        ImVec2 pctSize = ImGui::CalcTextSize(pct);
+        ImGui::SetWindowFontScale(1.0f);
+        ImGui::PopFont();
+
+        const float totalW = iconW + 8.0f * s + pctSize.x;
+        ImVec2 iconMin(p0.x + (win_size.x - totalW) * 0.5f, rowY);
+        ImVec2 iconMax(iconMin.x + iconW, iconMin.y + iconH);
+        if (m_protoBatteryIconTexture)
+            draw->AddImage((ImTextureID)m_protoBatteryIconTexture, iconMin, iconMax, ImVec2(0, 0), ImVec2(1, 1), colMuted);
+
+        // Battery percent uses Russo One @ 12px (reference)
+        ImGui::PushFont(titleFont);
+       ImGui::SetCursorScreenPos(ImVec2(iconMax.x + 8.0f * s, rowY + 4.0f * s));
+        ImGui::SetWindowFontScale(batteryPx / ImGui::GetFontSize());
+        ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(colMuted), "%s", pct);
+        ImGui::SetWindowFontScale(1.0f);
+        ImGui::PopFont();
+    }
+
+    // Connected
+    {
+        const char* status = "Connected";
+     const float gapPx = 1.5f * s;
+        ImGui::PushFont(titleFont);
+        ImGui::SetWindowFontScale(statusPx / ImGui::GetFontSize());
+        ImVec2 stSize = ImGui::CalcTextSize(status);
+        ImGui::SetCursorScreenPos(ImVec2(p0.x + (win_size.x - stSize.x) * 0.5f, batteryRowY + 24.0f * s + gapPx));
+        ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(colGreen), "%s", status);
+        ImGui::SetWindowFontScale(1.0f);
+        ImGui::PopFont();
+    }
+
+    // Pager dots
+    {
+        const int dots = m_lastPrototypeRaceId;
+        if (dots > 1)
+        {
+            const float dotR = 1.5f * s;
+            const float dotGap = 10.0f * s;
+            const float dotsW = dots * (dotR * 2.0f) + (dots - 1) * dotGap;
+            const float y = p0.y + win_size.y - 16.0f * s;
+            float x = p0.x + (win_size.x - dotsW) * 0.5f + dotR;
+            for (int i = 0; i < dots; ++i)
+            {
+                const bool active = (i == dots - 1);
+                draw->AddCircleFilled(ImVec2(x, y), dotR, active ? colMuted : IM_COL32(90, 90, 90, 255));
+                x += dotR * 2.0f + dotGap;
+            }
+        }
+    }
+
+    ImGui::End();
+    ImGui::PopStyleVar(3);
 }
 
 UI::UI()
@@ -62,14 +578,41 @@ UI::UI()
     , m_iconClose(nullptr)
     , m_iconDragDrop(nullptr)
     , m_compassTexture(nullptr)
+ , m_protoBatteryIconTexture(nullptr)
+    , m_protoPhotoTexture(nullptr)
     , m_points(nullptr)
     , m_pointsMutex(nullptr)
+   , m_showPrototypeToast(true)
+    , m_allowPrototypeToast(true)
+    , m_lastPrototypeRaceId(0)
+    , m_networkingModalMode(NetworkingModalMode::None)
+    , m_show_networking_modal(false)
+    , m_networking_addr_invalid(false)
+    , m_networking_password_invalid(false)
+    , m_external_ip("")
+    , m_local_ip("")
+    , m_display_port(777)
 {
+    m_networking_addr[0] = 0;
+    m_networking_password[0] = 0;
 }
 
 UI::~UI()
 {
     Shutdown();
+}
+
+void UI::CloseSplash()
+{
+    m_showSplash = false;
+    m_closeSplash = true;
+
+    // If a prototype connected while the splash was open, ensure the toast becomes
+    // visible after the splash is dismissed.
+    if (m_allowPrototypeToast && m_lastPrototypeRaceId > 0)
+    {
+        m_prototypeToastUntil = std::chrono::steady_clock::now() + std::chrono::minutes(1);
+    }
 }
 
 bool UI::LoadTextureFromFile(const char* filename, void** out_texture, int* out_width, int* out_height)
@@ -128,6 +671,11 @@ void UI::LoadResources()
     {
         std::cout << "[UI] Compass texture loaded successfully\n";
     }
+
+    // Prototype toast resources
+    // NOTE: Adjust filenames if your asset names differ.
+    LoadTextureFromFile("styles/icons/PNG/battery.png", &m_protoBatteryIconTexture, nullptr, nullptr);
+    LoadTextureFromFile("styles/images/prototype.png", &m_protoPhotoTexture, nullptr, nullptr);
 
     // Load recent files from saves directory
     LoadRecentFiles();
@@ -358,6 +906,39 @@ void UI::BeginFrame()
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
+
+    // Keyboard shortcuts for networking modal
+    // Shift+C => client, Shift+S => server
+    // Guard: only when not typing in an input field
+    ImGuiIO& io = ImGui::GetIO();
+    if (!m_showSplash && !io.WantTextInput)
+    {
+        if (io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_C))
+        {
+            UpdateNetworkingIps();
+            m_networkingModalMode = NetworkingModalMode::Client;
+            m_show_networking_modal = true;
+            m_networking_addr_invalid = false;
+            m_networking_password_invalid = false;
+            if (m_networking_addr[0] == 0)
+            {
+                if (!m_external_ip.empty())
+                    snprintf(m_networking_addr, sizeof(m_networking_addr), "%s:%u", m_external_ip.c_str(), (unsigned)m_display_port);
+            }
+            io.AddInputCharacter(0); // consume
+        }
+        if (io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_S))
+        {
+            UpdateNetworkingIps();
+            m_networkingModalMode = NetworkingModalMode::Server;
+            m_show_networking_modal = true;
+            m_networking_addr_invalid = false;
+            m_networking_password_invalid = false;
+            if (!m_external_ip.empty())
+                snprintf(m_networking_addr, sizeof(m_networking_addr), "%s:%u", m_external_ip.c_str(), (unsigned)m_display_port);
+            io.AddInputCharacter(0); // consume
+        }
+    }
 }
 
 void UI::Render()
@@ -372,6 +953,8 @@ void UI::Render()
     // Always render top and bottom menus (after splash)
     RenderTopMenu();
     RenderBottomMenu();
+    RenderPrototypeToast();
+    RenderNetworkingModal();
     
     // Render help modal if open
     RenderHelpModal();
@@ -387,6 +970,12 @@ void UI::SetTrackData(std::vector<glm::vec2>* points, std::mutex* mutex)
 {
     m_points = points;
     m_pointsMutex = mutex;
+}
+
+void UI::NotifyPrototypeConnected(int raceVehicleId)
+{
+    m_lastPrototypeRaceId = raceVehicleId;
+    m_prototypeToastUntil = std::chrono::steady_clock::now() + std::chrono::minutes(1);
 }
 
 void UI::RenderSplashWindow()
@@ -947,19 +1536,82 @@ void UI::RenderTopMenu()
             if (ImGui::MenuItem("Zoom Out", "-", false, false)) {}
             if (ImGui::MenuItem("Reset View", "Home", false, false)) {}
             ImGui::Separator();
+           ImGui::MenuItem("Prototype panel", nullptr, &m_allowPrototypeToast);
             if (ImGui::MenuItem("Toggle Fullscreen", "F11", false, false)) {}
             ImGui::EndMenu();
         }
         
         if (ImGui::BeginMenu("Networking"))
         {
-            if (ImGui::MenuItem("Connect", "Shift+C", false, false)) {}
-            if (ImGui::MenuItem("Disconnect", nullptr, false, false)) {}
+            if (ImGui::MenuItem("Client", "Shift+C"))
+            {
+                UpdateNetworkingIps();
+                m_networkingModalMode = NetworkingModalMode::Client;
+                m_show_networking_modal = true;
+                m_networking_addr_invalid = false;
+                m_networking_password_invalid = false;
+                if (m_networking_addr[0] == 0)
+                {
+                    // Default hint: external_ip:777 (if available)
+                    if (!m_external_ip.empty())
+                        snprintf(m_networking_addr, sizeof(m_networking_addr), "%s:%u", m_external_ip.c_str(), (unsigned)m_display_port);
+                }
+            // shown by RenderNetworkingModal()
+            }
+            if (ImGui::MenuItem("Disconnect"))
+            {
+#if NETWORKING_ENABLED
+                if (isClientRunning())
+                {
+                    clientStop();
+                    toggleClientRunning();
+                }
+                if (isServerRunning())
+                {
+                    serverStop();
+                    ChangeisServerRunning();
+                }
+#endif
+            }
             ImGui::Separator();
-            if (ImGui::MenuItem("Start Server", "Shift+S", false, false)) {}
-            if (ImGui::MenuItem("Stop Server", nullptr, false, false)) {}
+            if (ImGui::MenuItem("Server", "Shift+S"))
+            {
+                UpdateNetworkingIps();
+                m_networkingModalMode = NetworkingModalMode::Server;
+                m_show_networking_modal = true;
+                m_networking_addr_invalid = false;
+                m_networking_password_invalid = false;
+                // Server side shows external_ip:port in the address field.
+                if (!m_external_ip.empty())
+                    snprintf(m_networking_addr, sizeof(m_networking_addr), "%s:%u", m_external_ip.c_str(), (unsigned)m_display_port);
+                // shown by RenderNetworkingModal()
+            }
             ImGui::Separator();
-            if (ImGui::MenuItem("Server Settings", nullptr, false, false)) {}
+            {
+                ImGui::BeginDisabled();
+#if NETWORKING_ENABLED
+                ImGui::MenuItem(isServerRunning() ? "Server: Active" : "Server: Inactive", nullptr, false, false);
+#else
+                ImGui::MenuItem("Server: Unavailable", nullptr, false, false);
+#endif
+
+                if (!m_external_ip.empty())
+                    ImGui::MenuItem((std::string("WAN IP: ") + m_external_ip + ":" + std::to_string(m_display_port)).c_str(), nullptr, false, false);
+
+                const char* spw = "";
+#if NETWORKING_ENABLED
+                spw = serverGetPassword();
+#endif
+                if (spw && spw[0] != 0)
+                    ImGui::MenuItem((std::string("Password: ") + spw).c_str(), nullptr, false, false);
+                else
+                    ImGui::MenuItem("Password: <none>", nullptr, false, false);
+
+                if (!m_local_ip.empty())
+                    ImGui::MenuItem((std::string("Local IP: ") + m_local_ip).c_str(), nullptr, false, false);
+
+                ImGui::EndDisabled();
+            }
             ImGui::EndMenu();
         }
         

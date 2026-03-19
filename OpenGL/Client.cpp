@@ -31,6 +31,40 @@ static uint32_t g_expected_track_points = 0;
 static uint32_t g_received_track_points = 0;
 static std::vector<SplinePoint> g_received_track_buffer;
 
+// UI-provided connection params
+static std::mutex g_client_params_mutex;
+static std::string g_connect_host;
+static uint16_t g_connect_port = 0;
+static std::string g_connect_password;
+
+// UI-visible auth state
+static std::atomic<bool> g_client_authenticated{ false };
+static std::atomic<bool> g_client_had_auth_failure{ false };
+
+bool clientIsAuthenticated() { return g_client_authenticated.load(); }
+bool clientHadAuthFailure() { return g_client_had_auth_failure.load(); }
+void clientClearAuthState()
+{
+	g_client_authenticated.store(false);
+	g_client_had_auth_failure.store(false);
+}
+
+void clientSetConnectParams(const char* host, uint16_t port, const char* password_or_null)
+{
+	std::lock_guard<std::mutex> lock(g_client_params_mutex);
+	g_connect_host = host ? host : "";
+	g_connect_port = port;
+	g_connect_password = password_or_null ? password_or_null : "";
+}
+
+void clientGetConnectParams(std::string& out_host, uint16_t& out_port, std::string& out_password)
+{
+	std::lock_guard<std::mutex> lock(g_client_params_mutex);
+	out_host = g_connect_host;
+	out_port = g_connect_port;
+	out_password = g_connect_password;
+}
+
 void onClientConnectionStatusChanged(SteamNetConnectionStatusChangedCallback_t* pInfo)
 {
 	switch (pInfo->m_info.m_eState)
@@ -282,15 +316,31 @@ void continueClientRunning()
 int clientStart()
 {
 	std::cout << "Starting GNS Client..." << std::endl;
+  clientClearAuthState();
 	SteamDatagramErrMsg error_message;
-	std::string server_name;
-	std::regex ip_port_pattern(R"(^(\d{1,3}\.){3}\d{1,3}:\d{1,5}$)");
+    std::regex ip_port_pattern(R"(^([A-Za-z0-9\-\.]+|localhost|(\d{1,3}\.){3}\d{1,3}):\d{1,5}$)");
 	if (!GameNetworkingSockets_Init(nullptr, error_message)) return 1;
+
+	std::string host;
+	uint16_t port = 0;
+	std::string password;
+	clientGetConnectParams(host, port, password);
 
 	SteamNetworkingIPAddr server_address;
 	server_address.Clear();
-	std::getline(std::cin, server_name);
-	if (server_name == "d" || server_name == " " || server_name == "\n")
+
+	// Fallback to existing console flow if UI didn't provide anything
+	std::string server_name;
+	if (host.empty())
+	{
+		std::getline(std::cin, server_name);
+	}
+	else
+	{
+		server_name = host + ":" + std::to_string((port != 0) ? port : NetworkConstants::DEFAULT_SERVER_PORT);
+	}
+
+	if (server_name == "d" || server_name == " " || server_name == "\n" || server_name.empty())
 	{
 		//std::string ip = NetworkConstants::DEFAULT_SERVER_IP;
 		std::string default_address = std::string(NetworkConstants::DEFAULT_SERVER_IP) + ":" + std::to_string(NetworkConstants::DEFAULT_SERVER_PORT);
@@ -329,11 +379,23 @@ int clientStart()
 	
 	while (!is_authenticated && auth_attempts < NetworkConstants::MAX_AUTH_ATTEMPTS && !g_should_close_client)
 	{
-		std::string password;
-		std::cout << "Enter server password: ";
-		std::getline(std::cin, password);
+      // If UI provided a host, keep polling current UI password for retries.
+		std::string attempt_password;
+		if (!host.empty())
+		{
+			std::string current_host;
+			uint16_t current_port = 0;
+			std::string current_password;
+			clientGetConnectParams(current_host, current_port, current_password);
+			attempt_password = current_password;
+		}
+		else
+		{
+			std::cout << "Enter server password: ";
+			std::getline(std::cin, attempt_password);
+		}
 		
-		if (!sendAuthPacket(g_connection_handle, password)) {
+       if (!sendAuthPacket(g_connection_handle, attempt_password)) {
 			std::cerr << "Failed to send authentication packet" << std::endl;
 			break;
 		}
@@ -367,10 +429,12 @@ int clientStart()
 						std::cout << "Authentication successful!" << std::endl;
 						SetConsoleTextAttribute(GetStdHandle(STD_OUTPUT_HANDLE), ConsoleColors::CONSOLE_DEFAULT);
 						is_authenticated = true;
+                        g_client_authenticated.store(true);
 					} else {
 						SetConsoleTextAttribute(GetStdHandle(STD_OUTPUT_HANDLE), ConsoleColors::CONSOLE_COLOR_RED);
 						std::cout << "Authentication failed: " << response->message << std::endl;
 						SetConsoleTextAttribute(GetStdHandle(STD_OUTPUT_HANDLE), ConsoleColors::CONSOLE_DEFAULT);
+						g_client_had_auth_failure.store(true);
 
 						if (response->attempts_remaining <= 0) {
 							std::cerr << "Max attempts exceeded - connection will close" << std::endl;
@@ -418,10 +482,37 @@ int clientStart()
 		if (!received_response && !is_authenticated) {
 			std::cout << "No response from server - retrying..." << std::endl;
 		}
+
+       // UI flow: wait for user to change password and press Connect again.
+		if (!is_authenticated && !host.empty() && auth_attempts < NetworkConstants::MAX_AUTH_ATTEMPTS)
+		{
+			std::string last_password = attempt_password;
+			while (!g_should_close_client && !is_authenticated)
+			{
+				// If the connection died, abort.
+				SteamNetConnectionInfo_t info;
+				SteamNetworkingSockets()->GetConnectionInfo(g_connection_handle, &info);
+				if (info.m_eState != k_ESteamNetworkingConnectionState_Connected)
+				{
+					g_should_close_client = true;
+					break;
+				}
+
+				std::string current_host;
+				uint16_t current_port = 0;
+				std::string current_password;
+				clientGetConnectParams(current_host, current_port, current_password);
+				if (current_password != last_password)
+					break;
+
+				std::this_thread::sleep_for(std::chrono::milliseconds(50));
+			}
+		}
 	}
 	
 	if (!is_authenticated) {
 		std::cerr << "Authentication failed. Closing connection." << std::endl;
+       g_is_client_running = false;
 		GameNetworkingSockets_Kill();
 		return 1;
 	}
@@ -464,6 +555,7 @@ int clientStart()
 	}
 
 	std::cout << "Shutting down GNS Client..." << std::endl;
+   g_is_client_running = false;
 	GameNetworkingSockets_Kill();
 
 	return 0;
