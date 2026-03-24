@@ -100,6 +100,7 @@ public:
 	double m_track_progress = 0.0;
 	double m_prev_track_progress = 0.0;
 	bool m_has_authoritative_state = false;
+	bool m_apply_track_render_offset = true;
 	
 	// ========================================================================
 	// FUTURE: Detailed telemetry history

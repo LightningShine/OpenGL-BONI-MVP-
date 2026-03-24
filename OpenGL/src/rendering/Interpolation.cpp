@@ -3,6 +3,21 @@
 #include <iostream>
 #include <algorithm>
 
+glm::vec2 g_track_render_offset(0.0f, 0.0f);
+
+glm::vec2 getTrackRenderOffset()
+{
+    return g_track_render_offset;
+}
+
+static void resetTrackRenderOffsetIfNoRecenter(const TrackCenterInfo& info)
+{
+    if (!info.is_closed)
+    {
+        g_track_render_offset = glm::vec2(0.0f, 0.0f);
+    }
+}
+
 // Structure to store the interpolation result
 
 
@@ -327,6 +342,8 @@ TrackCenterInfo calculateTrackCenter(const std::vector<glm::vec2>& points)
     
     // Offset needed to move center to (0, 0)
     info.offset = -info.geometric_center;
+
+    resetTrackRenderOffsetIfNoRecenter(info);
     
     std::cout << "[TRACK CENTER] Calculated center: (" << info.geometric_center.x << ", " << info.geometric_center.y << ")" << std::endl;
     std::cout << "[TRACK CENTER] Track is " << (info.is_closed ? "CLOSED" : "OPEN") << std::endl;
@@ -345,6 +362,10 @@ void recenterTrack(std::vector<glm::vec2>& points, const TrackCenterInfo& center
     for (auto& point : points) {
         point += center_info.offset;
     }
+
+    // Keep a global copy of the shift applied to the track so other systems (vehicles)
+    // can render in the same shifted coordinate space.
+    g_track_render_offset = center_info.offset;
     
     std::cout << "[TRACK CENTER] Track recentered successfully!" << std::endl;
 }

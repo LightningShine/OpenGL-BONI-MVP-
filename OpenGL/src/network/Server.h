@@ -123,6 +123,7 @@ struct VehicleStatePacket {
 	float speed_kph;
 	float track_progress;         // 0..1 authoritative progress along track
 	float current_lap_time;
+    float last_lap_time;
 	float best_lap_time;
 	int32_t completed_laps;
 	int32_t current_lap_number;

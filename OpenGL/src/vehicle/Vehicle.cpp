@@ -2,6 +2,7 @@
 #include "../vehicle/VehicleInterpolator.h"
 #include "../input/Input.h"
 #include "../Config.h"
+#include "../rendering/Interpolation.h"
 #include <cmath>
 #include <iostream>
 #include <iomanip>
@@ -82,6 +83,7 @@ Vehicle::Vehicle(double normalized_x, double normalized_y)
     // Устанавливаем позицию из параметров
     m_normalized_x = normalized_x;
     m_normalized_y = normalized_y;
+    m_apply_track_render_offset = false;
 
     // Конвертируем обратно в GPS через origin UTM
     m_meters_easting = g_map_origin.m_origin_meters_easting + (m_normalized_x * MapConstants::MAP_SIZE);
@@ -136,6 +138,7 @@ Vehicle::Vehicle(int32_t id, double normalized_x, double normalized_y)
     // Устанавливаем позицию из параметров
     m_normalized_x = normalized_x;
     m_normalized_y = normalized_y;
+    m_apply_track_render_offset = false;
 
     // Конвертируем обратно в GPS через origin UTM
     m_meters_easting = g_map_origin.m_origin_meters_easting + (m_normalized_x * MapConstants::MAP_SIZE);
@@ -379,6 +382,10 @@ void renderVehicle(GLuint shader_program, GLuint vao, GLuint vbo,
         );
     }
 
+  const glm::vec2 renderOffset = vehicle.m_apply_track_render_offset ? getTrackRenderOffset() : glm::vec2(0.0f, 0.0f);
+    const float baseX = static_cast<float>(vehicle.m_normalized_x) + renderOffset.x;
+    const float baseY = static_cast<float>(vehicle.m_normalized_y) + renderOffset.y;
+
     // === РИСУЕМ БЕЛУЮ ОБВОДКУ ===
     std::vector<glm::vec2> outlineVertices;
     outlineVertices.reserve(outlineShape.size());
@@ -389,8 +396,8 @@ void renderVehicle(GLuint shader_program, GLuint vao, GLuint vbo,
             : vertex;
         
         outlineVertices.push_back(glm::vec2(
-            transformedVertex.x + static_cast<float>(vehicle.m_normalized_x),
-            transformedVertex.y + static_cast<float>(vehicle.m_normalized_y)
+           transformedVertex.x + baseX,
+            transformedVertex.y + baseY
         ));
     }
 
@@ -417,8 +424,8 @@ void renderVehicle(GLuint shader_program, GLuint vao, GLuint vbo,
             : vertex;
         
         bodyVertices.push_back(glm::vec2(
-            transformedVertex.x + static_cast<float>(vehicle.m_normalized_x),
-            transformedVertex.y + static_cast<float>(vehicle.m_normalized_y)
+           transformedVertex.x + baseX,
+            transformedVertex.y + baseY
         ));
     }
 

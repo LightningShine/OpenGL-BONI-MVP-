@@ -421,10 +421,17 @@ void SendTrackAndRaceData(HSteamNetConnection connection)
 	header.origin_zone = g_map_origin.m_origin_zone_int;
 	header.origin_zone_char = g_map_origin.m_origin_zone_char;
 
-	// Get start/finish line from RaceManager
-	if (g_race_manager) {
-		// Access private members via getter if available, or use public interface
-		// For now, send zeros - you can add getter methods to RaceManager if needed
+   // Start/finish line: best-effort.
+	// If you don't have an explicit start/finish line, use the first track segment.
+	if (track_copy.size() >= 2)
+	{
+		header.start_finish_p1_x = track_copy[0].position.x;
+		header.start_finish_p1_y = track_copy[0].position.y;
+		header.start_finish_p2_x = track_copy[1].position.x;
+		header.start_finish_p2_y = track_copy[1].position.y;
+	}
+	else
+	{
 		header.start_finish_p1_x = 0.0f;
 		header.start_finish_p1_y = 0.0f;
 		header.start_finish_p2_x = 0.0f;

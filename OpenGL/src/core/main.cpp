@@ -324,10 +324,12 @@ void drop_callback(GLFWwindow* window, int count, const char** paths)
 					if (center_info.is_closed) {
 						std::cout << "[TRACK] Track is CLOSED - recentering to (0, 0)" << std::endl;
 						recenterTrack(*context->points, center_info);
+						g_track_render_offset = center_info.offset;
 					
 						std::cout << "[TRACK] Origin updated to: (" << g_map_origin.m_origin_lat_dd << ", " << g_map_origin.m_origin_lon_dd << ")" << std::endl;
 					} else {
 						std::cout << "[TRACK] Track is OPEN - keeping original position" << std::endl;
+                       g_track_render_offset = glm::vec2(0.0f, 0.0f);
 					}
 				}
 				

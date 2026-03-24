@@ -27,6 +27,9 @@
 
 #include "src/network/Client.h"
 #include "src/network/Server.h"
+#include "src/racing/RaceManager.h"
+
+extern int g_focused_vehicle_id;
 
 // Windows API for native file dialogs (include AFTER C++ standard library)
 #define NOMINMAX  // Prevent Windows.h from defining min/max macros
@@ -953,6 +956,34 @@ void UI::Render()
     // Always render top and bottom menus (after splash)
     RenderTopMenu();
     RenderBottomMenu();
+
+    // Lap timer overlay (race info)
+    // Use focused vehicle if set, otherwise track leader from standings.
+    if (m_ui_elements && g_race_manager)
+    {
+        int trackedVehicleId = g_focused_vehicle_id;
+        if (trackedVehicleId == -1)
+        {
+            auto standings = g_race_manager->GetStandings();
+            if (!standings.empty())
+                trackedVehicleId = standings[0].vehicleID;
+        }
+
+        if (trackedVehicleId != -1)
+        {
+            const float currentLap = g_race_manager->GetVehicleCurrentLapTime(trackedVehicleId);
+            const float lastLap = g_race_manager->GetVehiclePreviousLapTime(trackedVehicleId);
+            const float bestLap = g_race_manager->GetVehicleBestLapTime(trackedVehicleId);
+            const float deltaToBest = g_race_manager->GetVehicleLapDelta(trackedVehicleId);
+
+            m_ui_elements->drawLapTimer(currentLap, lastLap, bestLap, deltaToBest);
+        }
+        else
+        {
+            m_ui_elements->drawLapTimer(0.0f, -1.0f, -1.0f, 0.0f);
+        }
+    }
+
     RenderPrototypeToast();
     RenderNetworkingModal();
     
@@ -1564,12 +1595,11 @@ void UI::RenderTopMenu()
                 if (isClientRunning())
                 {
                     clientStop();
-                    toggleClientRunning();
+                    clientClearAuthState();
                 }
                 if (isServerRunning())
                 {
                     serverStop();
-                    ChangeisServerRunning();
                 }
 #endif
             }
