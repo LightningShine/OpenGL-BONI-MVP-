@@ -67,7 +67,9 @@ void RaceManager::Update(float deltaTime)
     {
         // ====================================================================
         // TELEMETRY RECORDING (every frame during active lap)
-        // Records vehicle state for TimeDiff calculations
+        // Records vehicle state for TimeDiff calculations.
+        // IMPORTANT: On clients, vehicles can be authoritative (replicated)
+        // and we still need to record samples, otherwise TimeDiff can't work.
         // ====================================================================
         if (vehicle.m_has_started_first_lap)
         {
@@ -81,8 +83,7 @@ void RaceManager::Update(float deltaTime)
             sample.aceleration = static_cast<float>(vehicle.m_acceleration);
             sample.speed = static_cast<float>(vehicle.m_speed_kph);
             sample.curentPosition = 0; // Updated after standings sort
-            
-            // Create lap entry if it doesn't exist
+
             if (vehicle.laps.find(vehicle.m_current_lap_number) == vehicle.laps.end())
             {
                 vehicle.laps[vehicle.m_current_lap_number] = CarLapSessions();
@@ -95,6 +96,21 @@ void RaceManager::Update(float deltaTime)
         // lap/progress/timing values. Do not advance them locally on the client.
         if (vehicle.m_has_authoritative_state)
         {
+            // Client-side: do not advance timing/lap counters locally.
+            // Still keep derived fields consistent for standings/time-diff.
+            // If server provides a valid best lap time, keep it visible in UI.
+            if (vehicle.m_best_lap_time >= 0.0f)
+            {
+                // Best lap ID is used by TimeDiff; if it is unset, point it to the
+                // latest completed lap (bestlap time itself is authoritative).
+                if (vehicle.bestlapID < RaceConstants::LAP_START_NUMBER)
+                {
+                    const int candidate = vehicle.m_current_lap_number - 1;
+                    if (candidate >= RaceConstants::LAP_START_NUMBER)
+                        vehicle.bestlapID = candidate;
+                }
+            }
+
             vehicle.m_total_progress = vehicle.m_completed_laps + vehicle.m_track_progress;
             continue;
         }

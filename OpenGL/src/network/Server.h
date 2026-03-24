@@ -31,8 +31,8 @@ typedef void* ISteamNetworkingSockets;
 struct TelemetryPacket 
 {
 	uint32_t MagicMarker;	// 'DATA' 0x44415441
-	int32_t lat;			// latitude degree * 1e7
-	int32_t lon;			// longitude degree * 1e7
+	int32_t lat;			// latitude degree * 1e10
+	int32_t lon;			// longitude degree * 1e10
 	uint32_t time;			// time in milliseconds
 	uint32_t speed;			// speed in km/h * 100
 	uint32_t acceleration;	// acceleration * 100
@@ -123,6 +123,7 @@ struct VehicleStatePacket {
 	float speed_kph;
 	float track_progress;         // 0..1 authoritative progress along track
 	float current_lap_time;
+    float last_lap_time;
 	float best_lap_time;
 	int32_t completed_laps;
 	int32_t current_lap_number;

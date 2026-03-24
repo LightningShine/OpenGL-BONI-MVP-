@@ -5,6 +5,7 @@
 #include "../rendering/Render.h"
 #include "../network/ESP32_Code.h"
 #include "../network/SimulationServer.h"
+#include "../racing/RaceManager.h"
 #include <cstring>
 #include <windows.h>
 
@@ -30,6 +31,9 @@ static bool g_track_header_received = false;
 static uint32_t g_expected_track_points = 0;
 static uint32_t g_received_track_points = 0;
 static std::vector<SplinePoint> g_received_track_buffer;
+
+static glm::vec2 g_start_finish_p1(0.0f, 0.0f);
+static glm::vec2 g_start_finish_p2(0.0f, 0.0f);
 
 // UI-provided connection params
 static std::mutex g_client_params_mutex;
@@ -162,6 +166,10 @@ static void processTrackHeader(const TrackDataHeader* header)
 	g_received_track_buffer.reserve(header->point_count);
 	g_track_header_received = true;
 	
+  // Cache start/finish line
+	g_start_finish_p1 = glm::vec2(header->start_finish_p1_x, header->start_finish_p1_y);
+	g_start_finish_p2 = glm::vec2(header->start_finish_p2_x, header->start_finish_p2_y);
+
 	std::cout << "[CLIENT] Map origin: (" << header->origin_lat << ", " << header->origin_lon << ")" << std::endl;
 }
 
@@ -196,6 +204,12 @@ static void processTrackChunk(const TrackChunkPacket* chunk)
 			std::lock_guard<std::mutex> lock(g_track_mutex);
 			g_smooth_track_points = g_received_track_buffer;
 			g_is_map_loaded = true;
+		}
+
+		// Ensure RaceManager has a valid line (so lap UI can work).
+		if (g_race_manager)
+		{
+			g_race_manager->SetStartFinishLine(g_start_finish_p1, g_start_finish_p2);
 		}
 
 		SetConsoleTextAttribute(GetStdHandle(STD_OUTPUT_HANDLE), ConsoleColors::CONSOLE_COLOR_GREEN);
@@ -272,13 +286,8 @@ void listenMessagesFromServer()
 			}
 		
 			if (msg->m_cbSize == sizeof(TelemetryPacket)) {
-				TelemetryPacket* pData = (TelemetryPacket*)msg->m_pData;
-
-				// Fallback path for raw telemetry (kept for real devices / compatibility)
-				processIncomingTelemetry(*pData);
-
+                // Server-authoritative replication uses VehicleStatePacket.
 				msg->Release();
-				ErrnumMsg_b = false;
 				continue;
 			}
 		

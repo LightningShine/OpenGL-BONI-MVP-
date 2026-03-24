@@ -41,6 +41,14 @@ uint32_t getMonotonicTimeMs()
             std::chrono::steady_clock::now().time_since_epoch()).count());
 }
 
+    struct VehicleLapTimeSmoother {
+        bool initialized = false;
+        double lastLocalTime = 0.0;
+    };
+
+    std::mutex g_lap_smoother_mutex;
+    std::unordered_map<int32_t, VehicleLapTimeSmoother> g_lap_smoother;
+
 namespace {
     struct VehicleTimeSync {
         bool initialized = false;
@@ -193,6 +201,15 @@ namespace {
     {
         vehicle.m_track_progress = packet.track_progress;
         vehicle.m_current_lap_timer = packet.current_lap_time;
+     // Keep server-provided last lap time in lap table so UI can read it.
+        if (packet.last_lap_time >= 0.0f)
+        {
+            const int prevLap = packet.current_lap_number - 1;
+            if (prevLap >= RaceConstants::LAP_START_NUMBER)
+            {
+                vehicle.m_laps[prevLap] = LapData(packet.last_lap_time, 0);
+            }
+        }
         vehicle.m_best_lap_time = packet.best_lap_time;
         vehicle.m_completed_laps = packet.completed_laps;
         vehicle.m_current_lap_number = packet.current_lap_number;
@@ -206,6 +223,15 @@ namespace {
         void fillPacketRaceStateFromVehicle(VehicleStatePacket& packet, const Vehicle& vehicle)
         {
             packet.current_lap_time = vehicle.m_current_lap_timer;
+     // Previous lap time (if completed at least one lap)
+        {
+            float prev = -1.0f;
+            const int prevLap = vehicle.m_current_lap_number - 1;
+            auto it = vehicle.m_laps.find(prevLap);
+            if (it != vehicle.m_laps.end())
+                prev = it->second.lapTime;
+            packet.last_lap_time = prev;
+        }
             packet.best_lap_time = vehicle.m_best_lap_time;
             packet.completed_laps = vehicle.m_completed_laps;
             packet.current_lap_number = vehicle.m_current_lap_number;
@@ -261,9 +287,12 @@ void processIncomingTelemetry(const TelemetryPacket& packet)
     // ? Debug: print packet info to diagnose coordinate issues
     static int packet_count = 0;
     packet_count++;
-    if (packet_count % 60 == 0) { // Log every 60th packet (once per second at 60Hz)
+    if (packet_count % 60 == 0) { // Log every 60th packet (once per second at ~60Hz)
+        // Arduino packs GPS as scaled integers: degrees * 1e7
+        const double lat_deg = static_cast<double>(packet.lat) / 1e7;
+        const double lon_deg = static_cast<double>(packet.lon) / 1e7;
         std::cout << "[TELEMETRY DEBUG] Prototype ID=" << packet.ID << " -> Vehicle #" << raceID
-                  << " | GPS: (" << (packet.lat / 1e7) << ", " << (packet.lon / 1e7) << ")"
+               << " | GPS: (" << lat_deg << ", " << lon_deg << ")"
                   << " | Speed: " << (packet.speed / 100.0) << " km/h" << std::endl;
     }
 
@@ -283,7 +312,12 @@ void processIncomingTelemetry(const TelemetryPacket& packet)
         }
     }
 
-    // ? 1. Update local vehicle data
+    // 1) Update authoritative server-side vehicle state from telemetry.
+    // Also replicate at a bounded rate to avoid UI jitter from uneven serial packet timing.
+    static std::mutex s_send_rate_mutex;
+    static std::unordered_map<int32_t, uint32_t> s_last_send_time_ms;
+    const uint32_t now_ms = getMonotonicTimeMs();
+    constexpr uint32_t kMinSendIntervalMs = 16; // ~60 Hz
     {
         std::lock_guard<std::mutex> lock(g_vehicles_mutex);
 
@@ -340,6 +374,32 @@ void processIncomingTelemetry(const TelemetryPacket& packet)
             snapshot.track_progress = vehicle.m_track_progress;
 
             VehicleInterpolator::Get().AddSnapshot(raceID, snapshot);
+
+            // Replicate authoritative state to clients (including lap timing produced by RaceManager).
+         bool should_send = true;
+            {
+                std::lock_guard<std::mutex> rlock(s_send_rate_mutex);
+                auto& last = s_last_send_time_ms[raceID];
+                if (last != 0 && (now_ms - last) < kMinSendIntervalMs)
+                    should_send = false;
+                else
+                    last = now_ms;
+            }
+
+            if (should_send)
+            {
+                VehicleStatePacket state{};
+            state.magic_marker = PacketMagic::VSTA;
+            state.vehicle_id = raceID;
+            state.server_time_ms = (packet.time != 0) ? packet.time : now_ms;
+            state.normalized_x = static_cast<float>(vehicle.m_normalized_x);
+            state.normalized_y = static_cast<float>(vehicle.m_normalized_y);
+            state.heading = static_cast<float>(vehicle.m_heading);
+            state.speed_kph = static_cast<float>(vehicle.m_speed_kph);
+            state.track_progress = static_cast<float>(vehicle.m_track_progress);
+            fillPacketRaceStateFromVehicle(state, vehicle);
+            BroadcastVehicleStateToClients(state);
+           }
         }
         else
         {
@@ -374,9 +434,22 @@ void processIncomingTelemetry(const TelemetryPacket& packet)
             new_vehicle.m_has_authoritative_state = false;
 
             // ? Use emplace to avoid default constructor call!
-            g_vehicles.emplace(raceID, std::move(new_vehicle));
+            auto [insertIt, inserted] = g_vehicles.emplace(raceID, std::move(new_vehicle));
 
             VehicleInterpolator::Get().AddSnapshot(raceID, snapshot);
+
+            // Replicate initial authoritative state to clients.
+            VehicleStatePacket state{};
+            state.magic_marker = PacketMagic::VSTA;
+            state.vehicle_id = raceID;
+            state.server_time_ms = getMonotonicTimeMs();
+            state.normalized_x = static_cast<float>(insertIt->second.m_normalized_x);
+            state.normalized_y = static_cast<float>(insertIt->second.m_normalized_y);
+            state.heading = static_cast<float>(insertIt->second.m_heading);
+            state.speed_kph = static_cast<float>(insertIt->second.m_speed_kph);
+            state.track_progress = static_cast<float>(insertIt->second.m_track_progress);
+            fillPacketRaceStateFromVehicle(state, insertIt->second);
+            BroadcastVehicleStateToClients(state);
             #else
             // Without networking, ignore unknown vehicles
             std::cerr << "[TELEMETRY WARNING] Ignoring packet for unknown vehicle #" << raceID << std::endl;
@@ -384,11 +457,8 @@ void processIncomingTelemetry(const TelemetryPacket& packet)
         }
     }
 
-    // ? 2. Broadcast to network clients (if server is running)
-    // Broadcast race vehicle ID (1..N), not the prototype/device ID.
-    TelemetryPacket packet_to_send = packet;
-    packet_to_send.ID = raceID;
-    BroadcastTelemetryToClients(packet_to_send);
+    // Network replication is server-authoritative via VehicleStatePacket.
+    // Do not broadcast raw telemetry to clients.
 }
 
 void processIncomingVehicleState(const VehicleStatePacket& packet)
@@ -416,6 +486,26 @@ void processIncomingVehicleState(const VehicleStatePacket& packet)
         vehicle.m_last_update_time = std::chrono::steady_clock::now();
 
         applyRaceStateFromPacket(vehicle, packet);
+
+        // Smooth current lap timer locally between packets for UI.
+        {
+            const double now = VehicleInterpolator::GetTime();
+            std::lock_guard<std::mutex> slock(g_lap_smoother_mutex);
+            auto& sm = g_lap_smoother[packet.vehicle_id];
+            if (!sm.initialized)
+            {
+                sm.initialized = true;
+                sm.lastLocalTime = now;
+            }
+            else
+            {
+                const double dt = std::clamp(now - sm.lastLocalTime, 0.0, 0.25);
+                sm.lastLocalTime = now;
+                // Only advance if lap has started and server didn't just reset time.
+                if (vehicle.m_has_started_first_lap && vehicle.m_current_lap_timer >= 0.0f)
+                    vehicle.m_current_lap_timer += static_cast<float>(dt);
+            }
+        }
 
         VehicleSnapshot snapshot;
         snapshot.timestamp = getSynchronizedSnapshotTimeSeconds(packet.vehicle_id, packet.server_time_ms);
@@ -794,8 +884,12 @@ void simulateVehicleMovement(int vehicle_id, const std::vector<SplinePoint>& smo
         total_distance += glm::distance(smooth_track_points[i].position, smooth_track_points[i - 1].position);
     }
 
-    // Launch simulation in separate thread
-    std::thread simulation_thread(simulationThreadWorker, vehicle_id, smooth_track_points);
+    // Launch simulation in separate thread.
+    // IMPORTANT: simulation must not reuse the same race IDs as real prototypes.
+    // Use a reserved high ID range so the telemetry->race mapping remains stable.
+    constexpr int kSimIdBase = 1000000;
+    const int sim_vehicle_id = kSimIdBase + vehicle_id;
+    std::thread simulation_thread(simulationThreadWorker, sim_vehicle_id, smooth_track_points);
     simulation_thread.detach();
 }
 

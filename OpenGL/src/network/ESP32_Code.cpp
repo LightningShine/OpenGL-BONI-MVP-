@@ -41,6 +41,9 @@ static void realDataThreadWorker(const std::string& com_port)
     uint64_t nonmatch_bytes = 0;
 
     auto last_stats = std::chrono::steady_clock::now();
+    auto last_coord_log = std::chrono::steady_clock::now();
+    TelemetryPacket last_packet{};
+    bool has_last_packet = false;
 
     // Arduino/ESP sends struct in little-endian order.
     // MagicMarker PacketMagic::DATA (0x44415441 'DATA') appears on the wire as bytes: 41 54 41 44
@@ -50,6 +53,7 @@ static void realDataThreadWorker(const std::string& com_port)
 
     while (true)
     {
+      const auto now = std::chrono::steady_clock::now();
         // Read stream byte-by-byte and scan for magic marker.
         uint8_t byte = 0;
         if (serial.readBytes(&byte, 1) <= 0)
@@ -89,6 +93,8 @@ static void realDataThreadWorker(const std::string& com_port)
                 if (payloadRead == static_cast<int>(dataSize))
                 {
                     telemetry_packets_ok++;
+                   last_packet = packet;
+                    has_last_packet = true;
                     processIncomingTelemetry(packet);
                 }
                 else
@@ -102,12 +108,26 @@ static void realDataThreadWorker(const std::string& com_port)
                                   << " bad=" << telemetry_packets_bad
                                   << std::endl;
                     }
+
+        // Periodic coordinate log (every 5 seconds)
+        if (has_last_packet && (now - last_coord_log >= std::chrono::seconds(5)))
+        {
+            last_coord_log = now;
+           // Arduino packs GPS as scaled integers: degrees * 1e7
+            const double lat = static_cast<double>(last_packet.lat) / 1e7;
+            const double lon = static_cast<double>(last_packet.lon) / 1e7;
+            std::cout << "[SERIAL] last GNSS: lat=" << lat
+                      << " lon=" << lon
+                      << " fix=" << last_packet.fixtype
+                      << " speed=" << (static_cast<double>(last_packet.speed) / 100.0)
+                      << "km/h"
+                      << std::endl;
+        }
                 }
             }
         }
 
         // Periodic stats (every 2 seconds)
-        const auto now = std::chrono::steady_clock::now();
         if (now - last_stats >= std::chrono::seconds(2))
         {
             last_stats = now;
