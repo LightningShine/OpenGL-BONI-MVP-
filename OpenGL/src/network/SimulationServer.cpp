@@ -13,6 +13,7 @@
 #include <limits>
 #include <algorithm>
 #include <cmath>
+#include <iomanip>
 #include <GeographicLib/UTMUPS.hpp>  // For accurate GPS conversion
 #include "../../UI.h"
 
@@ -246,11 +247,29 @@ namespace {
 // ============================================================================
 void processIncomingTelemetry(const TelemetryPacket& packet)
 {
+    if (packet.MagicMarker != PACKET_MAGIC_DATA && packet.MagicMarker != PacketMagic::DATA)
+    {
+        return;
+    }
+
     // Map prototype/device IDs (coming from hardware) to race vehicle IDs (1..N)
     // This decouples device identity from race identity.
     static std::mutex s_proto_map_mutex;
     static std::unordered_map<int32_t, int32_t> s_proto_to_race_id;
     static int32_t s_next_race_id = 1;
+
+    // Ignore telemetry until a track is loaded.
+    // COM port can stay connected, but we don't create/update vehicles without the map origin.
+    // NOTE: Prototype->race assignment still happens so UI can show "Connected" immediately.
+    if (!g_is_map_loaded)
+    {
+        static std::atomic<bool> warned{ false };
+        if (!warned.exchange(true))
+        {
+            std::cerr << "[TELEMETRY] Ignoring telemetry updates: map/track is not loaded yet." << std::endl;
+        }
+        return;
+    }
 
     int32_t raceID;
     {
@@ -261,26 +280,32 @@ void processIncomingTelemetry(const TelemetryPacket& packet)
             raceID = s_next_race_id++;
             s_proto_to_race_id.emplace(packet.ID, raceID);
             std::cout << "[TELEMETRY] Prototype #" << packet.ID << " assigned race vehicle #" << raceID << std::endl;
-           if (g_ui) {
+            if (g_ui) {
                 g_ui->NotifyPrototypeConnected(raceID);
             }
-
-    // Ignore telemetry until a track is loaded.
-    // COM port can stay connected, but we don't create/update vehicles without the map origin.
-    // NOTE: Prototype->race assignment still happens above so UI can show "Connected" immediately.
-    if (!g_is_map_loaded)
-    {
-        static std::atomic<bool> warned{ false };
-        if (!warned.exchange(true))
-        {
-            std::cerr << "[TELEMETRY] Ignoring telemetry updates: map/track is not loaded yet." << std::endl;
-        }
-        return;
-    }
         }
         else
         {
             raceID = it->second;
+        }
+    }
+
+    // If origin isn't initialized yet (zone + UTM origin), GPS->UTM conversion can fail.
+    // This would collapse vehicle positions to (0,0) and look like a constant render offset.
+    {
+        const int zone = g_map_origin.m_origin_zone_int;
+        const bool origin_ok = (zone >= 1 && zone <= 60) &&
+            (std::abs(g_map_origin.m_origin_meters_easting) > 1.0) &&
+            (std::abs(g_map_origin.m_origin_meters_northing) > 1.0);
+
+        if (!origin_ok)
+        {
+            static std::atomic<bool> warnedOrigin{ false };
+            if (!warnedOrigin.exchange(true))
+            {
+                std::cerr << "[TELEMETRY] Ignoring telemetry: map origin not initialized yet (zone/UTM origin invalid)." << std::endl;
+            }
+            return;
         }
     }
 
@@ -345,6 +370,22 @@ void processIncomingTelemetry(const TelemetryPacket& packet)
                                vehicle.m_meters_easting, vehicle.m_meters_northing);
             getCoordinateDifferenceFromOrigin(vehicle.m_meters_easting, vehicle.m_meters_northing,
                                              vehicle.m_normalized_x, vehicle.m_normalized_y);
+
+            // [DEBUG_ALIGN_TMP] Raw vs render position (once per second)
+            if ((packet_count % 60) == 0)
+            {
+                const glm::vec2 off = getTrackRenderOffset();
+                const double rx = vehicle.m_normalized_x + off.x;
+                const double ry = vehicle.m_normalized_y + off.y;
+                std::cout.setf(std::ios::fixed);
+                std::cout << "[DEBUG_ALIGN_TMP] upd proto=" << packet.ID
+                    << " race=" << raceID
+                    << " utm=(" << std::setprecision(3) << vehicle.m_meters_easting << "," << vehicle.m_meters_northing << ")"
+                    << " norm_raw=(" << std::setprecision(6) << vehicle.m_normalized_x << "," << vehicle.m_normalized_y << ")"
+                    << " track_off=(" << off.x << "," << off.y << ")"
+                    << " norm_render=(" << rx << "," << ry << ")"
+                    << std::endl;
+            }
 
             // Update track progress (needed for consistent leader + lap logic on clients)
             vehicle.m_track_progress = calculateTrackProgressFromPosition(vehicle.m_normalized_x, vehicle.m_normalized_y);
@@ -414,6 +455,21 @@ void processIncomingTelemetry(const TelemetryPacket& packet)
             std::cout << "[TELEMETRY] Creating new vehicle #" << raceID << " from prototype #" << packet.ID << std::endl;
 
             Vehicle new_vehicle(packet);
+
+            // [DEBUG_ALIGN_TMP] Raw vs render position on create
+            {
+                const glm::vec2 off = getTrackRenderOffset();
+                const double rx = new_vehicle.m_normalized_x + off.x;
+                const double ry = new_vehicle.m_normalized_y + off.y;
+                std::cout.setf(std::ios::fixed);
+                std::cout << "[DEBUG_ALIGN_TMP] create proto=" << packet.ID
+                    << " race=" << raceID
+                    << " utm=(" << std::setprecision(3) << new_vehicle.m_meters_easting << "," << new_vehicle.m_meters_northing << ")"
+                    << " norm_raw=(" << std::setprecision(6) << new_vehicle.m_normalized_x << "," << new_vehicle.m_normalized_y << ")"
+                    << " track_off=(" << off.x << "," << off.y << ")"
+                    << " norm_render=(" << rx << "," << ry << ")"
+                    << std::endl;
+            }
 
             // Compute initial track progress (needed for correct leader/standings immediately)
             new_vehicle.m_track_progress = calculateTrackProgressFromPosition(new_vehicle.m_normalized_x, new_vehicle.m_normalized_y);

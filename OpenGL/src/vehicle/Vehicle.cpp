@@ -2,6 +2,7 @@
 #include "../vehicle/VehicleInterpolator.h"
 #include "../input/Input.h"
 #include "../Config.h"
+#include "../rendering/Interpolation.h"
 #include <cmath>
 #include <iostream>
 #include <iomanip>
@@ -379,6 +380,10 @@ void renderVehicle(GLuint shader_program, GLuint vao, GLuint vbo,
         );
     }
 
+    const glm::vec2 renderOffset = getTrackRenderOffset();
+    const float baseX = static_cast<float>(vehicle.m_normalized_x) + renderOffset.x;
+    const float baseY = static_cast<float>(vehicle.m_normalized_y) + renderOffset.y;
+
     // === РИСУЕМ БЕЛУЮ ОБВОДКУ ===
     std::vector<glm::vec2> outlineVertices;
     outlineVertices.reserve(outlineShape.size());
@@ -389,8 +394,8 @@ void renderVehicle(GLuint shader_program, GLuint vao, GLuint vbo,
             : vertex;
         
         outlineVertices.push_back(glm::vec2(
-            transformedVertex.x + static_cast<float>(vehicle.m_normalized_x),
-            transformedVertex.y + static_cast<float>(vehicle.m_normalized_y)
+           transformedVertex.x + baseX,
+            transformedVertex.y + baseY
         ));
     }
 
@@ -417,8 +422,8 @@ void renderVehicle(GLuint shader_program, GLuint vao, GLuint vbo,
             : vertex;
         
         bodyVertices.push_back(glm::vec2(
-            transformedVertex.x + static_cast<float>(vehicle.m_normalized_x),
-            transformedVertex.y + static_cast<float>(vehicle.m_normalized_y)
+           transformedVertex.x + baseX,
+            transformedVertex.y + baseY
         ));
     }
 

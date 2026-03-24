@@ -249,15 +249,19 @@ void coordinatesToMeters(double DDlat, double DDlon, double &MetrCord_est, doubl
 	try {
 		using namespace GeographicLib;
 
-		// ✅ CRITICAL: Always use the same zone as origin for consistency!
-		// If we don't specify zone, UTMUPS::Forward may choose different zone
-		// which causes coordinates to be completely wrong
-		int setzone = g_map_origin.m_origin_zone_int;
-
-		// Convert GPS to UTM, forcing it to use origin's zone
+      // Force origin zone only when it is valid.
+		// If origin zone is not initialized yet, let GeographicLib pick the zone.
+		const int setzone = g_map_origin.m_origin_zone_int;
 		int zone;
 		bool northp;
-		UTMUPS::Forward(DDlat, DDlon, zone, northp, MetrCord_est, MetrCord_north, setzone);
+		if (setzone >= 1 && setzone <= 60)
+		{
+			UTMUPS::Forward(DDlat, DDlon, zone, northp, MetrCord_est, MetrCord_north, setzone);
+		}
+		else
+		{
+			UTMUPS::Forward(DDlat, DDlon, zone, northp, MetrCord_est, MetrCord_north);
+		}
 	}
 	catch (const std::exception& e) {
 		std::cerr << "[COORD ERROR] GeographicLib: " << e.what() << std::endl;
