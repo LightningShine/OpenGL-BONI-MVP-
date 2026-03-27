@@ -841,10 +841,6 @@ int main()
 	glGenBuffers(1, &grid_vbo);
 	std::cout << "Grid VAO/VBO created (VAO: " << grid_vao << ", VBO: " << grid_vbo << ")" << std::endl;
 
-	// ========================== START REAL DATA ======================
-	std::cout << "[MAIN] Starting ESP32 telemetry capture on COM5..." << std::endl;
-	startRealDataCapture("COM5");
-
 	// ========================== RENDER LOOP ==========================
 
 	// Delta time calculation for physics-accurate timing
@@ -1073,6 +1069,10 @@ int main()
 	}
 	
 	ui.Shutdown();
+
+	// Stop serial capture + COM port discovery thread on app shutdown
+	stopRealDataCapture();
+	stopComPortAutoDiscovery();
 
 #if NETWORKING_ENABLED
 	serverStop();

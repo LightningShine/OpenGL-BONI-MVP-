@@ -3,11 +3,47 @@
 #include <iostream>
 #include <thread>
 #include <chrono>
+#include <atomic>
+#include <mutex>
+#include <vector>
+#include <algorithm>
+#include <cstdlib>
+
+#if defined(_WIN32)
+#include <windows.h>
+#include <setupapi.h>
+#include <devguid.h>
+#include <regstr.h>
+#pragma comment(lib, "setupapi.lib")
+#endif
 
 serialib serial;
 
+static std::atomic<bool> g_capture_running{ false };
+static std::atomic<bool> g_capture_stop_requested{ false };
+static std::thread g_capture_thread;
+static std::mutex g_serial_mutex;
+
+static std::atomic<bool> g_discovery_running{ false };
+static std::atomic<bool> g_discovery_stop_requested{ false };
+static std::thread g_discovery_thread;
+
+static std::mutex g_ports_mutex;
+static std::vector<ComPortInfo> g_ports;
+static std::mutex g_selected_port_mutex;
+static std::string g_selected_port;
+
+static void closeSerialNoThrow()
+{
+    std::lock_guard<std::mutex> lock(g_serial_mutex);
+    // serialib has no isOpen() in all versions; just attempt close.
+    try { serial.closeDevice(); }
+    catch (...) {}
+}
+
 bool openCOMPort(const std::string& port_name)
 {
+    std::lock_guard<std::mutex> lock(g_serial_mutex);
     int result = serial.openDevice(port_name.c_str(), 115200);
 
     if (result == 1) {
@@ -23,6 +59,122 @@ bool openCOMPort(const std::string& port_name)
     default: std::cerr << "Error: Unknown error opening port." << std::endl; break;
     }
     return false;
+}
+
+#if defined(_WIN32)
+static std::vector<ComPortInfo> enumerateComPortsWindows()
+{
+    std::vector<ComPortInfo> out;
+
+    HDEVINFO hDevInfo = SetupDiGetClassDevsA(&GUID_DEVCLASS_PORTS, nullptr, nullptr, DIGCF_PRESENT);
+    if (hDevInfo == INVALID_HANDLE_VALUE)
+        return out;
+
+    SP_DEVINFO_DATA devInfo{};
+    devInfo.cbSize = sizeof(devInfo);
+
+    for (DWORD i = 0; SetupDiEnumDeviceInfo(hDevInfo, i, &devInfo); ++i)
+    {
+        char friendly[512]{};
+        DWORD regType = 0;
+        DWORD size = 0;
+        if (!SetupDiGetDeviceRegistryPropertyA(hDevInfo, &devInfo, SPDRP_FRIENDLYNAME, &regType,
+            reinterpret_cast<PBYTE>(friendly), static_cast<DWORD>(sizeof(friendly) - 1), &size))
+        {
+            continue;
+        }
+
+        std::string desc(friendly);
+        auto lparen = desc.rfind("(COM");
+        auto rparen = (lparen != std::string::npos) ? desc.find(')', lparen) : std::string::npos;
+        if (lparen == std::string::npos || rparen == std::string::npos)
+            continue;
+
+        std::string port = desc.substr(lparen + 1, rparen - (lparen + 1));
+        out.push_back(ComPortInfo{ port, desc });
+    }
+
+    SetupDiDestroyDeviceInfoList(hDevInfo);
+
+    std::sort(out.begin(), out.end(), [](const ComPortInfo& a, const ComPortInfo& b) {
+        auto num = [](const std::string& p) -> int {
+            if (p.rfind("COM", 0) != 0) return 100000;
+            return std::atoi(p.c_str() + 3);
+        };
+        const int na = num(a.port);
+        const int nb = num(b.port);
+        if (na != nb) return na < nb;
+        return a.port < b.port;
+        });
+
+    out.erase(std::unique(out.begin(), out.end(), [](const ComPortInfo& x, const ComPortInfo& y) {
+        return x.port == y.port;
+        }), out.end());
+
+    return out;
+}
+#endif
+
+static void comDiscoveryThreadWorker()
+{
+    while (!g_discovery_stop_requested.load())
+    {
+        std::vector<ComPortInfo> ports;
+#if defined(_WIN32)
+        ports = enumerateComPortsWindows();
+#endif
+
+        {
+            std::lock_guard<std::mutex> lock(g_ports_mutex);
+            g_ports = std::move(ports);
+        }
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+    }
+}
+
+void startComPortAutoDiscovery()
+{
+    bool expected = false;
+    if (!g_discovery_running.compare_exchange_strong(expected, true))
+        return;
+
+    g_discovery_stop_requested.store(false);
+    g_discovery_thread = std::thread(comDiscoveryThreadWorker);
+}
+
+void stopComPortAutoDiscovery()
+{
+    if (!g_discovery_running.load())
+        return;
+
+    g_discovery_stop_requested.store(true);
+    if (g_discovery_thread.joinable())
+        g_discovery_thread.join();
+    g_discovery_running.store(false);
+}
+
+std::vector<ComPortInfo> getAvailableComPorts()
+{
+    std::lock_guard<std::mutex> lock(g_ports_mutex);
+    return g_ports;
+}
+
+std::string getSelectedComPort()
+{
+    std::lock_guard<std::mutex> lock(g_selected_port_mutex);
+    return g_selected_port;
+}
+
+void stopRealDataCapture()
+{
+    g_capture_stop_requested.store(true);
+    if (g_capture_thread.joinable())
+        g_capture_thread.join();
+
+    g_capture_running.store(false);
+    g_capture_stop_requested.store(false);
+    closeSerialNoThrow();
 }
 
 static void realDataThreadWorker(const std::string& com_port)
@@ -51,7 +203,7 @@ static void realDataThreadWorker(const std::string& com_port)
     uint8_t window[4] = { 0, 0, 0, 0 };
     int windowCount = 0;
 
-    while (true)
+    while (!g_capture_stop_requested.load())
     {
       const auto now = std::chrono::steady_clock::now();
         // Read stream byte-by-byte and scan for magic marker.
@@ -139,12 +291,32 @@ static void realDataThreadWorker(const std::string& com_port)
                       << std::endl;
         }
     }
+
+    std::cout << "[REAL DATA] Stopped listening on " << com_port << std::endl;
+    closeSerialNoThrow();
 }
 
 void startRealDataCapture(const std::string& com_port)
 {
-    std::thread real_thread(realDataThreadWorker, com_port);
-    real_thread.detach();
+    stopRealDataCapture();
+    g_capture_running.store(true);
+    g_capture_stop_requested.store(false);
+    g_capture_thread = std::thread(realDataThreadWorker, com_port);
+}
+
+bool selectAndOpenComPort(const std::string& port)
+{
+    if (port.empty())
+        return false;
+
+    {
+        std::lock_guard<std::mutex> lock(g_selected_port_mutex);
+        g_selected_port = port;
+    }
+
+    std::cout << "[SERIAL] Selected COM port: " << port << std::endl;
+    startRealDataCapture(port);
+    return true;
 }
 
 void testSerial()

@@ -27,6 +27,7 @@
 
 #include "src/network/Client.h"
 #include "src/network/Server.h"
+#include "src/network/ESP32_Code.h"
 #include "src/racing/RaceManager.h"
 
 extern int g_focused_vehicle_id;
@@ -885,6 +886,10 @@ void UI::Shutdown()
 {
     if (m_context)
     {
+        // Ensure serial threads are stopped before destruction
+        stopRealDataCapture();
+        stopComPortAutoDiscovery();
+
         if (m_backgroundTexture)
         {
             unsigned int tex = (unsigned int)(intptr_t)m_backgroundTexture;
@@ -1557,6 +1562,39 @@ void UI::RenderTopMenu()
             if (ImGui::MenuItem("Preferences", nullptr, false, false)) {}
             if (ImGui::MenuItem("Configuration", nullptr, false, false)) {}
             ImGui::Separator();
+
+            // COM port selection (auto-discovered in background thread)
+            {
+                startComPortAutoDiscovery();
+
+                const std::string selected = getSelectedComPort();
+                std::string label = "SELECTED COM PORT: (" + (selected.empty() ? std::string("<none>") : selected) + ")";
+
+                // A hoverable row with a submenu on the right (like in the reference screenshot)
+                if (ImGui::BeginMenu(label.c_str()))
+                {
+                    const auto ports = getAvailableComPorts();
+                    if (ports.empty())
+                    {
+                        ImGui::BeginDisabled();
+                        ImGui::MenuItem("<no COM ports detected>", nullptr, false, false);
+                        ImGui::EndDisabled();
+                    }
+                    else
+                    {
+                        for (const auto& p : ports)
+                        {
+                            const bool isSelected = (!selected.empty() && p.port == selected);
+                            if (ImGui::MenuItem(p.description.c_str(), nullptr, isSelected))
+                            {
+                                selectAndOpenComPort(p.port);
+                            }
+                        }
+                    }
+                    ImGui::EndMenu();
+                }
+            }
+
             if (ImGui::MenuItem("Reset to Defaults", nullptr, false, false)) {}
             ImGui::EndMenu();
         }
