@@ -315,6 +315,9 @@ bool selectAndOpenComPort(const std::string& port)
     }
 
     std::cout << "[SERIAL] Selected COM port: " << port << std::endl;
+
+    // Avoid showing stale PPS from the previous source while the new port is opening.
+    telemetryResetPpsCounters();
     startRealDataCapture(port);
     return true;
 }

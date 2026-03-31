@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <cmath>
 #include <iomanip>
+#include <array>
 #include <GeographicLib/UTMUPS.hpp>  // For accurate GPS conversion
 #include "../../UI.h"
 
@@ -28,6 +29,50 @@ extern MapOrigin g_map_origin;
 extern std::atomic<bool> g_is_map_loaded;
 extern std::vector<SplinePoint> g_smooth_track_points;
 extern std::mutex g_track_mutex;
+
+static std::atomic<uint32_t> g_telemetry_packets_in_window{ 0 };
+static std::atomic<uint32_t> g_telemetry_packets_per_second{ 0 };
+static std::atomic<uint32_t> g_telemetry_last_window_ms{ 0 };
+
+namespace {
+    constexpr size_t kPpsRingSize = 2048;
+    std::mutex g_pps_mutex;
+    std::array<uint32_t, kPpsRingSize> g_pps_ring{};
+    size_t g_pps_head = 0;
+    size_t g_pps_count = 0;
+    uint32_t g_pps_last_packet_ms = 0;
+}
+
+uint32_t telemetryGetPacketsPerSecond()
+{
+    // If no packets for >1s, decay to 0 (prevents UI showing a stale value when source stops).
+    const uint32_t now_ms = static_cast<uint32_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count());
+
+    uint32_t last_pkt;
+    {
+        std::lock_guard<std::mutex> lock(g_pps_mutex);
+        last_pkt = g_pps_last_packet_ms;
+    }
+    if (last_pkt != 0 && (now_ms - last_pkt) > 1000)
+    {
+        g_telemetry_packets_per_second.store(0, std::memory_order_relaxed);
+    }
+
+    return g_telemetry_packets_per_second.load(std::memory_order_relaxed);
+}
+
+void telemetryResetPpsCounters()
+{
+    std::lock_guard<std::mutex> lock(g_pps_mutex);
+    g_pps_head = 0;
+    g_pps_count = 0;
+    g_pps_last_packet_ms = 0;
+    g_telemetry_packets_per_second.store(0, std::memory_order_relaxed);
+    g_telemetry_packets_in_window.store(0, std::memory_order_relaxed);
+    g_telemetry_last_window_ms.store(0, std::memory_order_relaxed);
+}
 
 
 // ============================================================================
@@ -247,6 +292,33 @@ namespace {
 // ============================================================================
 void processIncomingTelemetry(const TelemetryPacket& packet)
 {
+    // Count EVERY packet received by the PC (regardless of whether it is used later).
+    // PPS is computed as a sliding window: number of packets whose arrival timestamps are within the last 1000ms.
+    {
+        const uint32_t now_ms = getMonotonicTimeMs();
+
+        std::lock_guard<std::mutex> lock(g_pps_mutex);
+        g_pps_last_packet_ms = now_ms;
+
+        // Push timestamp
+        g_pps_ring[g_pps_head] = now_ms;
+        g_pps_head = (g_pps_head + 1) % kPpsRingSize;
+        if (g_pps_count < kPpsRingSize)
+            ++g_pps_count;
+
+        // Drop timestamps older than 1s
+        while (g_pps_count > 0)
+        {
+            const size_t tail = (g_pps_head + kPpsRingSize - g_pps_count) % kPpsRingSize;
+            const uint32_t t = g_pps_ring[tail];
+            if ((now_ms - t) <= 1000)
+                break;
+            --g_pps_count;
+        }
+
+        g_telemetry_packets_per_second.store(static_cast<uint32_t>(g_pps_count), std::memory_order_relaxed);
+    }
+
     if (packet.MagicMarker != PACKET_MAGIC_DATA && packet.MagicMarker != PacketMagic::DATA)
     {
         return;

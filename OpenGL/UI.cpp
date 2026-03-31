@@ -28,6 +28,7 @@
 #include "src/network/Client.h"
 #include "src/network/Server.h"
 #include "src/network/ESP32_Code.h"
+#include "src/network/SimulationServer.h"
 #include "src/racing/RaceManager.h"
 
 extern int g_focused_vehicle_id;
@@ -1739,6 +1740,16 @@ void UI::RenderBottomMenu()
     ImGui::Begin("##BottomMenu", nullptr, window_flags);
     
     ImGui::PushFont(m_fontRegular);
+
+    // Telemetry packets per second on the left
+    {
+        const uint32_t pps = telemetryGetPacketsPerSecond();
+        char pps_text[64];
+        snprintf(pps_text, sizeof(pps_text), "PPS: %u", (unsigned)pps);
+        ImGui::SetCursorPosX(10);
+        ImGui::SetCursorPosY(3);
+        ImGui::TextUnformatted(pps_text);
+    }
     
     // Version info on the right
     const char* version_text = UIConfig::APP_VERSION;
