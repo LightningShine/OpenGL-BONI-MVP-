@@ -262,7 +262,9 @@ namespace TrackRenderer
             {
                 glm::vec2 lineP1 = startPos - perpendicular * (lineWidth / 2.0f);
                 glm::vec2 lineP2 = startPos + perpendicular * (lineWidth / 2.0f);
-                g_race_manager->SetStartFinishLine(lineP1, lineP2);
+                 // Keep RaceManager start/finish line in the same coordinate space as Vehicle positions.
+                 // In this project, vehicles are updated in the same (recentered) normalized space as the track.
+                 g_race_manager->SetStartFinishLine(lineP1, lineP2);
             }
             
             // ========================================================================

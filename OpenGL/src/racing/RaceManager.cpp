@@ -65,6 +65,7 @@ void RaceManager::Update(float deltaTime)
 
     for (auto& [vehicleID, vehicle] : g_vehicles)
     {
+        constexpr bool kDebugFinishCrossing = true;
         // ====================================================================
         // TELEMETRY RECORDING (every frame during active lap)
         // Records vehicle state for TimeDiff calculations.
@@ -116,87 +117,52 @@ void RaceManager::Update(float deltaTime)
         }
         
         // Check for start/finish crossing.
-        // Telemetry can be as low as ~5 Hz with GNSS jitter, so a strict segment
-        // intersection can miss. We use:
-        // 1) Exact segment intersection (best when it hits)
-        // 2) Capsule trigger around the start/finish segment + side-change test.
-        //    Capsule makes the line "thicker" in meters, so packet jumps still get detected.
-        // Also apply a cooldown to avoid double counting.
+        // Use strict segment intersection for correctness. Progress-cycle fallback below
+        // handles low-rate updates on closed tracks.
         const glm::vec2 prevPos(vehicle.m_prev_x, vehicle.m_prev_y);
         const glm::vec2 curPos(vehicle.m_normalized_x, vehicle.m_normalized_y);
 
-        // Vehicles store raw normalized coordinates (origin-based). The start/finish line is
-        // built from recentered track points (render-space). Convert the line back to raw space.
-        const glm::vec2 off = getTrackRenderOffset();
-        const glm::vec2 sfP1 = m_startFinishP1 - off;
-        const glm::vec2 sfP2 = m_startFinishP2 - off;
-
-        // Per-vehicle cooldown
-        static std::unordered_map<int32_t, double> s_lastCrossTime;
-        const double nowSec = std::chrono::duration_cast<std::chrono::duration<double>>(
-            std::chrono::steady_clock::now().time_since_epoch()).count();
-        constexpr double kCrossCooldownSec = 1.0;
-        const auto lastIt = s_lastCrossTime.find(vehicleID);
-        const bool cooldownOk = (lastIt == s_lastCrossTime.end()) || ((nowSec - lastIt->second) >= kCrossCooldownSec);
+        const glm::vec2 sfP1 = m_startFinishP1;
+        const glm::vec2 sfP2 = m_startFinishP2;
 
         float intersectionRatio = 0.0f;
-        bool crossed = false;
-        if (cooldownOk)
-        {
-            crossed = CheckLineSegmentIntersection(prevPos, curPos, sfP1, sfP2, intersectionRatio);
-
-            if (!crossed)
-            {
-                const glm::vec2 line = sfP2 - sfP1;
-                const glm::vec2 normal(-line.y, line.x);
-                constexpr float kLineEps = 1e-4f;
-                const float dPrev = glm::dot(prevPos - sfP1, normal);
-                const float dCur = glm::dot(curPos - sfP1, normal);
-                const bool sideChanged = ((dPrev > kLineEps && dCur < -kLineEps) || (dPrev < -kLineEps && dCur > kLineEps));
-
-                // Distance-to-segment capsule (in meters)
-                // 0.12 normalized ~ 9m when MAP_SIZE=75m per 1.0
-                constexpr float kFinishCapsuleRadius = 0.12f;
-                const glm::vec2 ab = line;
-                const float abLenSq = glm::dot(ab, ab);
-                float distSq = std::numeric_limits<float>::infinity();
-                float u = 0.0f;
-                if (abLenSq > 1e-12f)
-                {
-                    u = glm::clamp(glm::dot(curPos - sfP1, ab) / abLenSq, 0.0f, 1.0f);
-                    const glm::vec2 closest = sfP1 + ab * u;
-                    const glm::vec2 diff = curPos - closest;
-                    distSq = glm::dot(diff, diff);
-                }
-
-                const bool insideCapsule = (distSq <= (kFinishCapsuleRadius * kFinishCapsuleRadius));
-
-                if (sideChanged && insideCapsule)
-                {
-                    // Approximate crossing ratio using signed distances.
-                    const float denom = (dPrev - dCur);
-                    if (std::abs(denom) > 1e-9f)
-                        intersectionRatio = std::clamp(dPrev / denom, 0.0f, 1.0f);
-                    else
-                        intersectionRatio = 0.0f;
-
-                    crossed = true;
-                }
-            }
-        }
-
-        if (crossed)
-        {
-            s_lastCrossTime[vehicleID] = nowSec;
-        }
+        const bool crossed = CheckLineSegmentIntersection(prevPos, curPos, sfP1, sfP2, intersectionRatio);
         
         // Check for progress cycle (0.999 -> 0.001)
-        bool progressCycled = (vehicle.m_prev_track_progress > 0.85 && 
-                               vehicle.m_track_progress < 0.15);
+        // Use this only for real GNSS telemetry (jitter/low-rate updates). Simulation and
+        // other non-GNSS sources should rely on strict line intersection to avoid false laps.
+        const bool isNonGnssSource = (vehicle.m_fix_type < 2);
+        bool progressCycled = false;
+        if (!isNonGnssSource)
+        {
+            progressCycled = (vehicle.m_prev_track_progress > 0.85 &&
+                              vehicle.m_track_progress < 0.15);
+        }
         
         // ====================================================================
         // LAP COMPLETION DETECTION
         // ====================================================================
+        if (kDebugFinishCrossing && (crossed || progressCycled))
+        {
+            const glm::vec2 off = getTrackRenderOffset();
+            std::cout.setf(std::ios::fixed);
+            std::cout << "[S/F DEBUG] veh#" << vehicleID
+                      << " fixType=" << vehicle.m_fix_type
+                      << " started=" << (vehicle.m_has_started_first_lap ? 1 : 0)
+                      << " crossed=" << (crossed ? 1 : 0)
+                      << " progCycle=" << (progressCycled ? 1 : 0)
+                      << " ratio=" << std::setprecision(3) << intersectionRatio
+                      << " prevPos=(" << std::setprecision(6) << prevPos.x << "," << prevPos.y << ")"
+                      << " curPos=(" << curPos.x << "," << curPos.y << ")"
+                      << " sfP1=(" << sfP1.x << "," << sfP1.y << ")"
+                      << " sfP2=(" << sfP2.x << "," << sfP2.y << ")"
+                      << " off=(" << off.x << "," << off.y << ")"
+                      << " prevProg=" << std::setprecision(3) << vehicle.m_prev_track_progress
+                      << " curProg=" << vehicle.m_track_progress
+                      << " lapT=" << vehicle.m_current_lap_timer
+                      << std::endl;
+        }
+
         if (vehicle.m_has_started_first_lap && (crossed || progressCycled))
         {
             // Sub-frame accurate timing
@@ -240,6 +206,24 @@ void RaceManager::Update(float deltaTime)
             
             if (timeSinceCreation > 0.5f)
             {
+                if (kDebugFinishCrossing)
+                {
+                    const glm::vec2 off = getTrackRenderOffset();
+                    std::cout.setf(std::ios::fixed);
+                    std::cout << "[S/F DEBUG] START veh#" << vehicleID
+                              << " fixType=" << vehicle.m_fix_type
+                              << " ratio=" << std::setprecision(3) << intersectionRatio
+                              << " prevPos=(" << std::setprecision(6) << prevPos.x << "," << prevPos.y << ")"
+                              << " curPos=(" << curPos.x << "," << curPos.y << ")"
+                              << " sfP1=(" << sfP1.x << "," << sfP1.y << ")"
+                              << " sfP2=(" << sfP2.x << "," << sfP2.y << ")"
+                              << " off=(" << off.x << "," << off.y << ")"
+                              << " prevProg=" << std::setprecision(3) << vehicle.m_prev_track_progress
+                              << " curProg=" << vehicle.m_track_progress
+                              << " lapT=" << vehicle.m_current_lap_timer
+                              << std::endl;
+                }
+
                 vehicle.m_has_started_first_lap = true;
                 vehicle.m_current_lap_timer = deltaTime * (1.0f - intersectionRatio);
                 vehicle.m_prev_track_progress = vehicle.m_track_progress;
@@ -295,6 +279,7 @@ void RaceManager::Update(float deltaTime)
     
     if (!standings.empty())
     {
+        constexpr bool kLogLeaderChanges = false;
         static int32_t previousLeader = -1;
         int32_t currentLeader = standings[0].vehicleID;
         
@@ -312,7 +297,7 @@ void RaceManager::Update(float deltaTime)
         }
         
         // Debug: print leader change
-        if (currentLeader != previousLeader && previousLeader != -1)
+        if (kLogLeaderChanges && currentLeader != previousLeader && previousLeader != -1)
         {
             std::cout << "\n[LEADER CHANGE] New leader: Vehicle #" << currentLeader 
                       << " | Laps: " << standings[0].completedLaps 

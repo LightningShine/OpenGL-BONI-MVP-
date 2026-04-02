@@ -200,8 +200,7 @@ namespace {
         const double radius_norm = radius_meters / MapConstants::MAP_SIZE;
         const double radius_sq = radius_norm * radius_norm;
 
-        const glm::vec2 off = getTrackRenderOffset();
-        const glm::vec2 p(static_cast<float>(x - off.x), static_cast<float>(y - off.y));
+        const glm::vec2 p(static_cast<float>(x), static_cast<float>(y));
 
         const size_t segmentCount = trackCopy.size() - 1;
         for (size_t i = 0; i < segmentCount; ++i)
@@ -295,8 +294,7 @@ namespace {
         // Track points may be recentred and rendered with an offset. Vehicle positions are stored
         // in raw normalized coordinates (relative to origin) and rendered with that same offset.
         // To validate against the current recentered track geometry, compare in track space.
-        const glm::vec2 off = getTrackRenderOffset();
-        const glm::vec2 p(static_cast<float>(x - off.x), static_cast<float>(y - off.y));
+        const glm::vec2 p(static_cast<float>(x), static_cast<float>(y));
 
         double bestDistSq = std::numeric_limits<double>::infinity();
         double bestDistanceAlong = 0.0;
@@ -538,6 +536,11 @@ void processIncomingTelemetry(const TelemetryPacket& packet)
         double ny = 0.0;
         getCoordinateDifferenceFromOrigin(easting, northing, nx, ny);
 
+        // Race-space = track space (recentered)
+        const glm::vec2 off = getTrackRenderOffset();
+        nx += off.x;
+        ny += off.y;
+
         constexpr double kNearTrackRadiusMeters = 1000.0; // 1km
         const bool nearTrack = isPositionNearCurrentTrack(nx, ny, kNearTrackRadiusMeters);
         const uint32_t now_ms = getMonotonicTimeMs();
@@ -635,11 +638,20 @@ void processIncomingTelemetry(const TelemetryPacket& packet)
             vehicle.m_acceleration = packet.acceleration / 100.0;
             vehicle.m_g_force_x = packet.gForceX / 100.0;
             vehicle.m_g_force_y = packet.gForceY / 100.0;
+            vehicle.m_fix_type = packet.fixtype;
 
             coordinatesToMeters(vehicle.m_lat_dd, vehicle.m_lon_dd, 
                                vehicle.m_meters_easting, vehicle.m_meters_northing);
             getCoordinateDifferenceFromOrigin(vehicle.m_meters_easting, vehicle.m_meters_northing,
                                              vehicle.m_normalized_x, vehicle.m_normalized_y);
+
+            // Race-space = track space (recentered). Track points are shifted by g_track_render_offset
+            // when the track is closed/recentered. Apply the same shift to telemetry-driven vehicles.
+            {
+                const glm::vec2 off = getTrackRenderOffset();
+                vehicle.m_normalized_x += off.x;
+                vehicle.m_normalized_y += off.y;
+            }
 
             // [DEBUG_ALIGN_TMP] Raw vs render position (once per second)
             if ((packet_count % 60) == 0)
@@ -1027,7 +1039,8 @@ static TelemetryPacket createTelemetryPacket(
     packet.acceleration = 0;
     packet.gForceX = 0;
     packet.gForceY = 0;
-    packet.fixtype = 4;
+    // Mark as simulation source (not real GNSS). Keep it distinct from real GNSS (>=2).
+    packet.fixtype = 1;
     // Use a monotonic time source so client-side interpolation and lap timing can
     // be stable even for simulated vehicles.
     packet.time = getMonotonicTimeMs();
