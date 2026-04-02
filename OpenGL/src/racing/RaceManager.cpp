@@ -115,14 +115,80 @@ void RaceManager::Update(float deltaTime)
             continue;
         }
         
-        // Check for finish line crossing
+        // Check for start/finish crossing.
+        // Telemetry can be as low as ~5 Hz with GNSS jitter, so a strict segment
+        // intersection can miss. We use:
+        // 1) Exact segment intersection (best when it hits)
+        // 2) Capsule trigger around the start/finish segment + side-change test.
+        //    Capsule makes the line "thicker" in meters, so packet jumps still get detected.
+        // Also apply a cooldown to avoid double counting.
+        const glm::vec2 prevPos(vehicle.m_prev_x, vehicle.m_prev_y);
+        const glm::vec2 curPos(vehicle.m_normalized_x, vehicle.m_normalized_y);
+
+        // Vehicles store raw normalized coordinates (origin-based). The start/finish line is
+        // built from recentered track points (render-space). Convert the line back to raw space.
+        const glm::vec2 off = getTrackRenderOffset();
+        const glm::vec2 sfP1 = m_startFinishP1 - off;
+        const glm::vec2 sfP2 = m_startFinishP2 - off;
+
+        // Per-vehicle cooldown
+        static std::unordered_map<int32_t, double> s_lastCrossTime;
+        const double nowSec = std::chrono::duration_cast<std::chrono::duration<double>>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+        constexpr double kCrossCooldownSec = 1.0;
+        const auto lastIt = s_lastCrossTime.find(vehicleID);
+        const bool cooldownOk = (lastIt == s_lastCrossTime.end()) || ((nowSec - lastIt->second) >= kCrossCooldownSec);
+
         float intersectionRatio = 0.0f;
-        bool crossed = CheckLineSegmentIntersection(
-            glm::vec2(vehicle.m_prev_x, vehicle.m_prev_y),
-            glm::vec2(vehicle.m_normalized_x, vehicle.m_normalized_y),
-            m_startFinishP1, m_startFinishP2,
-            intersectionRatio
-        );
+        bool crossed = false;
+        if (cooldownOk)
+        {
+            crossed = CheckLineSegmentIntersection(prevPos, curPos, sfP1, sfP2, intersectionRatio);
+
+            if (!crossed)
+            {
+                const glm::vec2 line = sfP2 - sfP1;
+                const glm::vec2 normal(-line.y, line.x);
+                constexpr float kLineEps = 1e-4f;
+                const float dPrev = glm::dot(prevPos - sfP1, normal);
+                const float dCur = glm::dot(curPos - sfP1, normal);
+                const bool sideChanged = ((dPrev > kLineEps && dCur < -kLineEps) || (dPrev < -kLineEps && dCur > kLineEps));
+
+                // Distance-to-segment capsule (in meters)
+                // 0.12 normalized ~ 9m when MAP_SIZE=75m per 1.0
+                constexpr float kFinishCapsuleRadius = 0.12f;
+                const glm::vec2 ab = line;
+                const float abLenSq = glm::dot(ab, ab);
+                float distSq = std::numeric_limits<float>::infinity();
+                float u = 0.0f;
+                if (abLenSq > 1e-12f)
+                {
+                    u = glm::clamp(glm::dot(curPos - sfP1, ab) / abLenSq, 0.0f, 1.0f);
+                    const glm::vec2 closest = sfP1 + ab * u;
+                    const glm::vec2 diff = curPos - closest;
+                    distSq = glm::dot(diff, diff);
+                }
+
+                const bool insideCapsule = (distSq <= (kFinishCapsuleRadius * kFinishCapsuleRadius));
+
+                if (sideChanged && insideCapsule)
+                {
+                    // Approximate crossing ratio using signed distances.
+                    const float denom = (dPrev - dCur);
+                    if (std::abs(denom) > 1e-9f)
+                        intersectionRatio = std::clamp(dPrev / denom, 0.0f, 1.0f);
+                    else
+                        intersectionRatio = 0.0f;
+
+                    crossed = true;
+                }
+            }
+        }
+
+        if (crossed)
+        {
+            s_lastCrossTime[vehicleID] = nowSec;
+        }
         
         // Check for progress cycle (0.999 -> 0.001)
         bool progressCycled = (vehicle.m_prev_track_progress > 0.85 && 

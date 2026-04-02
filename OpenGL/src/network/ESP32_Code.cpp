@@ -240,9 +240,21 @@ static void realDataThreadWorker(const std::string& com_port)
                 TelemetryPacket packet{};
                 packet.MagicMarker = PACKET_MAGIC_DATA;
 
-                const size_t dataSize = sizeof(TelemetryPacket) - sizeof(uint32_t);
-                const int payloadRead = serial.readBytes(reinterpret_cast<char*>(&packet) + 4, dataSize);
-                if (payloadRead == static_cast<int>(dataSize))
+                // Read the payload after the already matched MagicMarker.
+                // TelemetryPacket is packed; layout must match the device sender.
+                const size_t payloadSize = sizeof(TelemetryPacket) - sizeof(uint32_t);
+                uint8_t* dst = reinterpret_cast<uint8_t*>(&packet) + sizeof(uint32_t);
+                size_t totalRead = 0;
+                while (totalRead < payloadSize && !g_capture_stop_requested.load())
+                {
+                    const int r = serial.readBytes(reinterpret_cast<char*>(dst + totalRead), static_cast<int>(payloadSize - totalRead));
+                    if (r > 0)
+                        totalRead += static_cast<size_t>(r);
+                    else
+                        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                }
+
+                if (totalRead == payloadSize)
                 {
                     telemetry_packets_ok++;
                    last_packet = packet;
@@ -254,8 +266,8 @@ static void realDataThreadWorker(const std::string& com_port)
                     telemetry_packets_bad++;
                     if ((telemetry_packets_bad % 10) == 1)
                     {
-                        std::cerr << "[SERIAL] Telemetry payload read failed. expected=" << dataSize
-                                  << " got=" << payloadRead
+                        std::cerr << "[SERIAL] Telemetry payload read failed. expected=" << payloadSize
+                                  << " got=" << totalRead
                                   << " | ok=" << telemetry_packets_ok
                                   << " bad=" << telemetry_packets_bad
                                   << std::endl;
@@ -318,6 +330,7 @@ bool selectAndOpenComPort(const std::string& port)
 
     // Avoid showing stale PPS from the previous source while the new port is opening.
     telemetryResetPpsCounters();
+    telemetryResetPrototypeIdMapping();
     startRealDataCapture(port);
     return true;
 }

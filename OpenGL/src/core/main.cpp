@@ -84,17 +84,34 @@ const std::vector<SplinePoint>* smooth_track = nullptr)
 			std::cout << "Cannot create vehicle - track not interpolated!" << std::endl;
 		} else {
 			// Generate unique ID for simulation
-			static int next_vehicle_id = 1;
-			int vehicle_id = next_vehicle_id++;
+         int vehicle_id = -1;
+			{
+				std::lock_guard<std::mutex> lock(g_vehicles_mutex);
+				for (int id = 1; id <= 99; ++id)
+				{
+					if (g_vehicles.find(id) == g_vehicles.end())
+					{
+						vehicle_id = id;
+						break;
+					}
+				}
+			}
+			if (vehicle_id == -1)
+			{
+				std::cout << "[SIM] Cannot start simulation - no free race IDs (1-99)" << std::endl;
+			}
+			else
+			{
 
-			std::cout << "[SIM] Starting vehicle #" << vehicle_id << " simulation on track" << std::endl;
+               std::cout << "[SIM] Starting vehicle #" << vehicle_id << " simulation on track" << std::endl;
 
 			// ✅ DON'T create vehicle here! Let first telemetry packet create it.
 			// This avoids coordinate mismatch between normalized→GPS→normalized roundtrip.
 			// The simulation will send packets, and processIncomingTelemetry will create the vehicle.
 
-			// Start simulation - first packet will CREATE the vehicle
-			simulateVehicleMovement(vehicle_id, *smooth_track);
+              // Start simulation - first packet will CREATE the vehicle
+				simulateVehicleMovement(vehicle_id, *smooth_track);
+			}
 		}
 	}
 	if (glfwGetKey(window, GLFW_KEY_T) == GLFW_RELEASE)

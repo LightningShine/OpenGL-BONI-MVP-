@@ -13,6 +13,9 @@ uint32_t telemetryGetPacketsPerSecond();
 
 // Optional: reset counters when data source changes (e.g., COM port switched)
 void telemetryResetPpsCounters();
+
+// Resets prototype->race vehicle ID mapping (used when changing data sources).
+void telemetryResetPrototypeIdMapping();
 void processIncomingVehicleState(const VehicleStatePacket& packet);
 
 // Simulate vehicle movement along pre-interpolated track
