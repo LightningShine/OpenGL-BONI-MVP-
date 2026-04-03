@@ -1,5 +1,17 @@
 #pragma once
 
+#include "../network/Server.h"
+
+// Unified telemetry processing entry points implemented in `SimulationServer.cpp`.
+// (Used by real COM capture, simulation and network.)
+void processIncomingTelemetry(const TelemetryPacket& packet);
+void processIncomingVehicleState(const VehicleStatePacket& packet);
+
+// Telemetry diagnostics helpers
+uint32_t telemetryGetPacketsPerSecond();
+void telemetryResetPpsCounters();
+void telemetryResetPrototypeIdMapping();
+
 #include <vector>
 #include "../rendering/Interpolation.h"
 #include "../network/Server.h"

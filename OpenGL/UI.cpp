@@ -30,6 +30,7 @@
 #include "src/network/ESP32_Code.h"
 #include "src/network/SimulationServer.h"
 #include "src/racing/RaceManager.h"
+#include "src/track/TelemetryTrackBuilder.h"
 
 extern int g_focused_vehicle_id;
 
@@ -916,12 +917,88 @@ void UI::BeginFrame()
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
 
+    // If telemetry builder auto-closed the loop, prompt Save As on the UI thread.
+    // Do this early (before WantTextInput guard) so it can't be accidentally skipped.
+    if (!m_showSplash && TelemetryTrackBuilder::ConsumeAutoSaveRequest())
+    {
+        char saveFile[260] = { 0 };
+        OPENFILENAMEA ofn = {};
+        ofn.lStructSize = sizeof(ofn);
+        ofn.hwndOwner = glfwGetWin32Window(m_window);
+        ofn.lpstrFile = saveFile;
+        ofn.nMaxFile = sizeof(saveFile);
+        ofn.lpstrFilter = "Track TXT\0*.txt\0All Files\0*.*\0";
+        ofn.nFilterIndex = 1;
+        ofn.Flags = OFN_PATHMUSTEXIST | OFN_OVERWRITEPROMPT | OFN_NOCHANGEDIR;
+
+        std::string initialDir = "src/saves";
+        ofn.lpstrInitialDir = initialDir.c_str();
+
+        std::string chosen;
+        if (GetSaveFileNameA(&ofn))
+        {
+            chosen = ofn.lpstrFile;
+        }
+
+        // If user cancels, save to default name so we don't lose the created track.
+        if (!TelemetryTrackBuilder::SaveFinalizedAsTxt(chosen))
+        {
+            std::cerr << "[UI] Failed to save finalized track." << std::endl;
+        }
+        else
+        {
+            LoadRecentFiles();
+            std::cout << "[UI] Track saved." << std::endl;
+        }
+
+        // After auto-finish flow, switch mode OFF in UI.
+        TelemetryTrackBuilder::Stop();
+    }
+
     // Keyboard shortcuts for networking modal
     // Shift+C => client, Shift+S => server
     // Guard: only when not typing in an input field
     ImGuiIO& io = ImGui::GetIO();
     if (!m_showSplash && !io.WantTextInput)
     {
+        // Track creation hotkey: Space finalizes an OPEN track (manual finish).
+        if (TelemetryTrackBuilder::IsActive() && ImGui::IsKeyPressed(ImGuiKey_Space))
+        {
+            // Offer Save As dialog so user can name the track.
+            char saveFile[260] = { 0 };
+            OPENFILENAMEA ofn = {};
+            ofn.lStructSize = sizeof(ofn);
+            ofn.hwndOwner = glfwGetWin32Window(m_window);
+            ofn.lpstrFile = saveFile;
+            ofn.nMaxFile = sizeof(saveFile);
+            ofn.lpstrFilter = "Track TXT\0*.txt\0All Files\0*.*\0";
+            ofn.nFilterIndex = 1;
+            ofn.Flags = OFN_PATHMUSTEXIST | OFN_OVERWRITEPROMPT | OFN_NOCHANGEDIR;
+
+            std::string initialDir = "src/saves";
+            ofn.lpstrInitialDir = initialDir.c_str();
+
+            std::string chosen;
+            if (GetSaveFileNameA(&ofn))
+            {
+                chosen = ofn.lpstrFile;
+            }
+
+            if (!TelemetryTrackBuilder::FinalizeOpenAndSaveTxt(chosen))
+            {
+                std::cerr << "[UI] Failed to finalize/save open track." << std::endl;
+            }
+            else
+            {
+                // Refresh recent files list so the new track appears in splash/recents.
+                LoadRecentFiles();
+                std::cout << "[UI] Track saved." << std::endl;
+            }
+
+            // Manual finish => turn mode OFF.
+            TelemetryTrackBuilder::Stop();
+        }
+
         if (io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_C))
         {
             UpdateNetworkingIps();
@@ -962,6 +1039,63 @@ void UI::Render()
     // Always render top and bottom menus (after splash)
     RenderTopMenu();
     RenderBottomMenu();
+
+    // Live preview while building a track from telemetry.
+    // Throttle cache rebuild to avoid heavy CPU/GPU usage.
+    static auto s_last_preview_update = std::chrono::steady_clock::now();
+    if (TelemetryTrackBuilder::IsActive() && m_points && m_pointsMutex)
+    {
+        const auto now = std::chrono::steady_clock::now();
+        if (now - s_last_preview_update >= std::chrono::milliseconds(150))
+        {
+            s_last_preview_update = now;
+            std::vector<glm::vec2> pts = TelemetryTrackBuilder::GetRawPointsSnapshot();
+            if (pts.size() >= 2)
+            {
+                {
+                    std::lock_guard<std::mutex> lock(*m_pointsMutex);
+                    *m_points = std::move(pts);
+                }
+                TrackRenderer::rebuildTrackPreviewCache(*m_points, *m_pointsMutex);
+            }
+        }
+    }
+    else if (TelemetryTrackBuilder::IsActive())
+    {
+        const auto now = std::chrono::steady_clock::now();
+        if (now - s_last_preview_update >= std::chrono::milliseconds(150))
+        {
+            s_last_preview_update = now;
+            std::vector<glm::vec2> pts = TelemetryTrackBuilder::GetRawPointsSnapshot();
+            if (pts.size() >= 2)
+            {
+                static std::mutex s_preview_mutex;
+                TrackRenderer::rebuildTrackPreviewCache(pts, s_preview_mutex);
+            }
+        }
+    }
+
+    // If track creation just finished, publish points to renderer buffer.
+    static bool s_builder_finished_consumed = false;
+    if (TelemetryTrackBuilder::IsFinalized())
+    {
+        if (!s_builder_finished_consumed && m_points && m_pointsMutex)
+        {
+            std::vector<glm::vec2> pts = TelemetryTrackBuilder::GetRawPointsSnapshot();
+            {
+                std::lock_guard<std::mutex> lock(*m_pointsMutex);
+                *m_points = std::move(pts);
+            }
+            TrackRenderer::rebuildTrackCache(*m_points, *m_pointsMutex);
+            LoadRecentFiles();
+            s_builder_finished_consumed = true;
+            std::cout << "[UI] Track creation finalized and rendered." << std::endl;
+        }
+    }
+    else
+    {
+        s_builder_finished_consumed = false;
+    }
 
     // Lap timer overlay (race info)
     // Use focused vehicle if set, otherwise track leader from standings.
@@ -1169,6 +1303,9 @@ void UI::RenderMainWindow()
     if (ImGui::Button("Create Track", ImVec2(395, 60)))
     {
         std::cout << "[UI] Create Track clicked\n";
+       TelemetryTrackBuilder::Settings s;
+        TelemetryTrackBuilder::Start(s);
+        std::cout << "[UI] Telemetry track creation mode enabled. Connect prototype and start driving." << std::endl;
         m_showSplash = false;
         m_closeSplash = true;
     }
@@ -1606,6 +1743,90 @@ void UI::RenderTopMenu()
             if (ImGui::MenuItem("Zoom Out", "-", false, false)) {}
             if (ImGui::MenuItem("Reset View", "Home", false, false)) {}
             ImGui::Separator();
+            {
+                const bool active = TelemetryTrackBuilder::IsActive();
+                const char* label = active ? "Track Creation Mode: ON" : "Track Creation Mode: OFF";
+                if (ImGui::MenuItem(label))
+                {
+                    if (!active)
+                    {
+                        TelemetryTrackBuilder::Settings s;
+                        TelemetryTrackBuilder::Start(s);
+                        std::cout << "[UI] Telemetry track creation mode enabled. Waiting for prototype telemetry..." << std::endl;
+                    }
+                    else
+                    {
+                        TelemetryTrackBuilder::Stop();
+                        std::cout << "[UI] Telemetry track creation mode disabled." << std::endl;
+                    }
+                }
+            }
+         if (ImGui::MenuItem("Simulate Prototype Lap (Test)", nullptr, false, TelemetryTrackBuilder::IsActive()))
+            {
+                // Feed synthetic TelemetryPacket stream into unified telemetry pipeline.
+                // This exercises: origin auto-detect, on-the-fly track build, auto-close, recenter, and save.
+                std::thread([hwnd = glfwGetWin32Window(m_window)]() {
+                    TelemetryPacket p{};
+                    p.MagicMarker = PACKET_MAGIC_DATA;
+                    p.ID = 4242;
+                    p.fixtype = 4;
+                    p.speed = 6000;
+                    p.acceleration = 0;
+                    p.gForceX = 0;
+                    p.gForceY = 0;
+
+                    // Fixed origin for simulation. MapOrigin will be created automatically by TelemetryTrackBuilder
+                    // on the first packet, so we must ensure the first packet is already on the circle.
+                    const double baseLat = 37.4219999;
+                    const double baseLon = -122.0840575;
+
+                    // Use UTM around that origin.
+                    double e0 = 0.0, n0 = 0.0;
+                    int zone = 0;
+                    bool northp = true;
+                    GeographicLib::UTMUPS::Forward(baseLat, baseLon, zone, northp, e0, n0);
+
+                    const int steps = 1500;
+                    const double radiusMeters = 90.0;
+                    uint32_t t = 0;
+
+                    // Start exactly on the circle at angle=0 so the first sampled point is part of the loop.
+                    for (int i = 0; i <= steps; ++i)
+                    {
+                        const double a = (static_cast<double>(i) / static_cast<double>(steps)) * (SimulationConstants::TWO_PI);
+                        const double e = e0 + std::cos(a) * radiusMeters;
+                        const double n = n0 + std::sin(a) * radiusMeters;
+                        double lat = 0.0;
+                        double lon = 0.0;
+                        GeographicLib::UTMUPS::Reverse(zone, northp, e, n, lat, lon);
+                        p.lat = static_cast<int32_t>(lat * 1e7);
+                        p.lon = static_cast<int32_t>(lon * 1e7);
+                        p.time = t;
+                        processIncomingTelemetry(p);
+                        t += 16;
+                        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                    }
+
+                    // Add a few extra samples at the start position to guarantee close-radius detection.
+                    for (int i = 0; i < 10; ++i)
+                    {
+                        const double a = 0.0;
+                        const double e = e0 + std::cos(a) * radiusMeters;
+                        const double n = n0 + std::sin(a) * radiusMeters;
+                        double lat = 0.0;
+                        double lon = 0.0;
+                        GeographicLib::UTMUPS::Reverse(zone, northp, e, n, lat, lon);
+                        p.lat = static_cast<int32_t>(lat * 1e7);
+                        p.lon = static_cast<int32_t>(lon * 1e7);
+                        p.time = t;
+                        processIncomingTelemetry(p);
+                        t += 16;
+                        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                    }
+
+                    // If auto-close didn't happen (settings), let user finish with Space.
+                }).detach();
+            }
            ImGui::MenuItem("Prototype panel", nullptr, &m_allowPrototypeToast);
             if (ImGui::MenuItem("Toggle Fullscreen", "F11", false, false)) {}
             ImGui::EndMenu();

@@ -7,6 +7,8 @@
 #include "../rendering/Interpolation.h"
 #include "../Config.h"
 #include "../racing/RaceManager.h"
+#include "../track/TrackRecorder.h"
+#include "../track/TelemetryTrackBuilder.h"
 #include <random>
 #include <chrono>
 #include <unordered_map>
@@ -415,6 +417,12 @@ namespace {
 // ============================================================================
 void processIncomingTelemetry(const TelemetryPacket& packet)
 {
+    // If we are in telemetry track creation mode, feed packets into builder.
+    // Builder will auto-initialize origin from the first packet.
+    if (TelemetryTrackBuilder::IsActive())
+    {
+        TelemetryTrackBuilder::OnTelemetryPacket(packet);
+    }
     // Count EVERY packet received by the PC (regardless of whether it is used later).
     // PPS is computed as a sliding window: number of packets whose arrival timestamps are within the last 1000ms.
     {
@@ -653,6 +661,9 @@ void processIncomingTelemetry(const TelemetryPacket& packet)
                 vehicle.m_normalized_y += off.y;
             }
 
+            // Track recording uses positions in the same space as rendered track/vehicles.
+            TrackRecorder::OnTelemetryPosition(raceID, glm::vec2(static_cast<float>(vehicle.m_normalized_x), static_cast<float>(vehicle.m_normalized_y)));
+
             // [DEBUG_ALIGN_TMP] Raw vs render position (once per second)
             if ((packet_count % 60) == 0)
             {
@@ -755,6 +766,8 @@ void processIncomingTelemetry(const TelemetryPacket& packet)
 
             // Compute initial track progress (needed for correct leader/standings immediately)
             new_vehicle.m_track_progress = calculateTrackProgressFromPosition(new_vehicle.m_normalized_x, new_vehicle.m_normalized_y);
+
+            TrackRecorder::OnTelemetryPosition(raceID, glm::vec2(static_cast<float>(new_vehicle.m_normalized_x), static_cast<float>(new_vehicle.m_normalized_y)));
 
             // ? Add initial snapshot BEFORE moving
             VehicleSnapshot snapshot;

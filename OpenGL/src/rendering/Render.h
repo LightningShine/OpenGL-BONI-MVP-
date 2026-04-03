@@ -33,4 +33,9 @@ namespace TrackRenderer
     void renderStartFinishGrayLine(GLuint shader_program);
     
     void clearStartFinishLine();
+
+    // Lightweight preview (no rounding/smoothing) for in-progress track recording.
+    // Builds a thin strip directly from raw polyline points.
+    // Must be called from main thread.
+    void rebuildTrackPreviewCache(const std::vector<glm::vec2>& points, std::mutex& points_mutex);
 }
