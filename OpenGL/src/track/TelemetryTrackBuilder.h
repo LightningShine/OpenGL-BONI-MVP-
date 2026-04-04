@@ -24,6 +24,7 @@ namespace TelemetryTrackBuilder
 
 	void Start(const Settings& settings);
 	void Stop();
+    void Stop(bool keepPoints);
 	bool IsActive();
 	bool IsFinalized();
 	bool ConsumeAutoSaveRequest();
