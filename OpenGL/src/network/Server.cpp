@@ -1,6 +1,8 @@
 #include "../network/Server.h"
 #include "../Config.h"
 #include "../input/Input.h"  // ✅ For MapOrigin and coordinate functions
+#include "../rendering/Interpolation.h"
+#include "../racing/RaceManager.h"
 #include <cstring>
 #include <windows.h>
 #include <glm/glm.hpp>       // ✅ For glm::vec2
@@ -8,11 +10,18 @@
 
 // Console colors (anonymous namespace for internal use)
 namespace {
-    constexpr WORD CONSOLE_DEFAULT = 7;
-    constexpr WORD CONSOLE_COLOR_GREEN = 10;
-    constexpr WORD CONSOLE_COLOR_RED = 12;
-    constexpr WORD CONSOLE_COLOR_YELLOW = 14;
+	constexpr WORD CONSOLE_DEFAULT = 7;
+	constexpr WORD CONSOLE_COLOR_GREEN = 10;
+	constexpr WORD CONSOLE_COLOR_RED = 12;
+	constexpr WORD CONSOLE_COLOR_YELLOW = 14;
 }
+
+// External variables from main.cpp
+extern std::vector<SplinePoint> g_smooth_track_points;
+extern std::mutex g_track_mutex;
+extern MapOrigin g_map_origin;
+extern std::atomic<bool> g_is_map_loaded;
+extern RaceManager* g_race_manager;
 
 
 
@@ -29,6 +38,30 @@ HSteamNetPollGroup g_hPollGroup;
 std::vector<HSteamNetConnection> g_hConnections;
 static std::map<HSteamNetConnection, bool> g_authenticated_connections;
 static std::map<HSteamNetConnection, int> g_auth_attempts;
+
+static std::mutex g_server_password_mutex;
+static std::string g_server_password;
+
+static std::mutex g_server_wanip_mutex;
+static std::string g_server_wan_ip;
+
+void serverSetPassword(const char* password_or_null)
+{
+	std::lock_guard<std::mutex> lock(g_server_password_mutex);
+	g_server_password = password_or_null ? password_or_null : "";
+}
+
+const char* serverGetPassword()
+{
+	std::lock_guard<std::mutex> lock(g_server_password_mutex);
+	return g_server_password.c_str();
+}
+
+const char* serverGetWanIp()
+{
+	std::lock_guard<std::mutex> lock(g_server_wanip_mutex);
+	return g_server_wan_ip.c_str();
+}
 
 bool g_is_server_running = false;
 bool ServerNeedStop_b = false;
@@ -107,6 +140,33 @@ void OnConnectionStatusChange(SteamNetConnectionStatusChangedCallback_t* pInfo)
 	default:
 		break;
 	}
+}
+
+static uint32_t GetMonotonicServerTimeMs()
+{
+	return static_cast<uint32_t>(
+		std::chrono::duration_cast<std::chrono::milliseconds>(
+			std::chrono::steady_clock::now().time_since_epoch()).count());
+}
+
+static VehicleStatePacket MakeVehicleStatePacket(const Vehicle& vehicle)
+{
+	VehicleStatePacket packet{};
+	packet.magic_marker = PacketMagic::VSTA;
+	packet.vehicle_id = vehicle.m_id;
+	packet.server_time_ms = GetMonotonicServerTimeMs();
+	packet.normalized_x = static_cast<float>(vehicle.m_normalized_x);
+	packet.normalized_y = static_cast<float>(vehicle.m_normalized_y);
+	packet.heading = static_cast<float>(vehicle.m_heading);
+	packet.speed_kph = static_cast<float>(vehicle.m_speed_kph);
+	packet.track_progress = static_cast<float>(vehicle.m_track_progress);
+	packet.current_lap_time = vehicle.m_current_lap_timer;
+	packet.best_lap_time = vehicle.m_best_lap_time;
+	packet.completed_laps = vehicle.m_completed_laps;
+	packet.current_lap_number = vehicle.m_current_lap_number;
+	packet.has_started_first_lap = vehicle.m_has_started_first_lap ? 1 : 0;
+	packet.is_leader = vehicle.m_is_leader ? 1 : 0;
+	return packet;
 }
 
 class MyServer {
@@ -223,6 +283,25 @@ void BroadcastTelemetryToClients(const TelemetryPacket& packet)
 #endif
 }
 
+void BroadcastVehicleStateToClients(const VehicleStatePacket& packet)
+{
+#if NETWORKING_ENABLED
+	if (!g_is_server_running) return;
+
+	bool has_authenticated_clients = false;
+	for (const auto& pair : g_authenticated_connections) {
+		if (pair.second) {
+			has_authenticated_clients = true;
+			break;
+		}
+	}
+
+	if (has_authenticated_clients) {
+		SendToAll(&packet, sizeof(VehicleStatePacket));
+	}
+#endif
+}
+
 // Authenticate connection with password
 static bool authenticateConnection(HSteamNetConnection connection, const char* password)
 {
@@ -244,20 +323,27 @@ static bool authenticateConnection(HSteamNetConnection connection, const char* p
 	AuthResponsePacket response;
 	response.magic_marker = PacketMagic::RESP;
 	
-	// Verify password
-	if (strcmp(password, NetworkConstants::SERVER_PASSWORD) == 0)
+  // Verify password (empty server password => allow all)
+	std::string expected;
+	{
+		std::lock_guard<std::mutex> lock(g_server_password_mutex);
+		expected = g_server_password;
+	}
+
+	const char* provided = password ? password : "";
+	if (expected.empty() || strcmp(provided, expected.c_str()) == 0)
 	{
 		// Authentication successful
 		SetConsoleTextAttribute(GetStdHandle(STD_OUTPUT_HANDLE), CONSOLE_COLOR_GREEN);
 		std::cout << "Client " << connection << " authenticated successfully" << std::endl;
 		std::cout.flush();
 		SetConsoleTextAttribute(GetStdHandle(STD_OUTPUT_HANDLE), CONSOLE_DEFAULT);
-		
+
 		g_authenticated_connections[connection] = true;
 		response.is_authenticated = true;
 		response.attempts_remaining = 0;
 		strncpy_s(response.message, "Authentication successful", sizeof(response.message) - 1);
-		
+
 		// Send success response
 		SteamNetworkingSockets()->SendMessageToConnection(
 			connection,
@@ -266,10 +352,13 @@ static bool authenticateConnection(HSteamNetConnection connection, const char* p
 			k_nSteamNetworkingSend_Reliable,
 			nullptr
 		);
-		
+
+		// Send track and race data after successful authentication
+		SendTrackAndRaceData(connection);
+
 		return true;
 	}
-	
+
 	// Authentication failed
 	SetConsoleTextAttribute(GetStdHandle(STD_OUTPUT_HANDLE), CONSOLE_COLOR_RED);
 	std::cout << "Authentication failed for client " << connection 
@@ -292,17 +381,17 @@ static bool authenticateConnection(HSteamNetConnection connection, const char* p
 			k_nSteamNetworkingSend_Reliable,
 			nullptr
 		);
-		
+
 		// Give time to send before closing
 		std::this_thread::sleep_for(std::chrono::milliseconds(100));
 		SteamNetworkingSockets()->CloseConnection(connection, 0, "Max authentication attempts exceeded", false);
-		
+
 		std::cout << "Client " << connection << " disconnected - max attempts exceeded" << std::endl;
 	} else {
 		// Still has attempts remaining
 		snprintf(response.message, sizeof(response.message), 
-		         "Invalid password - %d attempts remaining", attempts_remaining);
-		
+				 "Invalid password - %d attempts remaining", attempts_remaining);
+
 		// Send response
 		SteamNetworkingSockets()->SendMessageToConnection(
 			connection,
@@ -312,137 +401,159 @@ static bool authenticateConnection(HSteamNetConnection connection, const char* p
 			nullptr
 		);
 	}
-	
+
 	return false;
 }
 
 // ============================================================================
-// ✅ MAP SYNCHRONIZATION - Send track data to requesting client
+// SEND TRACK AND RACE DATA TO CLIENT
+// Called after successful authentication
 // ============================================================================
-
-void sendMapDataToClient(HSteamNetConnection connection, 
-						 const std::vector<glm::vec2>& track_points,
-						 std::mutex& points_mutex)
+void SendTrackAndRaceData(HSteamNetConnection connection)
 {
-	// Guard clause: check if track is loaded
-	if (!g_is_map_loaded || track_points.empty()) {
-		std::cerr << "[SERVER] ❌ Cannot send map - not loaded yet!" << std::endl;
+	std::vector<SplinePoint> track_copy;
+	{
+		std::lock_guard<std::mutex> track_lock(g_track_mutex);
+		track_copy = g_smooth_track_points;
+	}
+
+	if (!g_is_map_loaded || track_copy.empty()) {
+		std::cout << "[SERVER] No track loaded - skipping track sync for client " << connection << std::endl;
 		return;
 	}
 
-	std::cout << "[SERVER] 📡 Sending map data to client (connection " 
-			  << connection << ")..." << std::endl;
+	std::cout << "[SERVER] Sending track data to client " << connection << "..." << std::endl;
 
-	uint32_t server_timestamp = static_cast<uint32_t>(
-		std::chrono::duration_cast<std::chrono::milliseconds>(
-			std::chrono::steady_clock::now().time_since_epoch()
-		).count()
-	);
+	// 1. Send track header
+	TrackDataHeader header;
+	header.magic_marker = PacketMagic::TRCK;
+	header.point_count = static_cast<uint32_t>(track_copy.size());
+	header.origin_lat = g_map_origin.m_origin_lat_dd;
+	header.origin_lon = g_map_origin.m_origin_lon_dd;
+	header.origin_easting = g_map_origin.m_origin_meters_easting;
+	header.origin_northing = g_map_origin.m_origin_meters_northing;
+	header.origin_zone = g_map_origin.m_origin_zone_int;
+	header.origin_zone_char = g_map_origin.m_origin_zone_char;
 
-	// ===== STEP 1: Send MapDataPacket with origin info =====
-	MapDataPacket map_header;
-	map_header.origin_lat_dd = g_map_origin.m_origin_lat_dd;
-	map_header.origin_lon_dd = g_map_origin.m_origin_lon_dd;
-	map_header.origin_meters_easting = g_map_origin.m_origin_meters_easting;
-	map_header.origin_meters_northing = g_map_origin.m_origin_meters_northing;
-	map_header.origin_zone_int = g_map_origin.m_origin_zone_int;
-	map_header.origin_zone_char = g_map_origin.m_origin_zone_char;
-	map_header.map_size = g_map_origin.m_map_size;
-	map_header.server_timestamp = server_timestamp;
-
-	std::vector<glm::vec2> points_copy;
+   // Start/finish line: best-effort.
+	// If you don't have an explicit start/finish line, use the first track segment.
+	if (track_copy.size() >= 2)
 	{
-		std::lock_guard<std::mutex> lock(points_mutex);
-		points_copy = track_points;  // Copy to avoid long lock
-		map_header.total_points = static_cast<uint32_t>(track_points.size());
+		header.start_finish_p1_x = track_copy[0].position.x;
+		header.start_finish_p1_y = track_copy[0].position.y;
+		header.start_finish_p2_x = track_copy[1].position.x;
+		header.start_finish_p2_y = track_copy[1].position.y;
+	}
+	else
+	{
+		header.start_finish_p1_x = 0.0f;
+		header.start_finish_p1_y = 0.0f;
+		header.start_finish_p2_x = 0.0f;
+		header.start_finish_p2_y = 0.0f;
 	}
 
-	const int MAX_POINTS = NetworkConstants::MAX_POINTS_PER_MAP_PACKET;
-	map_header.total_packets = (map_header.total_points + MAX_POINTS - 1) / MAX_POINTS;
-
 	EResult result = SteamNetworkingSockets()->SendMessageToConnection(
-		connection, &map_header, sizeof(map_header),
-		k_nSteamNetworkingSend_Reliable, nullptr
+		connection,
+		&header,
+		sizeof(header),
+		k_nSteamNetworkingSend_Reliable,
+		nullptr
 	);
 
 	if (result != k_EResultOK) {
-		std::cerr << "[SERVER] ❌ Failed to send MapDataPacket!" << std::endl;
+		std::cerr << "[SERVER] Failed to send track header to client " << connection << std::endl;
 		return;
 	}
 
-	std::cout << "[SERVER] ✅ MapDataPacket sent (origin + " 
-			  << map_header.total_points << " points in " 
-			  << map_header.total_packets << " packets)" << std::endl;
+	std::cout << "[SERVER] Track header sent: " << header.point_count << " points" << std::endl;
 
-	// ===== STEP 2: Send track points in chunks =====
-	for (uint32_t packet_idx = 0; packet_idx < map_header.total_packets; ++packet_idx)
+	// 2. Send track points in chunks
+	uint32_t total_points = static_cast<uint32_t>(track_copy.size());
+	uint32_t chunks_needed = (total_points + MAX_POINTS_PER_CHUNK - 1) / MAX_POINTS_PER_CHUNK;
+
+	for (uint32_t chunk_idx = 0; chunk_idx < chunks_needed; chunk_idx++)
 	{
-		MapPointsPacket points_packet;
-		points_packet.sequence_number = packet_idx;
-		points_packet.total_packets = map_header.total_packets;
-		points_packet.server_timestamp = server_timestamp;
+		TrackChunkPacket chunk;
+		chunk.magic_marker = PacketMagic::TCHU;
+		chunk.chunk_index = chunk_idx;
 
-		uint32_t start_idx = packet_idx * MAX_POINTS;
-		uint32_t end_idx = std::min(start_idx + MAX_POINTS, map_header.total_points);
-		points_packet.num_points = end_idx - start_idx;
+		uint32_t start_idx = chunk_idx * MAX_POINTS_PER_CHUNK;
+		uint32_t end_idx = std::min(start_idx + MAX_POINTS_PER_CHUNK, total_points);
+		chunk.points_in_chunk = end_idx - start_idx;
 
-		// Convert normalized coordinates back to GPS
-		for (uint32_t i = start_idx; i < end_idx; ++i)
+		// Copy points to chunk
+		for (uint32_t i = 0; i < chunk.points_in_chunk; i++)
 		{
-			uint32_t local_idx = i - start_idx;
-
-			// Reverse: normalized → meters → GPS
-			double meters_easting = g_map_origin.m_origin_meters_easting + 
-								   (points_copy[i].x * g_map_origin.m_map_size);
-			double meters_northing = g_map_origin.m_origin_meters_northing + 
-									(points_copy[i].y * g_map_origin.m_map_size);
-
-			try {
-				using namespace GeographicLib;
-				bool northp = (g_map_origin.m_origin_zone_char >= 'N');
-				UTMUPS::Reverse(g_map_origin.m_origin_zone_int, northp,
-							   meters_easting, meters_northing,
-							   points_packet.points[local_idx].lat_dd,
-							   points_packet.points[local_idx].lon_dd);
-			}
-			catch (const std::exception& e) {
-				std::cerr << "[SERVER] GPS conversion error: " << e.what() << std::endl;
-				points_packet.points[local_idx].lat_dd = 0;
-				points_packet.points[local_idx].lon_dd = 0;
-			}
+			const SplinePoint& sp = track_copy[start_idx + i];
+			chunk.points[i].x = sp.position.x;
+			chunk.points[i].y = sp.position.y;
+			chunk.points[i].tangent_x = sp.tangent.x;
+			chunk.points[i].tangent_y = sp.tangent.y;
 		}
 
-		// Send packet (reliable for map data)
-		EResult chunk_result = SteamNetworkingSockets()->SendMessageToConnection(
-			connection, &points_packet, sizeof(points_packet),
-			k_nSteamNetworkingSend_Reliable, nullptr
+		result = SteamNetworkingSockets()->SendMessageToConnection(
+			connection,
+			&chunk,
+			sizeof(chunk),
+			k_nSteamNetworkingSend_Reliable,
+			nullptr
 		);
 
-		if (chunk_result != k_EResultOK) {
-			std::cerr << "[SERVER] ❌ Failed to send MapPointsPacket #" 
-					  << packet_idx << "!" << std::endl;
-		} else {
-			std::cout << "[SERVER] 📦 MapPointsPacket " << (packet_idx + 1) 
-					  << "/" << map_header.total_packets << " sent (" 
-					  << points_packet.num_points << " points)" << std::endl;
+		if (result != k_EResultOK) {
+			std::cerr << "[SERVER] Failed to send track chunk " << chunk_idx << " to client " << connection << std::endl;
+			return;
+		}
+
+		// Small delay between chunks to avoid flooding
+		if (chunk_idx % 10 == 0) {
+			std::this_thread::sleep_for(std::chrono::milliseconds(10));
 		}
 	}
 
-	std::cout << "[SERVER] ✅ Map sync complete!" << std::endl;
+	std::cout << "[SERVER] All track chunks sent (" << chunks_needed << " chunks)" << std::endl;
+
+	// 3. Send race data
+	RaceDataPacket race_data;
+	race_data.magic_marker = PacketMagic::RACE;
+	race_data.has_start_finish_line = (g_race_manager != nullptr);
+
+	result = SteamNetworkingSockets()->SendMessageToConnection(
+		connection,
+		&race_data,
+		sizeof(race_data),
+		k_nSteamNetworkingSend_Reliable,
+		nullptr
+	);
+
+	if (result == k_EResultOK) {
+		std::cout << "[SERVER] Race data sent to client " << connection << std::endl;
+	} else {
+		std::cerr << "[SERVER] Failed to send race data to client " << connection << std::endl;
+	}
+
+	// 4. Send current processed vehicle states once so a newly connected client does
+	// not need to wait for the next simulation tick to see cars in the right place.
+	{
+		std::lock_guard<std::mutex> vehicle_lock(g_vehicles_mutex);
+		for (const auto& [vehicleId, vehicle] : g_vehicles)
+		{
+			VehicleStatePacket statePacket = MakeVehicleStatePacket(vehicle);
+			SteamNetworkingSockets()->SendMessageToConnection(
+				connection,
+				&statePacket,
+				sizeof(statePacket),
+				k_nSteamNetworkingSend_Reliable,
+				nullptr
+			);
+		}
+	}
+
+	SetConsoleTextAttribute(GetStdHandle(STD_OUTPUT_HANDLE), CONSOLE_COLOR_GREEN);
+	std::cout << "[SERVER] ✓ Client " << connection << " fully synchronized" << std::endl;
+	SetConsoleTextAttribute(GetStdHandle(STD_OUTPUT_HANDLE), CONSOLE_DEFAULT);
 }
 
-// ✅ Handle map request from client
-void handleMapRequest(HSteamNetConnection connection,
-					  const std::vector<glm::vec2>& track_points,
-					  std::mutex& points_mutex)
-{
-	std::cout << "[SERVER] 📨 Client " << connection 
-			  << " requested map data" << std::endl;
-
-	sendMapDataToClient(connection, track_points, points_mutex);
-}
-
-void FrameUpdate(const std::vector<glm::vec2>& track_points, std::mutex& points_mutex)
+void FrameUpdate()
 {
 	SteamNetworkingSockets()->RunCallbacks();
 
@@ -462,17 +573,6 @@ void FrameUpdate(const std::vector<glm::vec2>& track_points, std::mutex& points_
 			if (*magic == PacketMagic::AUTH && message->m_cbSize == sizeof(AuthPacket)) {
 				AuthPacket* auth_packet = (AuthPacket*)message->m_pData;
 				authenticateConnection(connection, auth_packet->password);
-				message->Release();
-				continue;
-			}
-
-			// ✅ MAP_REQUEST packet (only from authenticated clients)
-			if (*magic == PacketMagic::MAP_REQUEST && message->m_cbSize == sizeof(MapRequestPacket)) {
-				if (g_authenticated_connections[connection]) {
-					handleMapRequest(connection, track_points, points_mutex);
-				} else {
-					std::cout << "[SERVER] ❌ Rejected map request from unauthenticated client" << std::endl;
-				}
 				message->Release();
 				continue;
 			}
@@ -508,6 +608,11 @@ void RandomTelemetryData(TelemetryPacket& packet);
 bool isServerRunning()
 {
 	return g_is_server_running;
+}
+
+bool isServerListening()
+{
+	return g_hListenSocket != k_HSteamListenSocket_Invalid;
 }
 
 void ChangeisServerRunning()
@@ -558,8 +663,15 @@ int serverWork(const std::vector<glm::vec2>& track_points, std::mutex& points_mu
 	std::cout << "GNS initialized successfully." << std::endl;
 	ManagePort(true);
 	StartServer(NetworkConstants::DEFAULT_SERVER_PORT);
+	{
+		// Ensure WAN IP is populated even if mapping fails but IGD discovery succeeded.
+		std::lock_guard<std::mutex> lock(g_server_wanip_mutex);
+		if (!g_server_wan_ip.empty())
+			std::cout << "UPNP: WAN IP: " << g_server_wan_ip << std::endl;
+	}
 
 	std::cout << "[SERVER] Ready to broadcast telemetry from real/simulated vehicles" << std::endl;
+<<<<<<< HEAD
 	std::cout << "[SERVER] Telemetry will be sent via processIncomingTelemetry() -> BroadcastTelemetryToClients()" << std::endl;
 	std::cout << "[SERVER] Telemetry send rate: " << NetworkConstants::TELEMETRY_SEND_RATE_HZ << " Hz (every " 
 			  << NetworkConstants::TELEMETRY_SEND_INTERVAL_MS << "ms)" << std::endl;
@@ -568,6 +680,14 @@ int serverWork(const std::vector<glm::vec2>& track_points, std::mutex& points_mu
 	{
 		FrameUpdate(track_points, points_mutex);  // ✅ Pass track data for map sync
 		std::this_thread::sleep_for(std::chrono::milliseconds(NetworkConstants::TELEMETRY_SEND_INTERVAL_MS));
+=======
+	std::cout << "[SERVER] Raw telemetry remains available; simulation now broadcasts processed vehicle states" << std::endl;
+
+	while (!ServerNeedStop_b)
+	{
+		FrameUpdate();
+		std::this_thread::sleep_for(std::chrono::milliseconds(NetworkConstants::SERVER_POLL_INTERVAL_MS));
+>>>>>>> b01485e8e2140bcc72ca97bce3f77ab1df53064d
 	}
 
 	ManagePort(false);
@@ -611,40 +731,58 @@ void RandomTelemetryData(TelemetryPacket& packet)
 void ManagePort(bool open)
 {
 	int error = 0;
-	struct UPNPDev* devlist = upnpDiscover(2000, NULL, NULL, 0, 0, 2, &error);
-	struct UPNPUrls urls;
-	struct IGDdatas data;
-	char lanaddr[64];
-	char wanaddr[64];
-	int r = UPNP_AddPortMapping(NULL, NULL,
-		"777", "777", lanaddr, NULL, "UDP", NULL, "86400");
-	int status = UPNP_GetValidIGD(devlist, &urls, &data, lanaddr, sizeof(lanaddr), wanaddr, sizeof(wanaddr));
-
-	if (UPNP_GetValidIGD(devlist, &urls, &data, lanaddr, sizeof(lanaddr), wanaddr, sizeof(wanaddr)))
+  struct UPNPDev* devlist = upnpDiscover(2000, NULL, NULL, 0, 0, 2, &error);
+	if (!devlist)
 	{
-		if (open)
+		std::cout << "UPNP: No devices found (error=" << error << ")" << std::endl;
+		return;
+	}
+
+	struct UPNPUrls urls{};
+	struct IGDdatas data{};
+	char lanaddr[64] = { 0 };
+	char wanaddr[64] = { 0 };
+
+	int status = UPNP_GetValidIGD(devlist, &urls, &data, lanaddr, sizeof(lanaddr), wanaddr, sizeof(wanaddr));
+	if (status == 0)
+	{
+		std::cout << "UPNP: No valid IGD found" << std::endl;
+		freeUPNPDevlist(devlist);
+		return;
+	}
+
+	if (open)
+	{
+       int r = UPNP_AddPortMapping(
+			urls.controlURL,
+			data.first.servicetype,
+			"777",
+			"777",
+			lanaddr,
+			"MyTelemetryServer",
+			"UDP",
+			NULL,
+			"86400");
+
+		if (r != UPNPCOMMAND_SUCCESS)
 		{
-			UPNP_AddPortMapping(urls.controlURL, data.first.servicetype,
-				"777", "777", lanaddr, "MyTelemetryServer", "UDP", NULL, "86400");
-			
-			if (r != UPNPCOMMAND_SUCCESS)
-			{
-				std::cout << "AddPortMapping failed with code: " << r << " GetValidID status: " << status << std::endl;
-				std::cout << "LAN IP: " << lanaddr << std::endl;
-				std::cout << "WAN IP: " << wanaddr << std::endl;
-			}
-			else
-			{
-				std::cout << "UPNP: Port 777 opened automaticaly!" << std::endl;
-			}
+			std::cout << "UPNP: AddPortMapping failed with code: " << r << " status: " << status << std::endl;
+			std::cout << "UPNP: LAN IP: " << lanaddr << " WAN IP: " << wanaddr << std::endl;
 		}
 		else
 		{
-			UPNP_DeletePortMapping(urls.controlURL, data.first.servicetype, "777", "UDP", NULL);
-			std::cout << "UPNP: Port 777 closed." << std::endl;
+			std::cout << "UPNP: Port 777 opened automatically" << std::endl;
 		}
-		FreeUPNPUrls(&urls);
 	}
+   else
+	{
+		int r = UPNP_DeletePortMapping(urls.controlURL, data.first.servicetype, "777", "UDP", NULL);
+		if (r != UPNPCOMMAND_SUCCESS)
+			std::cout << "UPNP: DeletePortMapping failed with code: " << r << std::endl;
+		else
+			std::cout << "UPNP: Port 777 closed" << std::endl;
+	}
+	FreeUPNPUrls(&urls);
 	freeUPNPDevlist(devlist);
 }
 
@@ -661,6 +799,7 @@ void ChangeisServerRunning() {}
 void serverStop() {}
 void continueServerRunning() {}
 void BroadcastTelemetryToClients(const TelemetryPacket& packet) {} // ARM64 stub
+void BroadcastVehicleStateToClients(const VehicleStatePacket& packet) {} // ARM64 stub
 
 #endif // NETWORKING_ENABLED
 

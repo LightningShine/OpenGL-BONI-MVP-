@@ -1,4 +1,9 @@
 ﻿#pragma once
+#define NOMINMAX
+#define WIN32_LEAN_AND_MEAN
+#include <string>
+#include <regex>
+#include <locale>
 #include <iostream>
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
@@ -30,11 +35,14 @@
 #include "../network/Server.h"
 #include "../network/Client.h"
 #include "../network/ESP32_Code.h"
+#include "../network/SimulationServer.h"
 #include "../vehicle/Vehicle.h"
 #include "../racing/RaceManager.h"
 
 
 using namespace std;
+
+UI* g_ui = nullptr;
 
 
 struct AppContext {
@@ -49,6 +57,7 @@ struct AppContext {
 // ============================================================================
 // Smooth track points used for vehicle simulation (generated from raw track)
 std::vector<SplinePoint> g_smooth_track_points;
+std::mutex g_track_mutex;
 
 
 void framebuffer_size_callback(GLFWwindow* window, int width, int height)
@@ -65,44 +74,7 @@ const std::vector<glm::vec2>* track_points = nullptr, std::mutex* points_mutex =
 		glfwSetWindowShouldClose(window, true);
 
 #if NETWORKING_ENABLED
-	bool isServerKeyPressed = glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS && glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS;
-
-	if (isServerKeyPressed)
-	{
-		if (!isServerRunning())
-		{
-			continueServerRunning();
-			// ✅ Pass points (track_points) and mutex to server
-			thread ServerThread = thread(serverWork, std::ref(points), std::ref(points_mutex));
-			ServerThread.detach();
-			ChangeisServerRunning();
-		}
-		else
-		{
-			serverStop();
-			ChangeisServerRunning();
-		}
-
-	}
-
-
-	bool isClientKeyPressed = glfwGetKey(window, GLFW_KEY_C) == GLFW_PRESS && glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS;
-	if (isClientKeyPressed)
-	{
-		if (!isClientRunning())
-		{
-			continueClientRunning();
-			// ✅ Pass points (track_points) and mutex to client
-			thread ClientThread = thread(clientStart, std::ref(points), std::ref(points_mutex));
-			ClientThread.detach();
-			toggleClientRunning();
-		}
-		else
-		{
-			clientStop();
-			toggleClientRunning();
-		}
-	}
+	// Networking shortcuts are handled by UI so we can show connection/create modal.
 #endif
 	
 
@@ -121,18 +93,13 @@ const std::vector<glm::vec2>* track_points = nullptr, std::mutex* points_mutex =
 			static int next_vehicle_id = 1;
 			int vehicle_id = next_vehicle_id++;
 
-			// ✅ Create Vehicle with explicit ID at start position
-			const SplinePoint& start_point = (*smooth_track)[0];
-			Vehicle new_vehicle(vehicle_id, start_point.position.x, start_point.position.y);
-
-			{
-				std::lock_guard<std::mutex> lock(g_vehicles_mutex);
-				g_vehicles[vehicle_id] = new_vehicle;
-			}
-
 			std::cout << "[SIM] Starting vehicle #" << vehicle_id << " simulation on track" << std::endl;
 
-			// Start simulation - packets will UPDATE the vehicle (not recreate)
+			// ✅ DON'T create vehicle here! Let first telemetry packet create it.
+			// This avoids coordinate mismatch between normalized→GPS→normalized roundtrip.
+			// The simulation will send packets, and processIncomingTelemetry will create the vehicle.
+
+			// Start simulation - first packet will CREATE the vehicle
 			simulateVehicleMovement(vehicle_id, *smooth_track);
 		}
 	}
@@ -363,10 +330,12 @@ void drop_callback(GLFWwindow* window, int count, const char** paths)
 					if (center_info.is_closed) {
 						std::cout << "[TRACK] Track is CLOSED - recentering to (0, 0)" << std::endl;
 						recenterTrack(*context->points, center_info);
+						g_track_render_offset = center_info.offset;
 					
 						std::cout << "[TRACK] Origin updated to: (" << g_map_origin.m_origin_lat_dd << ", " << g_map_origin.m_origin_lon_dd << ")" << std::endl;
 					} else {
 						std::cout << "[TRACK] Track is OPEN - keeping original position" << std::endl;
+                       g_track_render_offset = glm::vec2(0.0f, 0.0f);
 					}
 				}
 				
@@ -712,6 +681,7 @@ int main()
 		glfwTerminate();
 		return -1;
 	}
+	g_ui = &ui;
 	
 	std::cout << "[MAIN] UI initialized successfully" << std::endl;
 
@@ -804,6 +774,7 @@ int main()
 	
 	std::thread vehicleThread(vehicleLoop);
 	vehicleThread.detach();
+
 	std::cout << "vehicleLoop thread started" << std::endl;
 	
 	// ========================== RACE MANAGER INITIALIZATION ==========================
@@ -877,7 +848,7 @@ int main()
 	std::cout << "Grid VAO/VBO created (VAO: " << grid_vao << ", VBO: " << grid_vbo << ")" << std::endl;
 
 	// ========================== RENDER LOOP ==========================
-	
+
 	// Delta time calculation for physics-accurate timing
 	auto lastFrameTime = std::chrono::steady_clock::now();
 
@@ -891,11 +862,30 @@ int main()
 			continue;
 		}
 
+		// ✅ Build track rendering cache if track was loaded from network
+		// This must be done in main thread because OpenGL context is not thread-safe
+		if (g_is_map_loaded && !TrackRenderer::isTrackCacheValid() && !g_smooth_track_points.empty())
+		{
+			std::cout << "[MAIN] Building track rendering cache in main thread..." << std::endl;
+
+			// Copy spline points under mutex (network thread can update them during track load)
+			std::vector<SplinePoint> track_copy;
+			{
+				std::lock_guard<std::mutex> track_lock(g_track_mutex);
+				track_copy = g_smooth_track_points;
+			}
+
+			// Build cache directly from received spline points to avoid client-side reprocessing
+			TrackRenderer::rebuildTrackCacheFromSplinePoints(track_copy);
+
+			std::cout << "[MAIN] ✓ Track rendering cache built - track should now be visible!" << std::endl;
+		}
+
 		// Calculate delta time
 		auto currentFrameTime = std::chrono::steady_clock::now();
 		float deltaTime = std::chrono::duration<float>(currentFrameTime - lastFrameTime).count();
 		lastFrameTime = currentFrameTime;
-		
+
 		// Update Race Manager (lap timing logic)
 		if (g_race_manager)
 		{
@@ -1086,6 +1076,10 @@ int main()
 	}
 	
 	ui.Shutdown();
+
+	// Stop serial capture + COM port discovery thread on app shutdown
+	stopRealDataCapture();
+	stopComPortAutoDiscovery();
 
 #if NETWORKING_ENABLED
 	serverStop();

@@ -34,4 +34,8 @@ struct TrackCenterInfo {
 TrackCenterInfo calculateTrackCenter(const std::vector<glm::vec2>& points);
 void recenterTrack(std::vector<glm::vec2>& points, const TrackCenterInfo& center_info);
 
-// Just comment to make snippet not empty
+// Track render offset (normalized units).
+// If track points are shifted (e.g. via recenterTrack), vehicles must be rendered with the same offset
+// to stay aligned with the track.
+extern glm::vec2 g_track_render_offset;
+glm::vec2 getTrackRenderOffset();

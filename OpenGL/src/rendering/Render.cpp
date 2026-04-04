@@ -372,6 +372,176 @@ namespace TrackRenderer
                   << ((s_cached_border_layer.size() + s_cached_asphalt_layer.size()) * sizeof(glm::vec2) / 1024)
                   << " KB" << std::endl;
     }
+
+    void rebuildTrackCacheFromSplinePoints(const std::vector<SplinePoint>& smoothPoints)
+    {
+        if (smoothPoints.size() <= 1)
+        {
+            s_cached_border_layer.clear();
+            s_cached_asphalt_layer.clear();
+            s_track_cache_valid = false;
+            g_is_map_loaded = false;
+
+            std::cout << "[CACHE] Track cache cleared (no spline points)" << std::endl;
+            return;
+        }
+
+        std::cout << "[CACHE] Rebuilding track cache from spline points (" << smoothPoints.size() << ")..." << std::endl;
+
+        // Keep server-provided geometry/tangents as-is (important for consistent progress + start/finish line)
+        g_smooth_track_points = smoothPoints;
+
+        // ========================================================================
+        // STEP 1: Initialize Start/Finish Line (ONCE per track load)
+        // ========================================================================
+        clearStartFinishLine();
+
+        s_start_line_shader = compileStartLineShader();
+        if (s_start_line_shader == 0)
+        {
+            std::cerr << "[START/FINISH] Failed to compile shader!" << std::endl;
+        }
+        else
+        {
+            const SplinePoint& firstPoint = smoothPoints[0];
+            glm::vec2 startPos(firstPoint.position.x, firstPoint.position.y);
+
+            glm::vec2 direction = glm::normalize(glm::vec2(firstPoint.tangent.x, firstPoint.tangent.y));
+            if (glm::length(direction) < 1e-6f)
+            {
+                direction = glm::vec2(1.0f, 0.0f);
+            }
+
+            glm::vec2 perpendicular(-direction.y, direction.x);
+
+            float lineWidth = TrackConstants::TRACK_ASPHALT_WIDTH * 1.0f;
+            float lineLength = lineWidth * (5.2f / 8.6f);
+
+            float vertices[] = {
+                startPos.x - perpendicular.x * lineWidth/2.0f - direction.x * lineLength/2.0f,
+                startPos.y - perpendicular.y * lineWidth/2.0f - direction.y * lineLength/2.0f,
+                0.0f, 0.0f,
+
+                startPos.x + perpendicular.x * lineWidth/2.0f - direction.x * lineLength/2.0f,
+                startPos.y + perpendicular.y * lineWidth/2.0f - direction.y * lineLength/2.0f,
+                1.0f, 0.0f,
+
+                startPos.x + perpendicular.x * lineWidth/2.0f + direction.x * lineLength/2.0f,
+                startPos.y + perpendicular.y * lineWidth/2.0f + direction.y * lineLength/2.0f,
+                1.0f, 1.0f,
+
+                startPos.x - perpendicular.x * lineWidth/2.0f + direction.x * lineLength/2.0f,
+                startPos.y - perpendicular.y * lineWidth/2.0f + direction.y * lineLength/2.0f,
+                0.0f, 1.0f
+            };
+
+            glGenVertexArrays(1, &s_start_line_vao);
+            glGenBuffers(1, &s_vbo_start_quad);
+
+            glBindVertexArray(s_start_line_vao);
+            glBindBuffer(GL_ARRAY_BUFFER, s_vbo_start_quad);
+            glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
+
+            glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)0);
+            glEnableVertexAttribArray(0);
+
+            glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)(2 * sizeof(float)));
+            glEnableVertexAttribArray(1);
+
+            glBindVertexArray(0);
+
+            s_start_line_initialized = true;
+
+            if (g_race_manager)
+            {
+                glm::vec2 lineP1 = startPos - perpendicular * (lineWidth / 2.0f);
+                glm::vec2 lineP2 = startPos + perpendicular * (lineWidth / 2.0f);
+                g_race_manager->SetStartFinishLine(lineP1, lineP2);
+            }
+
+            // Recreate debug gray line (same logic as rebuildTrackCache)
+            s_debug_line.clear();
+
+            float lineHeight = TrackConstants::TRACK_BORDER_WIDTH * 1.2f;
+            float lineThickness = 0.006f;
+
+            s_debug_line.push_back(glm::vec2(
+                startPos.x - perpendicular.x * lineHeight/2.0f - direction.x * lineThickness/2.0f,
+                startPos.y - perpendicular.y * lineHeight/2.0f - direction.y * lineThickness/2.0f
+            ));
+            s_debug_line.push_back(glm::vec2(
+                startPos.x + perpendicular.x * lineHeight/2.0f - direction.x * lineThickness/2.0f,
+                startPos.y + perpendicular.y * lineHeight/2.0f - direction.y * lineThickness/2.0f
+            ));
+            s_debug_line.push_back(glm::vec2(
+                startPos.x - perpendicular.x * lineHeight/2.0f + direction.x * lineThickness/2.0f,
+                startPos.y - perpendicular.y * lineHeight/2.0f + direction.y * lineThickness/2.0f
+            ));
+            s_debug_line.push_back(glm::vec2(
+                startPos.x + perpendicular.x * lineHeight/2.0f + direction.x * lineThickness/2.0f,
+                startPos.y + perpendicular.y * lineHeight/2.0f + direction.y * lineThickness/2.0f
+            ));
+
+            glm::vec2 bottomCenter = startPos - perpendicular * (lineHeight/2.0f);
+            for (int i = 0; i <= 8; ++i)
+            {
+                float angle = 3.14159f + (i / 8.0f) * 3.14159f;
+                glm::vec2 offset(std::cos(angle) * lineThickness/2.0f, std::sin(angle) * lineThickness/2.0f);
+                glm::vec2 rotated(
+                    offset.x * direction.x - offset.y * perpendicular.x,
+                    offset.x * direction.y - offset.y * perpendicular.y
+                );
+                s_debug_line.push_back(bottomCenter + rotated);
+            }
+
+            glm::vec2 topCenter = startPos + perpendicular * (lineHeight/2.0f);
+            for (int i = 0; i <= 8; ++i)
+            {
+                float angle = 0.0f + (i / 8.0f) * 3.14159f;
+                glm::vec2 offset(std::cos(angle) * lineThickness/2.0f, std::sin(angle) * lineThickness/2.0f);
+                glm::vec2 rotated(
+                    offset.x * direction.x - offset.y * perpendicular.x,
+                    offset.x * direction.y - offset.y * perpendicular.y
+                );
+                s_debug_line.push_back(topCenter + rotated);
+            }
+        }
+
+        // ========================================================================
+        // STEP 2: Generate triangle strips + upload to GPU
+        // ========================================================================
+        s_cached_border_layer = generateTriangleStripFromLine(smoothPoints, TrackConstants::TRACK_BORDER_WIDTH);
+        s_cached_asphalt_layer = generateTriangleStripFromLine(smoothPoints, TrackConstants::TRACK_ASPHALT_WIDTH);
+
+        if (s_track_vao == 0)
+        {
+            glGenVertexArrays(1, &s_track_vao);
+            glGenBuffers(1, &s_vbo_border);
+            glGenBuffers(1, &s_vbo_asphalt);
+            std::cout << "[CACHE]   Created OpenGL objects (VAO: " << s_track_vao
+                      << ", VBO border: " << s_vbo_border
+                      << ", VBO asphalt: " << s_vbo_asphalt << ")" << std::endl;
+        }
+
+        glBindBuffer(GL_ARRAY_BUFFER, s_vbo_border);
+        glBufferData(GL_ARRAY_BUFFER,
+                     s_cached_border_layer.size() * sizeof(glm::vec2),
+                     s_cached_border_layer.data(),
+                     GL_STATIC_DRAW);
+
+        glBindBuffer(GL_ARRAY_BUFFER, s_vbo_asphalt);
+        glBufferData(GL_ARRAY_BUFFER,
+                     s_cached_asphalt_layer.size() * sizeof(glm::vec2),
+                     s_cached_asphalt_layer.data(),
+                     GL_STATIC_DRAW);
+
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+
+        s_track_cache_valid = true;
+        g_is_map_loaded = true;
+
+        std::cout << "[CACHE] ✓ Track uploaded to GPU (STATIC buffers, spline source)" << std::endl;
+    }
     
     void renderCachedTrack(GLuint shader_program)
     {

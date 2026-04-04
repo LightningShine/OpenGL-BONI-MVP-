@@ -249,14 +249,23 @@ void coordinatesToMeters(double DDlat, double DDlon, double &MetrCord_est, doubl
 	try {
 		using namespace GeographicLib;
 
+      // Force origin zone only when it is valid.
+		// If origin zone is not initialized yet, let GeographicLib pick the zone.
+		const int setzone = g_map_origin.m_origin_zone_int;
 		int zone;
 		bool northp;
-
-		// Cordinate converter
-		UTMUPS::Forward(DDlat, DDlon, zone, northp, MetrCord_est, MetrCord_north);
+		if (setzone >= 1 && setzone <= 60)
+		{
+			UTMUPS::Forward(DDlat, DDlon, zone, northp, MetrCord_est, MetrCord_north, setzone);
+		}
+		else
+		{
+			UTMUPS::Forward(DDlat, DDlon, zone, northp, MetrCord_est, MetrCord_north);
+		}
 	}
 	catch (const std::exception& e) {
-		std::cerr << "GeographicLib Error: " << e.what() << std::endl;
+		std::cerr << "[COORD ERROR] GeographicLib: " << e.what() << std::endl;
+		std::cerr << "[COORD ERROR] Input: lat=" << DDlat << ", lon=" << DDlon << std::endl;
 		MetrCord_est = 0;
 		MetrCord_north = 0;
 	}
@@ -270,13 +279,14 @@ void getCoordinateDifferenceFromOrigin(double Metr_est, double Metr_north, doubl
 
 	normalized_x = (diff_easting / g_map_origin.m_map_size);
 	normalized_y = (diff_northing / g_map_origin.m_map_size);
-	
-	// Debug output (only for vehicles, not track points)
+
+	// Debug output for vehicles (skip track loading)
 	static int call_count = 0;
 	call_count++;
-	if (call_count > 100 && call_count < 105) { // Log only vehicles, not track loading
+	if (call_count % 120 == 0) { // Log every 120th call (every 2 seconds at 60Hz)
 		std::cout << "[COORD] UTM: (" << Metr_est << ", " << Metr_north << ")" << std::endl;
-		std::cout << "[COORD] Origin UTM: (" << g_map_origin.m_origin_meters_easting << ", " << g_map_origin.m_origin_meters_northing << ")" << std::endl;
+		std::cout << "[COORD] Origin UTM: (" << g_map_origin.m_origin_meters_easting 
+				  << ", " << g_map_origin.m_origin_meters_northing << ")" << std::endl;
 		std::cout << "[COORD] Diff: (" << diff_easting << ", " << diff_northing << ")" << std::endl;
 		std::cout << "[COORD] MAP_SIZE: " << g_map_origin.m_map_size << std::endl;
 		std::cout << "[COORD] Normalized: (" << normalized_x << ", " << normalized_y << ")" << std::endl;

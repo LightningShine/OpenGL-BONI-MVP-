@@ -92,12 +92,15 @@ public:
 	// ========================================================================
 	double m_prev_x = 0.0;
 	double m_prev_y = 0.0;
-	
+	double m_heading = 0.0;  // ✅ Current direction in radians
+
 	// ========================================================================
 	// TRACK PROGRESS (0.0 = start, 1.0 = full lap)
 	// ========================================================================
 	double m_track_progress = 0.0;
 	double m_prev_track_progress = 0.0;
+	bool m_has_authoritative_state = false;
+	bool m_apply_track_render_offset = true;
 	
 	// ========================================================================
 	// FUTURE: Detailed telemetry history

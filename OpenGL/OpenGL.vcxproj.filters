@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup>
     <Filter Include="src">
@@ -73,7 +73,7 @@
     <ClCompile Include="src\network\ESP32_Code.cpp">
       <Filter>src\network</Filter>
     </ClCompile>
-    <ClCompile Include="Client.cpp">
+    <ClCompile Include="src\network\SimulationServer.cpp">
       <Filter>src\network</Filter>
     </ClCompile>
     <ClCompile Include="UI.cpp">
@@ -85,9 +85,12 @@
     <ClCompile Include="src\rendering\Render.cpp" />
     <ClCompile Include="UI_Elements.cpp" />
     <ClCompile Include="src\racing\RaceManager.cpp" />
-    <ClCompile Include="TimeDiff.cpp" />
     <ClCompile Include="src\racing\TimeDiffirence\TimeDiff.cpp">
       <Filter>src\Racing\TimeDiff</Filter>
+    </ClCompile>
+    <ClCompile Include="Client.cpp" />
+    <ClCompile Include="src\vehicle\VehicleInterpolator.cpp">
+      <Filter>src\vehicle</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
@@ -107,6 +110,9 @@
     <ClInclude Include="src\network\ESP32_Code.h">
       <Filter>src\network</Filter>
     </ClInclude>
+    <ClInclude Include="src\network\SimulationServer.h">
+      <Filter>src\network</Filter>
+    </ClInclude>
     <ClInclude Include="src\network\Client.h">
       <Filter>src\network</Filter>
     </ClInclude>
@@ -122,10 +128,13 @@
     <ClInclude Include="src\ui\UI_Elements_Config.h" />
     <ClInclude Include="UI_Elements.h" />
     <ClInclude Include="src\racing\RaceManager.h" />
-    <ClInclude Include="TimeDiff.h" />
     <ClInclude Include="src\racing\TimeDiffirence\TimeDiff.h">
       <Filter>src\Racing\TimeDiff</Filter>
     </ClInclude>
+    <ClInclude Include="src\vehicle\VehicleInterpolator.h">
+      <Filter>src\vehicle</Filter>
+    </ClInclude>
+    <ClInclude Include="src\network\SimulationServer.h" />
   </ItemGroup>
   <ItemGroup>
     <Text Include="RESTRUCTURE_SUMMARY.txt" />

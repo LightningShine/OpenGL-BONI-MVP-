@@ -11,6 +11,10 @@ struct SplinePoint;
 namespace TrackRenderer
 {
     void rebuildTrackCache(const std::vector<glm::vec2>& points, std::mutex& points_mutex);
+
+    // Build GPU cache directly from already-smoothed spline points (e.g. received from server).
+    // Must be called from the main thread (OpenGL context thread).
+    void rebuildTrackCacheFromSplinePoints(const std::vector<SplinePoint>& smoothPoints);
     
     void renderCachedTrack(GLuint shader_program);
     

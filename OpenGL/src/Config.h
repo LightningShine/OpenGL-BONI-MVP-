@@ -2,7 +2,7 @@
 
 // Map and coordinate system constants
 namespace MapConstants {
-    static constexpr double MAP_SIZE = 100.0; // 100 meters = 1.0 in OpenGL coordinates
+    static constexpr double MAP_SIZE = 75.0; // 100 meters = 1.0 in OpenGL coordinates
     static constexpr float MAP_BOUND_X = 2.0f;
     static constexpr float MAP_BOUND_Y = 2.0f;
 }
@@ -13,8 +13,9 @@ namespace VehicleConstants {
     static constexpr float VEHICLE_OUTLINE_WIDTH = 0.005f;   // ✅ Толщина обводки (белая рамка)
     static constexpr float VEHICLE_OUTLINE_RADIUS = VEHICLE_BODY_RADIUS + VEHICLE_OUTLINE_WIDTH;  // Автоматический расчёт
     static constexpr int VEHICLE_CIRCLE_SEGMENTS = 20;
-    static constexpr int VEHICLE_TIMEOUT_MS = 300;         // 30 seconds
-    
+    static constexpr int VEHICLE_TIMEOUT_MS = 5000;         // 5 seconds (was 300ms - too short!)
+    static constexpr int AUTHORITATIVE_VEHICLE_TIMEOUT_MS = 750; // Remote processed-state vehicles disappear quickly after server stop
+
     // ✅ Цвет обводки (RGB)
     static constexpr float VEHICLE_OUTLINE_COLOR_R = 1.0f;
     static constexpr float VEHICLE_OUTLINE_COLOR_G = 1.0f;
@@ -41,7 +42,6 @@ namespace NetworkConstants {
     static constexpr const char* DEFAULT_LOCAL_SERVER_IP = "127.0.0.1";
     static constexpr const char* SERVER_PASSWORD = "mypassword123";  
     static constexpr int MAX_AUTH_ATTEMPTS = 10;
-
     // ✅ Network performance settings
     static constexpr int TELEMETRY_SEND_RATE_HZ = 60;  // 60 updates/sec (smooth)
     static constexpr int TELEMETRY_SEND_INTERVAL_MS = 1000 / TELEMETRY_SEND_RATE_HZ;
@@ -52,15 +52,23 @@ namespace NetworkConstants {
     static constexpr int CONNECTION_TIMEOUT_MS = 5000;     // 5 seconds no packets = disconnect
     static constexpr int MAX_MAP_RETRIES = 3;              // Retry map request 3 times
     static constexpr int MAX_POINTS_PER_MAP_PACKET = 80;   // Max GPS points per UDP packet
+
+    static constexpr int SERVER_POLL_INTERVAL_MS = 10;
+    static constexpr int CLIENT_POLL_INTERVAL_MS = 5;
+    static constexpr int AUTH_POLL_INTERVAL_MS = 10;
 }
 
 namespace PacketMagic {
     static constexpr uint32_t AUTH = 0x41555448;        // 'AUTH'
     static constexpr uint32_t RESP = 0x52455350;        // 'RESP'
     static constexpr uint32_t DATA = 0x44415441;        // 'DATA'
-    static constexpr uint32_t MAP_REQUEST = 0x4D415052; // 'MAPR' ✅ NEW
-    static constexpr uint32_t MAP_DATA = 0x4D415044;    // 'MAPD' ✅ NEW
-    static constexpr uint32_t MAP_POINTS = 0x4D415050;  // 'MAPP' ✅ NEW
+    static constexpr uint32_t MAP_REQUEST = 0x4D415052; // 'MAPR'
+    static constexpr uint32_t MAP_DATA = 0x4D415044;    // 'MAPD'
+    static constexpr uint32_t MAP_POINTS = 0x4D415050;  // 'MAPP'
+    static constexpr uint32_t TRCK = 0x5452434B;  // 'TRCK' - Track data header
+    static constexpr uint32_t TCHU = 0x54434855;  // 'TCHU' - Track chunk
+    static constexpr uint32_t RACE = 0x52414345;  // 'RACE' - Race data
+    static constexpr uint32_t VSTA = 0x56535441;  // 'VSTA' - processed vehicle state
 }
 
 // Track rendering constants
@@ -74,7 +82,7 @@ namespace TrackConstants {
 // Vehicle simulation constants
 namespace SimulationConstants {
     static constexpr float DEFAULT_DURATION_SECONDS = 60.0f;
-    static constexpr float UPDATE_RATE_HZ = 30.0f;
+    static constexpr float UPDATE_RATE_HZ = 60.0f;
     static constexpr float UPDATE_INTERVAL_MS = 1000.0f / UPDATE_RATE_HZ;
     static constexpr double METERS_PER_DEGREE_LAT = 111320.0;
     static constexpr double MIN_SPEED_KPH = 50.0;
