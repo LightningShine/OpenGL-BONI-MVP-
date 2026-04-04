@@ -65,6 +65,7 @@ void RaceManager::Update(float deltaTime)
 
     for (auto& [vehicleID, vehicle] : g_vehicles)
     {
+        constexpr bool kDebugFinishCrossing = true;
         // ====================================================================
         // TELEMETRY RECORDING (every frame during active lap)
         // Records vehicle state for TimeDiff calculations.
@@ -115,22 +116,53 @@ void RaceManager::Update(float deltaTime)
             continue;
         }
         
-        // Check for finish line crossing
+        // Check for start/finish crossing.
+        // Use strict segment intersection for correctness. Progress-cycle fallback below
+        // handles low-rate updates on closed tracks.
+        const glm::vec2 prevPos(vehicle.m_prev_x, vehicle.m_prev_y);
+        const glm::vec2 curPos(vehicle.m_normalized_x, vehicle.m_normalized_y);
+
+        const glm::vec2 sfP1 = m_startFinishP1;
+        const glm::vec2 sfP2 = m_startFinishP2;
+
         float intersectionRatio = 0.0f;
-        bool crossed = CheckLineSegmentIntersection(
-            glm::vec2(vehicle.m_prev_x, vehicle.m_prev_y),
-            glm::vec2(vehicle.m_normalized_x, vehicle.m_normalized_y),
-            m_startFinishP1, m_startFinishP2,
-            intersectionRatio
-        );
+        const bool crossed = CheckLineSegmentIntersection(prevPos, curPos, sfP1, sfP2, intersectionRatio);
         
         // Check for progress cycle (0.999 -> 0.001)
-        bool progressCycled = (vehicle.m_prev_track_progress > 0.85 && 
-                               vehicle.m_track_progress < 0.15);
+        // Use this only for real GNSS telemetry (jitter/low-rate updates). Simulation and
+        // other non-GNSS sources should rely on strict line intersection to avoid false laps.
+        const bool isNonGnssSource = (vehicle.m_fix_type < 2);
+        bool progressCycled = false;
+        if (!isNonGnssSource)
+        {
+            progressCycled = (vehicle.m_prev_track_progress > 0.85 &&
+                              vehicle.m_track_progress < 0.15);
+        }
         
         // ====================================================================
         // LAP COMPLETION DETECTION
         // ====================================================================
+        if (kDebugFinishCrossing && (crossed || progressCycled))
+        {
+            const glm::vec2 off = getTrackRenderOffset();
+            std::cout.setf(std::ios::fixed);
+            std::cout << "[S/F DEBUG] veh#" << vehicleID
+                      << " fixType=" << vehicle.m_fix_type
+                      << " started=" << (vehicle.m_has_started_first_lap ? 1 : 0)
+                      << " crossed=" << (crossed ? 1 : 0)
+                      << " progCycle=" << (progressCycled ? 1 : 0)
+                      << " ratio=" << std::setprecision(3) << intersectionRatio
+                      << " prevPos=(" << std::setprecision(6) << prevPos.x << "," << prevPos.y << ")"
+                      << " curPos=(" << curPos.x << "," << curPos.y << ")"
+                      << " sfP1=(" << sfP1.x << "," << sfP1.y << ")"
+                      << " sfP2=(" << sfP2.x << "," << sfP2.y << ")"
+                      << " off=(" << off.x << "," << off.y << ")"
+                      << " prevProg=" << std::setprecision(3) << vehicle.m_prev_track_progress
+                      << " curProg=" << vehicle.m_track_progress
+                      << " lapT=" << vehicle.m_current_lap_timer
+                      << std::endl;
+        }
+
         if (vehicle.m_has_started_first_lap && (crossed || progressCycled))
         {
             // Sub-frame accurate timing
@@ -174,6 +206,24 @@ void RaceManager::Update(float deltaTime)
             
             if (timeSinceCreation > 0.5f)
             {
+                if (kDebugFinishCrossing)
+                {
+                    const glm::vec2 off = getTrackRenderOffset();
+                    std::cout.setf(std::ios::fixed);
+                    std::cout << "[S/F DEBUG] START veh#" << vehicleID
+                              << " fixType=" << vehicle.m_fix_type
+                              << " ratio=" << std::setprecision(3) << intersectionRatio
+                              << " prevPos=(" << std::setprecision(6) << prevPos.x << "," << prevPos.y << ")"
+                              << " curPos=(" << curPos.x << "," << curPos.y << ")"
+                              << " sfP1=(" << sfP1.x << "," << sfP1.y << ")"
+                              << " sfP2=(" << sfP2.x << "," << sfP2.y << ")"
+                              << " off=(" << off.x << "," << off.y << ")"
+                              << " prevProg=" << std::setprecision(3) << vehicle.m_prev_track_progress
+                              << " curProg=" << vehicle.m_track_progress
+                              << " lapT=" << vehicle.m_current_lap_timer
+                              << std::endl;
+                }
+
                 vehicle.m_has_started_first_lap = true;
                 vehicle.m_current_lap_timer = deltaTime * (1.0f - intersectionRatio);
                 vehicle.m_prev_track_progress = vehicle.m_track_progress;
@@ -229,6 +279,7 @@ void RaceManager::Update(float deltaTime)
     
     if (!standings.empty())
     {
+        constexpr bool kLogLeaderChanges = false;
         static int32_t previousLeader = -1;
         int32_t currentLeader = standings[0].vehicleID;
         
@@ -246,7 +297,7 @@ void RaceManager::Update(float deltaTime)
         }
         
         // Debug: print leader change
-        if (currentLeader != previousLeader && previousLeader != -1)
+        if (kLogLeaderChanges && currentLeader != previousLeader && previousLeader != -1)
         {
             std::cout << "\n[LEADER CHANGE] New leader: Vehicle #" << currentLeader 
                       << " | Laps: " << standings[0].completedLaps 

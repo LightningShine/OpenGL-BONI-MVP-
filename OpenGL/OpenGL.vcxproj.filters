@@ -92,6 +92,8 @@
     <ClCompile Include="src\vehicle\VehicleInterpolator.cpp">
       <Filter>src\vehicle</Filter>
     </ClCompile>
+    <ClCompile Include="src\track\TrackRecorder.cpp" />
+    <ClCompile Include="src\track\TelemetryTrackBuilder.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\input\Input.h">
@@ -135,6 +137,8 @@
       <Filter>src\vehicle</Filter>
     </ClInclude>
     <ClInclude Include="src\network\SimulationServer.h" />
+    <ClInclude Include="src\track\TrackRecorder.h" />
+    <ClInclude Include="src\track\TelemetryTrackBuilder.h" />
   </ItemGroup>
   <ItemGroup>
     <Text Include="RESTRUCTURE_SUMMARY.txt" />

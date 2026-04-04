@@ -36,6 +36,7 @@
 #include "../network/Client.h"
 #include "../network/ESP32_Code.h"
 #include "../network/SimulationServer.h"
+#include "../track/TrackRecorder.h"
 #include "../vehicle/Vehicle.h"
 #include "../racing/RaceManager.h"
 
@@ -90,22 +91,117 @@ const std::vector<glm::vec2>* track_points = nullptr, std::mutex* points_mutex =
 			std::cout << "Cannot create vehicle - track not interpolated!" << std::endl;
 		} else {
 			// Generate unique ID for simulation
-			static int next_vehicle_id = 1;
-			int vehicle_id = next_vehicle_id++;
+         int vehicle_id = -1;
+			{
+				std::lock_guard<std::mutex> lock(g_vehicles_mutex);
+				for (int id = 1; id <= 99; ++id)
+				{
+					if (g_vehicles.find(id) == g_vehicles.end())
+					{
+						vehicle_id = id;
+						break;
+					}
+				}
+			}
+			if (vehicle_id == -1)
+			{
+				std::cout << "[SIM] Cannot start simulation - no free race IDs (1-99)" << std::endl;
+			}
+			else
+			{
 
-			std::cout << "[SIM] Starting vehicle #" << vehicle_id << " simulation on track" << std::endl;
+               std::cout << "[SIM] Starting vehicle #" << vehicle_id << " simulation on track" << std::endl;
 
 			// ✅ DON'T create vehicle here! Let first telemetry packet create it.
 			// This avoids coordinate mismatch between normalized→GPS→normalized roundtrip.
 			// The simulation will send packets, and processIncomingTelemetry will create the vehicle.
 
-			// Start simulation - first packet will CREATE the vehicle
-			simulateVehicleMovement(vehicle_id, *smooth_track);
+              // Start simulation - first packet will CREATE the vehicle
+				simulateVehicleMovement(vehicle_id, *smooth_track);
+			}
 		}
 	}
 	if (glfwGetKey(window, GLFW_KEY_T) == GLFW_RELEASE)
 	{
 		wasTPressed = false;
+	}
+
+	// Y key: test track recording without hardware by generating a circle of telemetry packets.
+	static bool wasYPressed = false;
+	if (glfwGetKey(window, GLFW_KEY_Y) == GLFW_PRESS && !wasYPressed)
+	{
+		wasYPressed = true;
+
+		if (!g_is_map_loaded)
+		{
+			std::cout << "[TRACK-REC] Cannot test record: map origin not loaded (load a map/track first)." << std::endl;
+		}
+		else
+		{
+			constexpr int32_t kTestProtoId = 4242;
+			constexpr int32_t kTestVehicleId = 1; // Recorder will be started for this race id; mapping uses proto id.
+
+			TrackRecorder::Settings s;
+			s.minPointDistanceNorm = 0.002f;
+			s.closeRadiusNorm = 0.01f;
+			s.minPointsToClose = 200;
+			s.minLoopLengthMeters = 100.0f;
+			s.pointsPerSegment = 6;
+			TrackRecorder::Start(kTestVehicleId, s);
+			std::cout << "[TRACK-REC] Test recording started (press Y again when done is not needed; auto closes)." << std::endl;
+
+			// Generate telemetry: a circle around origin in UTM meters then convert to lat/lon.
+			std::thread([=]() {
+				using namespace GeographicLib;
+				const bool northp = (g_map_origin.m_origin_zone_char >= 'N');
+				const double baseE = g_map_origin.m_origin_meters_easting;
+				const double baseN = g_map_origin.m_origin_meters_northing;
+				const int zone = g_map_origin.m_origin_zone_int;
+
+				TelemetryPacket packet{};
+				packet.MagicMarker = PACKET_MAGIC_DATA;
+				packet.ID = kTestProtoId;
+				packet.fixtype = 4;
+				packet.speed = 6000; // 60.00 km/h
+				packet.acceleration = 0;
+				packet.gForceX = 0;
+				packet.gForceY = 0;
+
+				const int steps = 1200;
+				const double radiusMeters = 80.0;
+				uint32_t t = 0;
+				for (int i = 0; i < steps; ++i)
+				{
+					const double a = (static_cast<double>(i) / static_cast<double>(steps)) * (SimulationConstants::TWO_PI);
+					const double e = baseE + std::cos(a) * radiusMeters;
+					const double n = baseN + std::sin(a) * radiusMeters;
+					double lat = 0.0;
+					double lon = 0.0;
+					UTMUPS::Reverse(zone, northp, e, n, lat, lon);
+					packet.lat = static_cast<int32_t>(lat * 1e7);
+					packet.lon = static_cast<int32_t>(lon * 1e7);
+					packet.time = t;
+					processIncomingTelemetry(packet);
+					t += 16;
+					std::this_thread::sleep_for(std::chrono::milliseconds(1));
+				}
+
+				// Try finalize and save.
+				if (TrackRecorder::FinalizeNow())
+				{
+					std::cout << "[TRACK-REC] Finalized. Saving to track_recorded.bin" << std::endl;
+					TrackRecorder::SaveToFile("track_recorded.bin", g_map_origin);
+				}
+				else
+				{
+					std::cout << "[TRACK-REC] Not finalized (did not close loop)." << std::endl;
+				}
+			}).detach();
+		}
+	}
+	if (glfwGetKey(window, GLFW_KEY_Y) == GLFW_RELEASE)
+	{
+		wasYPressed = false;
 	}
 
 

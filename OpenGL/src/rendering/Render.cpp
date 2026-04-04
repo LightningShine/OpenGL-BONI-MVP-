@@ -49,11 +49,11 @@ namespace TrackRenderer
         #version 460 core
         layout (location = 0) in vec2 aPos;
         layout (location = 1) in vec2 aTexCoord;
-        
+
         uniform mat4 projection;
-        
+
         out vec2 vUV;
-        
+
         void main()
         {
             gl_Position = projection * vec4(aPos, 0.0, 1.0);
@@ -137,6 +137,71 @@ namespace TrackRenderer
     
     // Forward declaration of clearStartFinishLine (called in rebuildTrackCache)
     void clearStartFinishLine();
+
+    void rebuildTrackPreviewCache(const std::vector<glm::vec2>& points, std::mutex& points_mutex)
+    {
+        std::lock_guard<std::mutex> lock(points_mutex);
+        if (points.size() <= 1)
+        {
+            s_cached_border_layer.clear();
+            s_cached_asphalt_layer.clear();
+            s_track_cache_valid = false;
+            clearStartFinishLine();
+            return;
+        }
+
+        // Preview: no filtering/simplification/smoothing to avoid artifacts for open polylines.
+        std::vector<SplinePoint> spline;
+        spline.reserve(points.size());
+        for (size_t i = 0; i < points.size(); ++i)
+        {
+            SplinePoint sp;
+            sp.position = points[i];
+            if (i + 1 < points.size())
+            {
+                glm::vec2 d = points[i + 1] - points[i];
+                if (glm::length(d) > 1e-6f)
+                    sp.tangent = glm::normalize(d);
+                else
+                    sp.tangent = glm::vec2(1, 0);
+            }
+            else
+            {
+                sp.tangent = (i > 0) ? spline.back().tangent : glm::vec2(1, 0);
+            }
+            spline.push_back(sp);
+        }
+
+        clearStartFinishLine();
+        s_start_line_initialized = false;
+
+        s_cached_border_layer = generateTriangleStripFromLine(spline, TrackConstants::TRACK_BORDER_WIDTH);
+        s_cached_asphalt_layer = generateTriangleStripFromLine(spline, TrackConstants::TRACK_ASPHALT_WIDTH);
+
+        // Upload preview geometry to GPU (dynamic buffers)
+        if (s_track_vao == 0)
+        {
+            glGenVertexArrays(1, &s_track_vao);
+            glGenBuffers(1, &s_vbo_border);
+            glGenBuffers(1, &s_vbo_asphalt);
+        }
+
+        glBindBuffer(GL_ARRAY_BUFFER, s_vbo_border);
+        glBufferData(GL_ARRAY_BUFFER,
+            s_cached_border_layer.size() * sizeof(glm::vec2),
+            s_cached_border_layer.data(),
+            GL_DYNAMIC_DRAW);
+
+        glBindBuffer(GL_ARRAY_BUFFER, s_vbo_asphalt);
+        glBufferData(GL_ARRAY_BUFFER,
+            s_cached_asphalt_layer.size() * sizeof(glm::vec2),
+            s_cached_asphalt_layer.data(),
+            GL_DYNAMIC_DRAW);
+
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+
+        s_track_cache_valid = true;
+    }
     
     // ============================================================================
     // PUBLIC FUNCTIONS
@@ -152,7 +217,6 @@ namespace TrackRenderer
             s_cached_border_layer.clear();
             s_cached_asphalt_layer.clear();
             s_track_cache_valid = false;
-            g_is_map_loaded = false;
             
             std::cout << "[CACHE] Track cache cleared (no points)" << std::endl;
             return;
@@ -262,7 +326,9 @@ namespace TrackRenderer
             {
                 glm::vec2 lineP1 = startPos - perpendicular * (lineWidth / 2.0f);
                 glm::vec2 lineP2 = startPos + perpendicular * (lineWidth / 2.0f);
-                g_race_manager->SetStartFinishLine(lineP1, lineP2);
+                 // Keep RaceManager start/finish line in the same coordinate space as Vehicle positions.
+                 // In this project, vehicles are updated in the same (recentered) normalized space as the track.
+                 g_race_manager->SetStartFinishLine(lineP1, lineP2);
             }
             
             // ========================================================================

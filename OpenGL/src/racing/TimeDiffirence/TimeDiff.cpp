@@ -10,7 +10,7 @@
 // ============================================================================
 // DEBUG: Uncomment to enable detailed time diff logging
 // ============================================================================
-#define DEBUG_TIME_DIFF
+//#define DEBUG_TIME_DIFF
 
 // Prevent Windows.h min/max macros from interfering
 #undef max
