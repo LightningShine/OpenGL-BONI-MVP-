@@ -922,6 +922,7 @@ void UI::BeginFrame()
     if (!m_showSplash && TelemetryTrackBuilder::ConsumeAutoSaveRequest())
     {
         char saveFile[260] = { 0 };
+        strncpy_s(saveFile, "track_recorded.txt", _TRUNCATE);
         OPENFILENAMEA ofn = {};
         ofn.lStructSize = sizeof(ofn);
         ofn.hwndOwner = glfwGetWin32Window(m_window);
@@ -929,15 +930,34 @@ void UI::BeginFrame()
         ofn.nMaxFile = sizeof(saveFile);
         ofn.lpstrFilter = "Track TXT\0*.txt\0All Files\0*.*\0";
         ofn.nFilterIndex = 1;
-        ofn.Flags = OFN_PATHMUSTEXIST | OFN_OVERWRITEPROMPT | OFN_NOCHANGEDIR;
+        ofn.Flags = OFN_OVERWRITEPROMPT | OFN_NOCHANGEDIR;
 
-        std::string initialDir = "src/saves";
+        // Default to a user-visible folder (VS working directory can differ).
+        std::string initialDir;
+        {
+            char* userProfile = nullptr;
+            size_t len = 0;
+            if (_dupenv_s(&userProfile, &len, "USERPROFILE") == 0 && userProfile)
+            {
+                initialDir = std::string(userProfile) + "\\Pictures\\TXT";
+                free(userProfile);
+            }
+            if (initialDir.empty())
+                initialDir = ".";
+        }
         ofn.lpstrInitialDir = initialDir.c_str();
 
         std::string chosen;
         if (GetSaveFileNameA(&ofn))
         {
             chosen = ofn.lpstrFile;
+        }
+        else
+        {
+            // If user cancels, do not save.
+            std::cout << "[UI] Save cancelled by user." << std::endl;
+            TelemetryTrackBuilder::Stop(true);
+            return;
         }
 
         // If user cancels, save to default name so we don't lose the created track.
@@ -951,8 +971,8 @@ void UI::BeginFrame()
             std::cout << "[UI] Track saved." << std::endl;
         }
 
-        // After auto-finish flow, switch mode OFF in UI.
-        TelemetryTrackBuilder::Stop();
+        // After auto-finish flow, switch mode OFF in UI but keep points for final rendering.
+        TelemetryTrackBuilder::Stop(true);
     }
 
     // Keyboard shortcuts for networking modal
@@ -966,6 +986,7 @@ void UI::BeginFrame()
         {
             // Offer Save As dialog so user can name the track.
             char saveFile[260] = { 0 };
+            strncpy_s(saveFile, "track_recorded.txt", _TRUNCATE);
             OPENFILENAMEA ofn = {};
             ofn.lStructSize = sizeof(ofn);
             ofn.hwndOwner = glfwGetWin32Window(m_window);
@@ -973,9 +994,21 @@ void UI::BeginFrame()
             ofn.nMaxFile = sizeof(saveFile);
             ofn.lpstrFilter = "Track TXT\0*.txt\0All Files\0*.*\0";
             ofn.nFilterIndex = 1;
-            ofn.Flags = OFN_PATHMUSTEXIST | OFN_OVERWRITEPROMPT | OFN_NOCHANGEDIR;
+            ofn.Flags = OFN_OVERWRITEPROMPT | OFN_NOCHANGEDIR;
 
-            std::string initialDir = "src/saves";
+            // Default to a user-visible folder (VS working directory can differ).
+            std::string initialDir;
+            {
+                char* userProfile = nullptr;
+                size_t len = 0;
+                if (_dupenv_s(&userProfile, &len, "USERPROFILE") == 0 && userProfile)
+                {
+                    initialDir = std::string(userProfile) + "\\Pictures\\TXT";
+                    free(userProfile);
+                }
+                if (initialDir.empty())
+                    initialDir = ".";
+            }
             ofn.lpstrInitialDir = initialDir.c_str();
 
             std::string chosen;
@@ -996,7 +1029,7 @@ void UI::BeginFrame()
             }
 
             // Manual finish => turn mode OFF.
-            TelemetryTrackBuilder::Stop();
+            TelemetryTrackBuilder::Stop(true);
         }
 
         if (io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_C))

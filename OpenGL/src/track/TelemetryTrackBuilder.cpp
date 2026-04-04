@@ -120,17 +120,42 @@ namespace
 		}
 
 		try { fs::create_directories(outPath.parent_path()); }
-		catch (...) {}
+      catch (...) {}
 
-		std::ofstream f(outPath.string());
+      std::error_code absEc;
+		const fs::path absPath = fs::absolute(outPath, absEc);
+
+		errno = 0;
+		std::ofstream f(outPath, std::ios::out | std::ios::binary);
 		if (!f)
+		{
+			const int e = errno;
+			std::cerr << "[TRACK-BUILD] Failed to open track file for write: "
+				<< (absEc ? outPath.string() : absPath.string())
+				<< " (errno=" << e << ")" << std::endl;
 			return false;
+		}
 
-		// Save as decimal degrees (lat lon). Parser accepts digits/dots/minus and extracts 6 numbers; 
-		// but it also works with two decimals because it will read first two numbers and set others to 0.
-		// To make parsing robust, write as: lat_deg 0 0 lon_deg 0 0
+     auto ddToDms = [](double dd, int& deg, int& min, double& sec)
+		{
+			const double sign = (dd < 0.0) ? -1.0 : 1.0;
+			double a = std::abs(dd);
+			deg = static_cast<int>(std::floor(a));
+			double m = (a - static_cast<double>(deg)) * 60.0;
+			min = static_cast<int>(std::floor(m));
+			sec = (m - static_cast<double>(min)) * 60.0;
+			deg = static_cast<int>(static_cast<double>(deg) * sign);
+		};
+
+		// Save as DMS numeric format expected by `coordinatesToDecimalFormat()`:
+		// lat_deg lat_min lat_sec lon_deg lon_min lon_sec
 		f.setf(std::ios::fixed);
 		f << std::setprecision(7);
+     if (!g_points.empty())
+		{
+			// Store the original normalized start so loader can keep start/finish placement stable.
+			f << "#start_norm " << g_points.front().x << ' ' << g_points.front().y << "\n";
+		}
 		for (const glm::vec2& p : g_points)
 		{
 			double utmE = g_map_origin.m_origin_meters_easting + (static_cast<double>(p.x) * MapConstants::MAP_SIZE);
@@ -145,10 +170,15 @@ namespace
 			catch (...) {
 				continue;
 			}
-			f << lat << " 0 0 " << lon << " 0 0\n";
+         int latDeg = 0, latMin = 0, lonDeg = 0, lonMin = 0;
+			double latSec = 0.0, lonSec = 0.0;
+			ddToDms(lat, latDeg, latMin, latSec);
+			ddToDms(lon, lonDeg, lonMin, lonSec);
+			f << latDeg << ' ' << latMin << ' ' << latSec << ' ' << lonDeg << ' ' << lonMin << ' ' << lonSec << "\n";
 		}
 
-		std::cout << "[TRACK-BUILD] Saved track to: " << outPath.string() << std::endl;
+     std::cout << "[TRACK-BUILD] Saved track to: "
+			<< (absEc ? outPath.string() : absPath.string()) << std::endl;
 		return true;
 	}
 
@@ -211,14 +241,22 @@ namespace TelemetryTrackBuilder
 
 	void Stop()
 	{
+      Stop(false);
+	}
+
+	void Stop(bool keepPoints)
+	{
 		std::lock_guard<std::mutex> lock(g_mutex);
 		g_active = false;
-        g_finalized = true; // Reset finalized flag to OFF after loop closure
+		g_finalized = false;
 		g_origin_initialized = false;
-       g_auto_save_requested = false;
-		g_points.clear();
-		g_smooth.clear();
-		g_len_m = 0.0f;
+		g_auto_save_requested = false;
+		if (!keepPoints)
+		{
+			g_points.clear();
+			g_smooth.clear();
+			g_len_m = 0.0f;
+		}
 	}
 
 	bool IsActive()

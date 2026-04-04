@@ -227,13 +227,13 @@ namespace TrackRenderer
         // ========================================================================
         // STEP 1: Filter noise (??????? ????? ??????? ??????? ??????)
         // ========================================================================
-        std::vector<glm::vec2> filteredPoints = filterPointsByDistance(points, 0.05f);
+        std::vector<glm::vec2> filteredPoints = filterPointsByDistance(points, 0.01f);
         std::cout << "[CACHE]   Step 1: Filtered to " << filteredPoints.size() << " points" << std::endl;
         
         // ========================================================================
         // STEP 2: Simplify path (??????? ??????????? ?? ?????? ????????)
         // ========================================================================
-        std::vector<glm::vec2> simplifiedPoints = simplifyPath(filteredPoints, 0.02f);
+        std::vector<glm::vec2> simplifiedPoints = simplifyPath(filteredPoints, 0.005f);
         std::cout << "[CACHE]   Step 2: Simplified to " << simplifiedPoints.size() << " points" << std::endl;
         
         // ========================================================================

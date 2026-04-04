@@ -141,6 +141,8 @@ void loadTrackFromData(const std::string& data, std::vector<glm::vec2>& points, 
 	std::stringstream ss(data);
 	std::string line;
 	bool firstPoint = true;
+	bool hasSavedStart = false;
+	glm::vec2 savedStartNorm(0.0f, 0.0f);
 
 	{
 		std::lock_guard<std::mutex> lock(points_mutex);
@@ -150,6 +152,14 @@ void loadTrackFromData(const std::string& data, std::vector<glm::vec2>& points, 
 	while (std::getline(ss, line))
 	{
 		if (line.empty()) continue;
+		if (line.rfind("#start_norm", 0) == 0)
+		{
+			std::stringstream hs(line);
+			std::string tag;
+			hs >> tag >> savedStartNorm.x >> savedStartNorm.y;
+			hasSavedStart = !hs.fail();
+			continue;
+		}
 		
 		// Simple check if line contains digits
 		bool hasDigit = false;
@@ -180,6 +190,30 @@ void loadTrackFromData(const std::string& data, std::vector<glm::vec2>& points, 
 		}
 	}
 	std::cout << "Track loaded with " << points.size() << " points." << std::endl;
+
+	// If the file contains a saved start marker, rotate points so start/finish stays stable.
+	if (hasSavedStart)
+	{
+		size_t bestIdx = 0;
+		float bestDistSq = std::numeric_limits<float>::max();
+		{
+			std::lock_guard<std::mutex> lock(points_mutex);
+			for (size_t i = 0; i < points.size(); ++i)
+			{
+				const glm::vec2 d = points[i] - savedStartNorm;
+				const float dsq = d.x * d.x + d.y * d.y;
+				if (dsq < bestDistSq)
+				{
+					bestDistSq = dsq;
+					bestIdx = i;
+				}
+			}
+			if (bestIdx != 0 && bestIdx < points.size())
+			{
+				std::rotate(points.begin(), points.begin() + bestIdx, points.end());
+			}
+		}
+	}
 	
 	// ✅ Устанавливаем флаг что карта загружена
 	g_is_map_loaded = true;
