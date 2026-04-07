@@ -862,8 +862,8 @@ bool UI::Initialize(GLFWwindow* window)
     }
 
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
-    io.MouseDrawCursor = true; // ImGui will draw the program cursor
-    
+    io.MouseDrawCursor = false; // Disable ImGui software cursor to prevent visual trailing
+
     LoadResources();
     
     // Initialize UI Elements
@@ -932,19 +932,8 @@ void UI::BeginFrame()
         ofn.nFilterIndex = 1;
         ofn.Flags = OFN_OVERWRITEPROMPT | OFN_NOCHANGEDIR;
 
-        // Default to a user-visible folder (VS working directory can differ).
-        std::string initialDir;
-        {
-            char* userProfile = nullptr;
-            size_t len = 0;
-            if (_dupenv_s(&userProfile, &len, "USERPROFILE") == 0 && userProfile)
-            {
-                initialDir = std::string(userProfile) + "\\Pictures\\TXT";
-                free(userProfile);
-            }
-            if (initialDir.empty())
-                initialDir = ".";
-        }
+        // Default to the saves directory used by LoadRecentFiles.
+        std::string initialDir = "src/saves";
         ofn.lpstrInitialDir = initialDir.c_str();
 
         std::string chosen;
@@ -981,6 +970,97 @@ void UI::BeginFrame()
     ImGuiIO& io = ImGui::GetIO();
     if (!m_showSplash && !io.WantTextInput)
     {
+        // Add zoom logic support via AppContext logic
+        if (ImGui::IsKeyPressed(ImGuiKey_Equal) || ImGui::IsKeyPressed(ImGuiKey_KeypadAdd))
+        {
+            float* appZoom = nullptr;
+            // glfw user pointer to app context
+            void* raw_context = glfwGetWindowUserPointer(m_window);
+            if (raw_context)
+            {
+                // AppContext matches struct layout exactly
+                struct AppContextLayout { float* zoom; };
+                AppContextLayout* ctx = static_cast<AppContextLayout*>(raw_context);
+                if (ctx && ctx->zoom) *ctx->zoom *= 1.1f;
+            }
+        }
+
+        if (ImGui::IsKeyPressed(ImGuiKey_Minus) || ImGui::IsKeyPressed(ImGuiKey_KeypadSubtract))
+        {
+            float* appZoom = nullptr;
+            void* raw_context = glfwGetWindowUserPointer(m_window);
+            if (raw_context)
+            {
+                struct AppContextLayout { float* zoom; };
+                AppContextLayout* ctx = static_cast<AppContextLayout*>(raw_context);
+                if (ctx && ctx->zoom) *ctx->zoom *= 0.9f;
+            }
+        }
+
+        if (ImGui::IsKeyPressed(ImGuiKey_Home))
+        {
+            void* raw_context = glfwGetWindowUserPointer(m_window);
+            if (raw_context)
+            {
+                struct AppContextLayout { float* zoom; };
+                AppContextLayout* ctx = static_cast<AppContextLayout*>(raw_context);
+                if (ctx && ctx->zoom) *ctx->zoom = 1.0f; // Reset zoom to default
+            }
+        }
+
+        // Open file dialog hotkey
+        if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_O))
+        {
+            OPENFILENAMEA ofn = {};
+            char szFile[260] = {0};
+
+            ofn.lStructSize = sizeof(ofn);
+            ofn.hwndOwner = glfwGetWin32Window(m_window);
+            ofn.lpstrFile = szFile;
+            ofn.nMaxFile = sizeof(szFile);
+            ofn.lpstrFilter = "All Files\0*.*\0";
+            ofn.nFilterIndex = 1;
+            ofn.lpstrFileTitle = NULL;
+            ofn.nMaxFileTitle = 0;
+
+            std::string savesPath = "src/saves";
+            ofn.lpstrInitialDir = savesPath.c_str();
+
+            ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
+
+            if (GetOpenFileNameA(&ofn))
+            {
+                if (m_points && m_pointsMutex)
+                {
+                    std::ifstream file(ofn.lpstrFile);
+                    if (file.is_open())
+                    {
+                        std::stringstream buffer;
+                        buffer << file.rdbuf();
+                        file.close();
+
+                        void loadTrackFromData(const std::string&, std::vector<glm::vec2>&, std::mutex&);
+                        loadTrackFromData(buffer.str(), *m_points, *m_pointsMutex);
+
+                        TrackCenterInfo calculateTrackCenter(const std::vector<glm::vec2>& points);
+                        void recenterTrack(std::vector<glm::vec2>& points, const TrackCenterInfo& center_info);
+
+                        std::lock_guard<std::mutex> lock(*m_pointsMutex);
+                        TrackCenterInfo center_info = calculateTrackCenter(*m_points);
+                        if (center_info.is_closed)
+                            recenterTrack(*m_points, center_info);
+                    }
+                }
+            }
+        }
+
+        // Save Results hotkey
+        if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_P))
+        {
+            std::cout << "[UI] Ctrl+P pressed. Save Results action triggered." << std::endl;
+            // Place your save results logic here
+        }
+
         // Track creation hotkey: Space finalizes an OPEN track (manual finish).
         if (TelemetryTrackBuilder::IsActive() && ImGui::IsKeyPressed(ImGuiKey_Space))
         {
@@ -996,19 +1076,8 @@ void UI::BeginFrame()
             ofn.nFilterIndex = 1;
             ofn.Flags = OFN_OVERWRITEPROMPT | OFN_NOCHANGEDIR;
 
-            // Default to a user-visible folder (VS working directory can differ).
-            std::string initialDir;
-            {
-                char* userProfile = nullptr;
-                size_t len = 0;
-                if (_dupenv_s(&userProfile, &len, "USERPROFILE") == 0 && userProfile)
-                {
-                    initialDir = std::string(userProfile) + "\\Pictures\\TXT";
-                    free(userProfile);
-                }
-                if (initialDir.empty())
-                    initialDir = ".";
-            }
+            // Default to the saves directory used by LoadRecentFiles.
+            std::string initialDir = "src/saves";
             ofn.lpstrInitialDir = initialDir.c_str();
 
             std::string chosen;
@@ -1649,8 +1718,6 @@ void UI::RenderTopMenu()
         // File menu
         if (ImGui::BeginMenu("File"))
         {
-            if (ImGui::MenuItem("New", "Ctrl+N", false, false)) {}
-            
             if (ImGui::MenuItem("Open...", "Ctrl+O"))
             {
                 // Open native Windows file dialog in Saves folder
@@ -1669,9 +1736,9 @@ void UI::RenderTopMenu()
                 ofn.nMaxFileTitle = 0;
                 
                 // Set initial directory to Saves folder
-                std::string savesPath = "Saves";
+                std::string savesPath = "src/saves";
                 ofn.lpstrInitialDir = savesPath.c_str();
-                
+
                 ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
                 
                 if (GetOpenFileNameA(&ofn))
@@ -1697,10 +1764,38 @@ void UI::RenderTopMenu()
                                 {
                                     std::cout << "[TRACK] Track is CLOSED - recentering to (0, 0)" << std::endl;
                                     recenterTrack(*m_points, center_info);
-                                    
-                                    g_map_origin.m_origin_lat_dd += center_info.offset.y * (MapConstants::MAP_SIZE / 100000.0);
-                                    g_map_origin.m_origin_lon_dd += center_info.offset.x * (MapConstants::MAP_SIZE / 100000.0);
-                                    std::cout << "[TRACK] Origin updated to: (" << g_map_origin.m_origin_lat_dd << ", " << g_map_origin.m_origin_lon_dd << ")" << std::endl;
+
+                                    // Keep map origin consistent with the recentered track.
+                                    // Track points are in normalized units; converting to meters requires MAP_SIZE.
+                                    // Update UTM origin in meters, then recompute lat/lon accurately.
+                                    {
+                                        const double dx_m = static_cast<double>(center_info.offset.x) * static_cast<double>(MapConstants::MAP_SIZE);
+                                        const double dy_m = static_cast<double>(center_info.offset.y) * static_cast<double>(MapConstants::MAP_SIZE);
+
+                                        g_map_origin.m_origin_meters_easting += dx_m;
+                                        g_map_origin.m_origin_meters_northing += dy_m;
+
+                                        try {
+                                            using namespace GeographicLib;
+                                            const bool northp = (g_map_origin.m_origin_zone_char >= 'N');
+                                            UTMUPS::Reverse(
+                                                g_map_origin.m_origin_zone_int,
+                                                northp,
+                                                g_map_origin.m_origin_meters_easting,
+                                                g_map_origin.m_origin_meters_northing,
+                                                g_map_origin.m_origin_lat_dd,
+                                                g_map_origin.m_origin_lon_dd);
+                                        }
+                                        catch (const std::exception& e) {
+                                            std::cerr << "[TRACK] Failed to update origin GPS from UTM: " << e.what() << std::endl;
+                                        }
+
+                                        std::cout << "[TRACK] Origin updated:" << std::endl;
+                                        std::cout << "  UTM: easting=" << g_map_origin.m_origin_meters_easting
+                                                  << ", northing=" << g_map_origin.m_origin_meters_northing << std::endl;
+                                        std::cout << "  GPS: lat=" << g_map_origin.m_origin_lat_dd
+                                                  << ", lon=" << g_map_origin.m_origin_lon_dd << std::endl;
+                                    }
                                 }
                                 else
                                 {
@@ -1720,14 +1815,94 @@ void UI::RenderTopMenu()
                     }
                 }
             }
-            
-            if (ImGui::MenuItem("Save", "Ctrl+S", false, false)) {}
-            if (ImGui::MenuItem("Save As...", "Shift+Ctrl+S", false, false)) {}
+
             ImGui::Separator();
-            if (ImGui::MenuItem("Exit", "Alt+F4", false, false)) {}
+
+            {
+                const bool active = TelemetryTrackBuilder::IsActive();
+                const char* label = active ? "Track Creation Mode: ON" : "Track Creation Mode: OFF";
+                if (ImGui::MenuItem(label))
+                {
+                    if (!active)
+                    {
+                        TelemetryTrackBuilder::Settings s;
+                        TelemetryTrackBuilder::Start(s);
+                        std::cout << "[UI] Telemetry track creation mode enabled. Waiting for prototype telemetry..." << std::endl;
+                    }
+                    else
+                    {
+                        TelemetryTrackBuilder::Stop();
+                        std::cout << "[UI] Telemetry track creation mode disabled." << std::endl;
+                    }
+                }
+            }
+            if (ImGui::MenuItem("Simulate Prototype Lap (Test)", nullptr, false, TelemetryTrackBuilder::IsActive()))
+            {
+                std::thread([hwnd = glfwGetWin32Window(m_window)]() {
+                    TelemetryPacket p{};
+                    p.MagicMarker = PACKET_MAGIC_DATA;
+                    p.ID = 4242;
+                    p.fixtype = 4;
+                    p.speed = 6000;
+                    p.acceleration = 0;
+                    p.gForceX = 0;
+                    p.gForceY = 0;
+
+                    const double baseLat = 37.4219999;
+                    const double baseLon = -122.0840575;
+
+                    double e0 = 0.0, n0 = 0.0;
+                    int zone = 0;
+                    bool northp = true;
+                    GeographicLib::UTMUPS::Forward(baseLat, baseLon, zone, northp, e0, n0);
+
+                    const int steps = 1500;
+                    const double radiusMeters = 90.0;
+                    uint32_t t = 0;
+
+                    for (int i = 0; i <= steps; ++i)
+                    {
+                        const double a = (static_cast<double>(i) / static_cast<double>(steps)) * (SimulationConstants::TWO_PI);
+                        const double e = e0 + std::cos(a) * radiusMeters;
+                        const double n = n0 + std::sin(a) * radiusMeters;
+                        double lat = 0.0, lon = 0.0;
+                        GeographicLib::UTMUPS::Reverse(zone, northp, e, n, lat, lon);
+                        p.lat = static_cast<int32_t>(lat * 1e7);
+                        p.lon = static_cast<int32_t>(lon * 1e7);
+                        p.time = t;
+                        processIncomingTelemetry(p);
+                        t += 16;
+                        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                    }
+
+                    for (int i = 0; i < 10; ++i)
+                    {
+                        const double a = 0.0;
+                        const double e = e0 + std::cos(a) * radiusMeters;
+                        const double n = n0 + std::sin(a) * radiusMeters;
+                        double lat = 0.0, lon = 0.0;
+                        GeographicLib::UTMUPS::Reverse(zone, northp, e, n, lat, lon);
+                        p.lat = static_cast<int32_t>(lat * 1e7);
+                        p.lon = static_cast<int32_t>(lon * 1e7);
+                        p.time = t;
+                        processIncomingTelemetry(p);
+                        t += 16;
+                        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                    }
+                }).detach();
+            }
+            ImGui::Separator();
+
+            if (ImGui::MenuItem("Save Results", "Ctrl+P", false, true)) {
+                std::cout << "[UI] Menu: Save Results triggered." << std::endl;
+            }
+            ImGui::Separator();
+            if (ImGui::MenuItem("Exit", "Alt+F4", false, true)) {
+                glfwSetWindowShouldClose(m_window, true);
+            }
             ImGui::EndMenu();
         }
-        
+
         if (ImGui::BeginMenu("Settings"))
         {
             if (ImGui::MenuItem("Preferences", nullptr, false, false)) {}
@@ -1772,94 +1947,31 @@ void UI::RenderTopMenu()
         
         if (ImGui::BeginMenu("View"))
         {
-            if (ImGui::MenuItem("Zoom In", "+", false, false)) {}
-            if (ImGui::MenuItem("Zoom Out", "-", false, false)) {}
-            if (ImGui::MenuItem("Reset View", "Home", false, false)) {}
-            ImGui::Separator();
-            {
-                const bool active = TelemetryTrackBuilder::IsActive();
-                const char* label = active ? "Track Creation Mode: ON" : "Track Creation Mode: OFF";
-                if (ImGui::MenuItem(label))
-                {
-                    if (!active)
-                    {
-                        TelemetryTrackBuilder::Settings s;
-                        TelemetryTrackBuilder::Start(s);
-                        std::cout << "[UI] Telemetry track creation mode enabled. Waiting for prototype telemetry..." << std::endl;
-                    }
-                    else
-                    {
-                        TelemetryTrackBuilder::Stop();
-                        std::cout << "[UI] Telemetry track creation mode disabled." << std::endl;
-                    }
+            if (ImGui::MenuItem("Zoom In", "+", false, true)) {
+                void* raw_context = glfwGetWindowUserPointer(m_window);
+                if (raw_context) {
+                    struct AppContextLayout { float* zoom; };
+                    AppContextLayout* ctx = static_cast<AppContextLayout*>(raw_context);
+                    if (ctx && ctx->zoom) *ctx->zoom *= 1.1f;
                 }
             }
-         if (ImGui::MenuItem("Simulate Prototype Lap (Test)", nullptr, false, TelemetryTrackBuilder::IsActive()))
-            {
-                // Feed synthetic TelemetryPacket stream into unified telemetry pipeline.
-                // This exercises: origin auto-detect, on-the-fly track build, auto-close, recenter, and save.
-                std::thread([hwnd = glfwGetWin32Window(m_window)]() {
-                    TelemetryPacket p{};
-                    p.MagicMarker = PACKET_MAGIC_DATA;
-                    p.ID = 4242;
-                    p.fixtype = 4;
-                    p.speed = 6000;
-                    p.acceleration = 0;
-                    p.gForceX = 0;
-                    p.gForceY = 0;
-
-                    // Fixed origin for simulation. MapOrigin will be created automatically by TelemetryTrackBuilder
-                    // on the first packet, so we must ensure the first packet is already on the circle.
-                    const double baseLat = 37.4219999;
-                    const double baseLon = -122.0840575;
-
-                    // Use UTM around that origin.
-                    double e0 = 0.0, n0 = 0.0;
-                    int zone = 0;
-                    bool northp = true;
-                    GeographicLib::UTMUPS::Forward(baseLat, baseLon, zone, northp, e0, n0);
-
-                    const int steps = 1500;
-                    const double radiusMeters = 90.0;
-                    uint32_t t = 0;
-
-                    // Start exactly on the circle at angle=0 so the first sampled point is part of the loop.
-                    for (int i = 0; i <= steps; ++i)
-                    {
-                        const double a = (static_cast<double>(i) / static_cast<double>(steps)) * (SimulationConstants::TWO_PI);
-                        const double e = e0 + std::cos(a) * radiusMeters;
-                        const double n = n0 + std::sin(a) * radiusMeters;
-                        double lat = 0.0;
-                        double lon = 0.0;
-                        GeographicLib::UTMUPS::Reverse(zone, northp, e, n, lat, lon);
-                        p.lat = static_cast<int32_t>(lat * 1e7);
-                        p.lon = static_cast<int32_t>(lon * 1e7);
-                        p.time = t;
-                        processIncomingTelemetry(p);
-                        t += 16;
-                        std::this_thread::sleep_for(std::chrono::milliseconds(1));
-                    }
-
-                    // Add a few extra samples at the start position to guarantee close-radius detection.
-                    for (int i = 0; i < 10; ++i)
-                    {
-                        const double a = 0.0;
-                        const double e = e0 + std::cos(a) * radiusMeters;
-                        const double n = n0 + std::sin(a) * radiusMeters;
-                        double lat = 0.0;
-                        double lon = 0.0;
-                        GeographicLib::UTMUPS::Reverse(zone, northp, e, n, lat, lon);
-                        p.lat = static_cast<int32_t>(lat * 1e7);
-                        p.lon = static_cast<int32_t>(lon * 1e7);
-                        p.time = t;
-                        processIncomingTelemetry(p);
-                        t += 16;
-                        std::this_thread::sleep_for(std::chrono::milliseconds(1));
-                    }
-
-                    // If auto-close didn't happen (settings), let user finish with Space.
-                }).detach();
+            if (ImGui::MenuItem("Zoom Out", "-", false, true)) {
+                void* raw_context = glfwGetWindowUserPointer(m_window);
+                if (raw_context) {
+                    struct AppContextLayout { float* zoom; };
+                    AppContextLayout* ctx = static_cast<AppContextLayout*>(raw_context);
+                    if (ctx && ctx->zoom) *ctx->zoom *= 0.9f;
+                }
             }
+            if (ImGui::MenuItem("Reset View", "Home", false, true)) {
+                void* raw_context = glfwGetWindowUserPointer(m_window);
+                if (raw_context) {
+                    struct AppContextLayout { float* zoom; };
+                    AppContextLayout* ctx = static_cast<AppContextLayout*>(raw_context);
+                    if (ctx && ctx->zoom) *ctx->zoom = 1.0f;
+                }
+            }
+            ImGui::Separator();
            ImGui::MenuItem("Prototype panel", nullptr, &m_allowPrototypeToast);
             if (ImGui::MenuItem("Toggle Fullscreen", "F11", false, false)) {}
             ImGui::EndMenu();
@@ -2137,20 +2249,35 @@ void UI::RenderHelpModal()
         ImGui::TextColored(ImVec4(0.5f, 0.8f, 1.0f, 1.0f), "Application:");
         ImGui::Separator();
         ImGui::Spacing();
-        
+
         ImGui::Columns(2, nullptr, false);
         ImGui::SetColumnWidth(0, 250);
-        
+
         ImGui::Text("ESC");
         ImGui::NextColumn();
         ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Close application");
         ImGui::NextColumn();
-        
+
         ImGui::Text("F11");
         ImGui::NextColumn();
         ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Toggle fullscreen");
         ImGui::NextColumn();
-        
+
+        ImGui::Text("Ctrl + O");
+        ImGui::NextColumn();
+        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Open track file");
+        ImGui::NextColumn();
+
+        ImGui::Text("+ / -");
+        ImGui::NextColumn();
+        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Zoom in / Zoom out");
+        ImGui::NextColumn();
+
+        ImGui::Text("Home");
+        ImGui::NextColumn();
+        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Reset View");
+        ImGui::NextColumn();
+
         ImGui::Columns(1);
         ImGui::Spacing();
         ImGui::Spacing();

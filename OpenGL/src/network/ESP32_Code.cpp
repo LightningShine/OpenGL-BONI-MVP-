@@ -8,6 +8,14 @@
 #include <vector>
 #include <algorithm>
 #include <cstdlib>
+#include <limits>
+#include <GeographicLib/UTMUPS.hpp>
+
+// External globals from core/vehicle/track systems
+extern std::atomic<bool> g_is_map_loaded;
+extern std::vector<SplinePoint> g_smooth_track_points;
+extern std::mutex g_track_mutex;
+extern MapOrigin g_map_origin;
 
 #if defined(_WIN32)
 #include <windows.h>
@@ -23,6 +31,10 @@ static std::atomic<bool> g_capture_running{ false };
 static std::atomic<bool> g_capture_stop_requested{ false };
 static std::thread g_capture_thread;
 static std::mutex g_serial_mutex;
+
+static std::mutex g_last_packet_mutex;
+static TelemetryPacket g_last_packet{};
+static std::atomic<bool> g_has_last_packet{ false };
 
 static std::atomic<bool> g_discovery_running{ false };
 static std::atomic<bool> g_discovery_stop_requested{ false };
@@ -41,10 +53,85 @@ static void closeSerialNoThrow()
     catch (...) {}
 }
 
+bool calibrateOriginToStartFinish()
+{
+    if (!g_is_map_loaded)
+        return false;
+
+    TelemetryPacket packet{};
+    {
+        if (!g_has_last_packet.load(std::memory_order_relaxed))
+            return false;
+        std::lock_guard<std::mutex> lock(g_last_packet_mutex);
+        packet = g_last_packet;
+    }
+
+    glm::vec2 startPoint(0.0f, 0.0f);
+    {
+        std::lock_guard<std::mutex> lock(g_track_mutex);
+        if (g_smooth_track_points.empty())
+            return false;
+        startPoint = g_smooth_track_points.front().position;
+    }
+
+    // Current telemetry position in UTM meters
+    const double lat_deg = static_cast<double>(packet.lat) / 1e7;
+    const double lon_deg = static_cast<double>(packet.lon) / 1e7;
+    double easting = 0.0;
+    double northing = 0.0;
+    coordinatesToMeters(lat_deg, lon_deg, easting, northing);
+
+    // Calculate current normalized position BEFORE calibration (for diagnostics)
+    double nx_before = 0.0;
+    double ny_before = 0.0;
+    getCoordinateDifferenceFromOrigin(easting, northing, nx_before, ny_before);
+
+    // Set origin so that this telemetry point maps to the track start point:
+    // start = (UTM_current - origin) / MAP_SIZE  => origin = UTM_current - start*MAP_SIZE
+    g_map_origin.m_origin_meters_easting = easting - static_cast<double>(startPoint.x) * MapConstants::MAP_SIZE;
+    g_map_origin.m_origin_meters_northing = northing - static_cast<double>(startPoint.y) * MapConstants::MAP_SIZE;
+
+    try {
+        using namespace GeographicLib;
+        const bool northp = (g_map_origin.m_origin_zone_char >= 'N');
+        UTMUPS::Reverse(
+            g_map_origin.m_origin_zone_int,
+            northp,
+            g_map_origin.m_origin_meters_easting,
+            g_map_origin.m_origin_meters_northing,
+            g_map_origin.m_origin_lat_dd,
+            g_map_origin.m_origin_lon_dd);
+    }
+    catch (...) {}
+
+    std::cout << "[ORIGIN] Calibrated to Start/Finish using latest telemetry packet." << std::endl;
+    std::cout << "[ORIGIN]   Start point norm=(" << startPoint.x << "," << startPoint.y << ")" << std::endl;
+    std::cout << "[ORIGIN]   Telemetry norm BEFORE=(" << nx_before << "," << ny_before << ")" << std::endl;
+    std::cout << "[ORIGIN]   New origin UTM: easting=" << g_map_origin.m_origin_meters_easting
+              << " northing=" << g_map_origin.m_origin_meters_northing << std::endl;
+
+    // Calculate normalized position AFTER calibration (should match startPoint)
+    double nx_after = 0.0;
+    double ny_after = 0.0;
+    getCoordinateDifferenceFromOrigin(easting, northing, nx_after, ny_after);
+    std::cout << "[ORIGIN]   Telemetry norm AFTER =(" << nx_after << "," << ny_after << ")" << std::endl;
+
+    return true;
+}
+
 bool openCOMPort(const std::string& port_name)
 {
     std::lock_guard<std::mutex> lock(g_serial_mutex);
-    int result = serial.openDevice(port_name.c_str(), 115200);
+
+    // On Windows, COM ports must be opened as "\\\\.\\COMx" for COM10+.
+    // Using the prefix is safe for COM1..COM9 too.
+    std::string device = port_name;
+#if defined(_WIN32)
+    if (device.rfind("\\\\.\\\\", 0) != 0)
+        device = "\\\\.\\\\" + device;
+#endif
+
+    int result = serial.openDevice(device.c_str(), 921600);
 
     if (result == 1) {
         std::cout << "Successfully opened " << port_name << std::endl;
@@ -52,11 +139,35 @@ bool openCOMPort(const std::string& port_name)
         return true;
     }
 
+    // serialib Windows error codes:
+    // -1 device not found
+    // -2 error while opening the device
+    // -3 error while getting port parameters
+    // -5 error while writing port parameters
+    // -6 error while writing timeout parameters
     switch (result) {
-    case -1: std::cerr << "Error: Device not found: " << port_name << std::endl; break;
-    case -2: std::cerr << "Error: Error while setting port parameters." << std::endl; break;
-    case -3: std::cerr << "Error: Another program is already using this port!" << std::endl; break;
-    default: std::cerr << "Error: Unknown error opening port." << std::endl; break;
+    case -1:
+        std::cerr << "Error: Device not found: " << port_name << std::endl;
+        break;
+    case -2:
+        std::cerr << "Error: Error while opening the device";
+#if defined(_WIN32)
+        std::cerr << " (GetLastError=" << GetLastError() << ")";
+#endif
+        std::cerr << std::endl;
+        break;
+    case -3:
+        std::cerr << "Error: Error while getting port parameters" << std::endl;
+        break;
+    case -5:
+        std::cerr << "Error: Error while writing port parameters" << std::endl;
+        break;
+    case -6:
+        std::cerr << "Error: Error while writing timeout parameters" << std::endl;
+        break;
+    default:
+        std::cerr << "Error: Unknown error opening port (code=" << result << ")" << std::endl;
+        break;
     }
     return false;
 }
@@ -208,7 +319,7 @@ static void realDataThreadWorker(const std::string& com_port)
       const auto now = std::chrono::steady_clock::now();
         // Read stream byte-by-byte and scan for magic marker.
         uint8_t byte = 0;
-        if (serial.readBytes(&byte, 1) <= 0)
+        if (serial.readBytes(&byte, 1, 100) <= 0)
         {
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
@@ -247,7 +358,7 @@ static void realDataThreadWorker(const std::string& com_port)
                 size_t totalRead = 0;
                 while (totalRead < payloadSize && !g_capture_stop_requested.load())
                 {
-                    const int r = serial.readBytes(reinterpret_cast<char*>(dst + totalRead), static_cast<int>(payloadSize - totalRead));
+                    const int r = serial.readBytes(reinterpret_cast<char*>(dst + totalRead), static_cast<int>(payloadSize - totalRead), 100);
                     if (r > 0)
                         totalRead += static_cast<size_t>(r);
                     else
@@ -259,6 +370,13 @@ static void realDataThreadWorker(const std::string& com_port)
                     telemetry_packets_ok++;
                    last_packet = packet;
                     has_last_packet = true;
+
+                    {
+                        std::lock_guard<std::mutex> lock(g_last_packet_mutex);
+                        g_last_packet = packet;
+                        g_has_last_packet.store(true, std::memory_order_relaxed);
+                    }
+
                     processIncomingTelemetry(packet);
                 }
                 else
