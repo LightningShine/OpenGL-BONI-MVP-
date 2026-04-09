@@ -35,6 +35,7 @@ extern std::vector<SplinePoint> g_smooth_track_points;
 extern std::mutex g_track_mutex;
 extern RaceManager* g_race_manager;
 
+
 static std::atomic<uint32_t> g_telemetry_packets_in_window{ 0 };
 static std::atomic<uint32_t> g_telemetry_packets_per_second{ 0 };
 static std::atomic<uint32_t> g_telemetry_last_window_ms{ 0 };
@@ -325,6 +326,7 @@ namespace {
             }
         }
 
+
         double progress = bestDistanceAlong / static_cast<double>(g_track_progress_cache.totalLength);
         progress = std::clamp(progress, 0.0, 1.0);
         return progress;
@@ -544,11 +546,6 @@ void processIncomingTelemetry(const TelemetryPacket& packet)
         double ny = 0.0;
         getCoordinateDifferenceFromOrigin(easting, northing, nx, ny);
 
-        // Race-space = track space (recentered)
-        const glm::vec2 off = getTrackRenderOffset();
-        nx += off.x;
-        ny += off.y;
-
         constexpr double kNearTrackRadiusMeters = 1000.0; // 1km
         const bool nearTrack = isPositionNearCurrentTrack(nx, ny, kNearTrackRadiusMeters);
         const uint32_t now_ms = getMonotonicTimeMs();
@@ -653,13 +650,8 @@ void processIncomingTelemetry(const TelemetryPacket& packet)
             getCoordinateDifferenceFromOrigin(vehicle.m_meters_easting, vehicle.m_meters_northing,
                                              vehicle.m_normalized_x, vehicle.m_normalized_y);
 
-            // Race-space = track space (recentered). Track points are shifted by g_track_render_offset
-            // when the track is closed/recentered. Apply the same shift to telemetry-driven vehicles.
-            {
-                const glm::vec2 off = getTrackRenderOffset();
-                vehicle.m_normalized_x += off.x;
-                vehicle.m_normalized_y += off.y;
-            }
+            // Track points are physically recentered to (0,0) and map origin is updated accordingly.
+            // Vehicles computed from the same origin are already in the same coordinate space.
 
             // Track recording uses positions in the same space as rendered track/vehicles.
             TrackRecorder::OnTelemetryPosition(raceID, glm::vec2(static_cast<float>(vehicle.m_normalized_x), static_cast<float>(vehicle.m_normalized_y)));
@@ -667,15 +659,14 @@ void processIncomingTelemetry(const TelemetryPacket& packet)
             // [DEBUG_ALIGN_TMP] Raw vs render position (once per second)
             if ((packet_count % 60) == 0)
             {
-                const glm::vec2 off = getTrackRenderOffset();
-                const double rx = vehicle.m_normalized_x + off.x;
-                const double ry = vehicle.m_normalized_y + off.y;
+                // vehicle.m_normalized_* is already in race/render space (offset applied above)
+                const double rx = vehicle.m_normalized_x;
+                const double ry = vehicle.m_normalized_y;
                 std::cout.setf(std::ios::fixed);
                 std::cout << "[DEBUG_ALIGN_TMP] upd proto=" << packet.ID
                     << " race=" << raceID
                     << " utm=(" << std::setprecision(3) << vehicle.m_meters_easting << "," << vehicle.m_meters_northing << ")"
-                    << " norm_raw=(" << std::setprecision(6) << vehicle.m_normalized_x << "," << vehicle.m_normalized_y << ")"
-                    << " track_off=(" << off.x << "," << off.y << ")"
+                    << " norm_race=(" << std::setprecision(6) << vehicle.m_normalized_x << "," << vehicle.m_normalized_y << ")"
                     << " norm_render=(" << rx << "," << ry << ")"
                     << std::endl;
             }
@@ -751,15 +742,13 @@ void processIncomingTelemetry(const TelemetryPacket& packet)
 
             // [DEBUG_ALIGN_TMP] Raw vs render position on create
             {
-                const glm::vec2 off = getTrackRenderOffset();
-                const double rx = new_vehicle.m_normalized_x + off.x;
-                const double ry = new_vehicle.m_normalized_y + off.y;
+                const double rx = new_vehicle.m_normalized_x;
+                const double ry = new_vehicle.m_normalized_y;
                 std::cout.setf(std::ios::fixed);
                 std::cout << "[DEBUG_ALIGN_TMP] create proto=" << packet.ID
                     << " race=" << raceID
                     << " utm=(" << std::setprecision(3) << new_vehicle.m_meters_easting << "," << new_vehicle.m_meters_northing << ")"
-                    << " norm_raw=(" << std::setprecision(6) << new_vehicle.m_normalized_x << "," << new_vehicle.m_normalized_y << ")"
-                    << " track_off=(" << off.x << "," << off.y << ")"
+                    << " norm_race=(" << std::setprecision(6) << new_vehicle.m_normalized_x << "," << new_vehicle.m_normalized_y << ")"
                     << " norm_render=(" << rx << "," << ry << ")"
                     << std::endl;
             }
