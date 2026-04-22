@@ -40,9 +40,13 @@ public:
     std::mutex* getPointsMutex() { return m_pointsMutex; }
     
     bool ShouldCloseSplash() const { return m_closeSplash; }
-  void CloseSplash();
+    void CloseSplash();
     void NotifyPrototypeConnected(int raceVehicleId);
-    
+
+    // Input capture checks
+    bool WantsMouseCapture() const;
+    bool WantsKeyboardCapture() const;
+
     // Start/Finish line text rendering
     void RenderStartFinishText(const std::vector<glm::vec2>& track_points, 
                               const glm::mat4& view_matrix, 

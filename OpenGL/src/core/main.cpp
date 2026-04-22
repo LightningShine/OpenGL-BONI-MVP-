@@ -1,6 +1,8 @@
 ﻿#pragma once
+#ifdef _WIN32
 #define NOMINMAX
 #define WIN32_LEAN_AND_MEAN
+#endif
 #include <string>
 #include <regex>
 #include <locale>
@@ -11,10 +13,12 @@
 
 
 // === WINDOWS BORDER COLOR ===
+#ifdef _WIN32
 #define GLFW_EXPOSE_NATIVE_WIN32
 #include <GLFW/glfw3native.h>		// For glfwGetWin32Window
 #include <dwmapi.h>					// DwmSetWindowAttribute function
 #pragma comment(lib, "dwmapi.lib")  // Link with dwmapi.lib
+#endif
 
 // =================================
 // === 3RD LIBRARIES ===
@@ -70,6 +74,10 @@ void processInput(GLFWwindow* window, glm::vec2& camera_pos, float& zoom, float&
 const std::vector<SplinePoint>* smooth_track = nullptr, 
 const std::vector<glm::vec2>* track_points = nullptr, std::mutex* points_mutex = nullptr)
 {
+	// Block OpenGL keyboard movement if user is typing in a UI input field
+	if (g_ui && g_ui->WantsKeyboardCapture()) 
+		return;
+
 	// Close when press ESC
 	if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
 		glfwSetWindowShouldClose(window, true);
@@ -393,6 +401,10 @@ const std::vector<glm::vec2>* track_points = nullptr, std::mutex* points_mutex =
 // Callback for scroolling mouse wheel
 void scroll_callback(GLFWwindow* window, double xoffset, double yoffset)
 {
+	// Block OpenGL zoom if ImGui is holding the mouse (e.g., scrolling a modal or dropdown)
+	if (g_ui && g_ui->WantsMouseCapture()) 
+		return;
+
 	AppContext* context = (AppContext*)glfwGetWindowUserPointer(window);
 	if (context && context->zoom) {
 		float* zoom = context->zoom;
@@ -695,9 +707,10 @@ int main()
 	
 	std::cout << "[MAIN] Window created successfully" << std::endl;
 
-	
-	
+
+
 	// === CHANGE WINDOW BORDER COLOR (Windows 11) ===
+#ifdef _WIN32
 	HWND hwnd = glfwGetWin32Window(window);
 
 	// Color in the format 0x00BBGGRR (Blue, Green, Red)
@@ -712,6 +725,7 @@ int main()
 	// Force dark title bar theme
 	BOOL useDarkMode = TRUE;
 	DwmSetWindowAttribute(hwnd, 20, &useDarkMode, sizeof(useDarkMode)); // DWMWA_USE_IMMERSIVE_DARK_MODE
+#endif
 
 
 	glfwMakeContextCurrent(window); // Make the window's context in current thread

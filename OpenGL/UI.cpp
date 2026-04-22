@@ -14,8 +14,10 @@
 #include <fstream>
 #include <sstream>
 #include <regex>
+#ifdef _WIN32
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#endif
 #include <GeographicLib/UTMUPS.hpp>
 
 #define STB_IMAGE_IMPLEMENTATION
@@ -35,6 +37,7 @@
 extern int g_focused_vehicle_id;
 
 // Windows API for native file dialogs (include AFTER C++ standard library)
+#ifdef _WIN32
 #define NOMINMAX  // Prevent Windows.h from defining min/max macros
 #define GLFW_EXPOSE_NATIVE_WIN32
 #include <GLFW/glfw3native.h>
@@ -48,6 +51,7 @@ extern int g_focused_vehicle_id;
 #endif
 
 #pragma comment(lib, "Ws2_32.lib")
+#endif
 
 #if NETWORKING_ENABLED
 extern bool g_is_server_running;
@@ -2349,3 +2353,12 @@ void UI::RenderHelpModal()
 
 
 
+
+
+bool UI::WantsMouseCapture() const {
+    return ImGui::GetIO().WantCaptureMouse;
+}
+
+bool UI::WantsKeyboardCapture() const {
+    return ImGui::GetIO().WantCaptureKeyboard;
+}
