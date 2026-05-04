@@ -638,7 +638,7 @@ namespace TrackRenderer
         glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(glm::vec2), (void*)0);
         glEnableVertexAttribArray(0);
         
-        glUniform3f(s_cached_colorLoc, 1.0f, 1.0f, 1.0f);
+        glUniform3f(s_cached_colorLoc, 120.0f/255.0f, 120.0f / 255.0f, 120.0f / 255.0f);
         glUniform1f(s_cached_alphaLoc, 1.0f);
         glDrawArrays(GL_TRIANGLE_STRIP, 0, static_cast<GLsizei>(s_cached_border_layer.size()));
         
@@ -649,7 +649,7 @@ namespace TrackRenderer
         glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(glm::vec2), (void*)0);
         glEnableVertexAttribArray(0);
         
-        glUniform3f(s_cached_colorLoc, 0.3f, 0.3f, 0.3f);
+        glUniform3f(s_cached_colorLoc, 26.0f/255.0f, 26.0f / 255.0f, 26.0f / 255.0f);
         glUniform1f(s_cached_alphaLoc, 1.0f);
         glDrawArrays(GL_TRIANGLE_STRIP, 0, static_cast<GLsizei>(s_cached_asphalt_layer.size()));
         

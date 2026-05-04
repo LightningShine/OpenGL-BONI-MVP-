@@ -232,11 +232,13 @@
     <ClCompile Include="src\network\SimulationServer.cpp" />
     <ClCompile Include="src\network\Server.cpp" />
     <ClCompile Include="src\racing\RaceManager.cpp" />
+    <ClCompile Include="src\racing\StopReset\StartStop.cpp" />
     <ClCompile Include="src\racing\TimeDiffirence\TimeDiff.cpp" />
     <ClCompile Include="src\rendering\Interpolation.cpp" />
     <ClCompile Include="src\rendering\Render.cpp" />
     <ClCompile Include="src\track\TelemetryTrackBuilder.cpp" />
     <ClCompile Include="src\track\TrackRecorder.cpp" />
+    <ClCompile Include="src\ui\UIRaceManager\UIRaceManager.cpp" />
     <ClCompile Include="src\vehicle\Vehicle.cpp" />
     <ClCompile Include="src\thirdparty\glad.c" />
     <ClCompile Include="src\vehicle\VehicleInterpolator.cpp" />
@@ -260,23 +262,19 @@
     <ClInclude Include="src\network\Server.h" />
     <ClInclude Include="src\network\SimulationServer.h" />
     <ClInclude Include="src\racing\RaceManager.h" />
+    <ClInclude Include="src\racing\StopReset\StartStop.h" />
     <ClInclude Include="src\racing\TimeDiffirence\TimeDiff.h" />
     <ClInclude Include="src\rendering\Interpolation.h" />
     <ClInclude Include="src\rendering\Render.h" />
     <ClInclude Include="src\track\TelemetryTrackBuilder.h" />
     <ClInclude Include="src\track\TrackRecorder.h" />
+    <ClInclude Include="src\ui\UIRaceManager\UIRaceManager.h" />
     <ClInclude Include="src\ui\UI_Config.h" />
     <ClInclude Include="src\ui\UI_Elements_Config.h" />
     <ClInclude Include="src\vehicle\Vehicle.h" />
     <ClInclude Include="src\vehicle\VehicleInterpolator.h" />
     <ClInclude Include="UI.h" />
     <ClInclude Include="UI_Elements.h" />
-  </ItemGroup>
-  <ItemGroup>
-    <Text Include="RESTRUCTURE_SUMMARY.txt" />
-    <Text Include="src\input\VehicleFocus_Input.txt" />
-    <Text Include="src\input\VehicleFocus_Input_MultiDigit.txt" />
-    <Text Include="src\ui\LapTimer_Integration.txt" />
   </ItemGroup>
   <ItemGroup>
     <None Include="..\code_writing_guide.md" />

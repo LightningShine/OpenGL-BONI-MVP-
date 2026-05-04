@@ -85,8 +85,9 @@ public:
 	bool m_has_started_first_lap = false;
 	float m_best_lap_time = -1.0f;
 	int bestlapID = -1;
+	bool m_is_finished = false;
 
-	
+
 	// ========================================================================
 	// POSITION TRACKING (for line crossing detection)
 	// ========================================================================

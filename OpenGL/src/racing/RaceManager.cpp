@@ -147,52 +147,69 @@ void RaceManager::Update(float deltaTime)
             const glm::vec2 off = getTrackRenderOffset();
             std::cout.setf(std::ios::fixed);
             std::cout << "[S/F DEBUG] veh#" << vehicleID
-                      << " fixType=" << vehicle.m_fix_type
-                      << " started=" << (vehicle.m_has_started_first_lap ? 1 : 0)
+                      << " sessionState=" << static_cast<int>(m_sessionState)
+                      << " finished=" << (vehicle.m_is_finished ? 1 : 0)
                       << " crossed=" << (crossed ? 1 : 0)
-                      << " progCycle=" << (progressCycled ? 1 : 0)
                       << " ratio=" << std::setprecision(3) << intersectionRatio
-                      << " prevPos=(" << std::setprecision(6) << prevPos.x << "," << prevPos.y << ")"
-                      << " curPos=(" << curPos.x << "," << curPos.y << ")"
-                      << " sfP1=(" << sfP1.x << "," << sfP1.y << ")"
-                      << " sfP2=(" << sfP2.x << "," << sfP2.y << ")"
-                      << " off=(" << off.x << "," << off.y << ")"
-                      << " prevProg=" << std::setprecision(3) << vehicle.m_prev_track_progress
-                      << " curProg=" << vehicle.m_track_progress
-                      << " lapT=" << vehicle.m_current_lap_timer
                       << std::endl;
+        }
+
+        if (m_sessionState == SessionState::Idle)
+        {
+            // Just riding, reset timer if crossed but don't record laps.
+            if (crossed || progressCycled) {
+                vehicle.m_current_lap_timer = deltaTime * (1.0f - intersectionRatio);
+            } else {
+                vehicle.m_current_lap_timer += deltaTime;
+            }
+            vehicle.m_total_progress = vehicle.m_completed_laps + vehicle.m_track_progress;
+            continue;
+        }
+
+        if (vehicle.m_is_finished)
+        {
+            // Just driving after finishing. Ignore laps.
+            vehicle.m_current_lap_timer += deltaTime;
+            vehicle.m_total_progress = vehicle.m_completed_laps + vehicle.m_track_progress;
+            continue;
         }
 
         if (vehicle.m_has_started_first_lap && (crossed || progressCycled))
         {
             // Sub-frame accurate timing
             float crossingTime = vehicle.m_current_lap_timer + (deltaTime * intersectionRatio);
-            
+
             const float MIN_VALID_LAP_TIME = 0.1f;
-            
+
             if (crossingTime > MIN_VALID_LAP_TIME)
             {
                 // Store completed lap
                 LapData lapData(crossingTime, 0);
                 vehicle.m_laps[vehicle.m_current_lap_number] = lapData;
                 vehicle.m_completed_laps++;
-                
+
                 // Update best lap time and ID
                 if (crossingTime < vehicle.m_best_lap_time || vehicle.m_best_lap_time < 0.0f)
                 {
                     vehicle.m_best_lap_time = crossingTime;
                     vehicle.bestlapID = vehicle.m_current_lap_number; // Track which lap is best
                 }
-                
+
                 std::cout << "[RACE MANAGER] Vehicle #" << vehicleID 
                           << " completed Lap " << vehicle.m_current_lap_number
                           << " in " << std::fixed << std::setprecision(3) << crossingTime << "s"
                           << " | Total completed: " << vehicle.m_completed_laps << std::endl;
-                
-                // Start new lap
-                vehicle.m_current_lap_number++;
+
+                // State checking for Finish
+                if (m_sessionState == SessionState::Finishing) {
+                    vehicle.m_is_finished = true;
+                    std::cout << "[RACE MANAGER] Vehicle #" << vehicleID << " HAS FINISHED!" << std::endl;
+                } else {
+                    // Start new lap only if not finished
+                    vehicle.m_current_lap_number++;
+                }
             }
-            
+
             // Reset timer after crossing
             vehicle.m_current_lap_timer = deltaTime * (1.0f - intersectionRatio);
         }
@@ -253,7 +270,22 @@ void RaceManager::Update(float deltaTime)
         // ====================================================================
         vehicle.m_total_progress = vehicle.m_completed_laps + vehicle.m_track_progress;
     }
-    
+
+    // Check if everyone finished
+    if (m_sessionState == SessionState::Finishing) {
+        bool allFinished = true;
+        for (const auto& [id, veh] : g_vehicles) {
+            if (veh.m_has_started_first_lap && !veh.m_is_finished) {
+                allFinished = false;
+                break;
+            }
+        }
+        if (allFinished && !g_vehicles.empty()) {
+            m_sessionState = SessionState::Ended;
+            std::cout << "[SESSION] Session Ended! All cars have finished." << std::endl;
+        }
+    }
+
     // Update leader and positions
     std::vector<VehicleStanding> standings = GetStandingsInternal();
     
@@ -353,30 +385,6 @@ bool RaceManager::CheckLineSegmentIntersection(
     }
     
     return false;
-}
-
-// ============================================================================
-// RESET SESSION (clear all lap data)
-// ============================================================================
-void RaceManager::ResetSession()
-{
-    std::lock_guard<std::mutex> lock(g_vehicles_mutex);
-    
-    for (auto& [vehicleID, vehicle] : g_vehicles)
-    {
-        vehicle.m_laps.clear();
-        vehicle.laps.clear(); // Clear telemetry samples
-        vehicle.m_current_lap_timer = 0.0f;
-        vehicle.m_current_lap_number = RaceConstants::LAP_START_NUMBER;
-        vehicle.m_completed_laps = 0;
-        vehicle.m_has_started_first_lap = false;
-        vehicle.m_best_lap_time = -1.0f;
-        vehicle.bestlapID = -1; // Reset best lap ID
-        vehicle.m_prev_track_progress = 0.0;
-        vehicle.m_total_progress = 0.0;
-    }
-    
-    std::cout << "[RACE MANAGER] Session reset - all lap data cleared" << std::endl;
 }
 
 // ============================================================================

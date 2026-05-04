@@ -34,6 +34,8 @@
 #include "src/racing/RaceManager.h"
 #include "src/track/TelemetryTrackBuilder.h"
 
+void RenderRaceMenu();
+
 extern int g_focused_vehicle_id;
 
 // Windows API for native file dialogs (include AFTER C++ standard library)
@@ -1980,6 +1982,8 @@ void UI::RenderTopMenu()
             if (ImGui::MenuItem("Toggle Fullscreen", "F11", false, false)) {}
             ImGui::EndMenu();
         }
+
+        RenderRaceMenu();
         
         if (ImGui::BeginMenu("Networking"))
         {

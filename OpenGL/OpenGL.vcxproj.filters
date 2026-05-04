@@ -43,6 +43,21 @@
     <Filter Include="src\Racing\TimeDiff">
       <UniqueIdentifier>{3e015ab8-0ee0-4673-90f2-0bf4b42f7f7c}</UniqueIdentifier>
     </Filter>
+    <Filter Include="src\Racing\StartReset">
+      <UniqueIdentifier>{d22dc73a-87c3-4dd9-96a4-5e02f9d16d6e}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="src\rendering\Render">
+      <UniqueIdentifier>{5f023982-809c-40f3-982c-8024fd4f6656}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="imgui">
+      <UniqueIdentifier>{be49981f-2308-4a75-8bc5-e96adfad42d2}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="src\TrackBuilding">
+      <UniqueIdentifier>{1df80060-3fd1-4de7-a981-81e8ed564e71}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="src\ui\UIRaceManager">
+      <UniqueIdentifier>{fee0cdfc-c156-4191-8298-8cb60b84f2c4}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\core\main.cpp">
@@ -63,13 +78,6 @@
     <ClCompile Include="src\thirdparty\glad.c">
       <Filter>src\thirdparty</Filter>
     </ClCompile>
-    <ClCompile Include="libraries\include\imgui\imgui.cpp" />
-    <ClCompile Include="libraries\include\imgui\imgui_demo.cpp" />
-    <ClCompile Include="libraries\include\imgui\imgui_draw.cpp" />
-    <ClCompile Include="libraries\include\imgui\imgui_tables.cpp" />
-    <ClCompile Include="libraries\include\imgui\imgui_widgets.cpp" />
-    <ClCompile Include="libraries\include\imgui\backends\imgui_impl_glfw.cpp" />
-    <ClCompile Include="libraries\include\imgui\backends\imgui_impl_opengl3.cpp" />
     <ClCompile Include="src\network\ESP32_Code.cpp">
       <Filter>src\network</Filter>
     </ClCompile>
@@ -82,18 +90,57 @@
     <ClCompile Include="libraries\include\serialib\serialib.cpp">
       <Filter>libaries\include\serialib</Filter>
     </ClCompile>
-    <ClCompile Include="src\rendering\Render.cpp" />
-    <ClCompile Include="UI_Elements.cpp" />
-    <ClCompile Include="src\racing\RaceManager.cpp" />
     <ClCompile Include="src\racing\TimeDiffirence\TimeDiff.cpp">
       <Filter>src\Racing\TimeDiff</Filter>
     </ClCompile>
-    <ClCompile Include="Client.cpp" />
     <ClCompile Include="src\vehicle\VehicleInterpolator.cpp">
       <Filter>src\vehicle</Filter>
     </ClCompile>
-    <ClCompile Include="src\track\TrackRecorder.cpp" />
-    <ClCompile Include="src\track\TelemetryTrackBuilder.cpp" />
+    <ClCompile Include="src\racing\StopReset\StartStop.cpp">
+      <Filter>src\Racing\StartReset</Filter>
+    </ClCompile>
+    <ClCompile Include="src\racing\RaceManager.cpp">
+      <Filter>src\Racing</Filter>
+    </ClCompile>
+    <ClCompile Include="UI_Elements.cpp">
+      <Filter>src\ui</Filter>
+    </ClCompile>
+    <ClCompile Include="src\rendering\Render.cpp">
+      <Filter>src\rendering\Render</Filter>
+    </ClCompile>
+    <ClCompile Include="libraries\include\imgui\imgui_widgets.cpp">
+      <Filter>imgui</Filter>
+    </ClCompile>
+    <ClCompile Include="libraries\include\imgui\imgui_demo.cpp">
+      <Filter>imgui</Filter>
+    </ClCompile>
+    <ClCompile Include="libraries\include\imgui\imgui_draw.cpp">
+      <Filter>imgui</Filter>
+    </ClCompile>
+    <ClCompile Include="libraries\include\imgui\backends\imgui_impl_glfw.cpp">
+      <Filter>imgui</Filter>
+    </ClCompile>
+    <ClCompile Include="libraries\include\imgui\backends\imgui_impl_opengl3.cpp">
+      <Filter>imgui</Filter>
+    </ClCompile>
+    <ClCompile Include="libraries\include\imgui\imgui_tables.cpp">
+      <Filter>imgui</Filter>
+    </ClCompile>
+    <ClCompile Include="libraries\include\imgui\imgui.cpp">
+      <Filter>imgui</Filter>
+    </ClCompile>
+    <ClCompile Include="Client.cpp">
+      <Filter>src\network</Filter>
+    </ClCompile>
+    <ClCompile Include="src\track\TrackRecorder.cpp">
+      <Filter>src\rendering\Render</Filter>
+    </ClCompile>
+    <ClCompile Include="src\track\TelemetryTrackBuilder.cpp">
+      <Filter>src\TrackBuilding</Filter>
+    </ClCompile>
+    <ClCompile Include="src\ui\UIRaceManager\UIRaceManager.cpp">
+      <Filter>src\ui\UIRaceManager</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\input\Input.h">
@@ -108,7 +155,6 @@
     <ClInclude Include="src\vehicle\Vehicle.h">
       <Filter>src\vehicle</Filter>
     </ClInclude>
-    <ClInclude Include="libraries\include\stb_image.h" />
     <ClInclude Include="src\network\ESP32_Code.h">
       <Filter>src\network</Filter>
     </ClInclude>
@@ -125,11 +171,6 @@
       <Filter>libaries\include\serialib</Filter>
     </ClInclude>
     <ClInclude Include="src\Config.h" />
-    <ClInclude Include="src\rendering\Render.h" />
-    <ClInclude Include="src\ui\UI_Config.h" />
-    <ClInclude Include="src\ui\UI_Elements_Config.h" />
-    <ClInclude Include="UI_Elements.h" />
-    <ClInclude Include="src\racing\RaceManager.h" />
     <ClInclude Include="src\racing\TimeDiffirence\TimeDiff.h">
       <Filter>src\Racing\TimeDiff</Filter>
     </ClInclude>
@@ -137,14 +178,34 @@
       <Filter>src\vehicle</Filter>
     </ClInclude>
     <ClInclude Include="src\network\SimulationServer.h" />
-    <ClInclude Include="src\track\TrackRecorder.h" />
-    <ClInclude Include="src\track\TelemetryTrackBuilder.h" />
-  </ItemGroup>
-  <ItemGroup>
-    <Text Include="RESTRUCTURE_SUMMARY.txt" />
-    <Text Include="src\input\VehicleFocus_Input.txt" />
-    <Text Include="src\input\VehicleFocus_Input_MultiDigit.txt" />
-    <Text Include="src\ui\LapTimer_Integration.txt" />
+    <ClInclude Include="src\racing\StopReset\StartStop.h">
+      <Filter>src\Racing\StartReset</Filter>
+    </ClInclude>
+    <ClInclude Include="src\racing\RaceManager.h">
+      <Filter>src\Racing</Filter>
+    </ClInclude>
+    <ClInclude Include="src\ui\UI_Config.h">
+      <Filter>src\ui</Filter>
+    </ClInclude>
+    <ClInclude Include="UI_Elements.h">
+      <Filter>src\ui</Filter>
+    </ClInclude>
+    <ClInclude Include="src\ui\UI_Elements_Config.h">
+      <Filter>src\ui</Filter>
+    </ClInclude>
+    <ClInclude Include="src\rendering\Render.h">
+      <Filter>src\rendering\Render</Filter>
+    </ClInclude>
+    <ClInclude Include="src\track\TrackRecorder.h">
+      <Filter>src\rendering\Render</Filter>
+    </ClInclude>
+    <ClInclude Include="libraries\include\stb_image.h">
+      <Filter>src\thirdparty</Filter>
+    </ClInclude>
+    <ClInclude Include="src\track\TelemetryTrackBuilder.h">
+      <Filter>src\TrackBuilding</Filter>
+    </ClInclude>
+    <ClInclude Include="src\ui\UIRaceManager\UIRaceManager.h" />
   </ItemGroup>
   <ItemGroup>
     <None Include="..\code_writing_guide.md" />

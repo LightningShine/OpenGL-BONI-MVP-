@@ -1,4 +1,9 @@
-﻿#pragma once
+﻿// ============================================================================
+// Author: Andrejs Deikuns
+// Created: 2025-10-10
+// ============================================================================
+
+#pragma once
 #ifdef _WIN32
 #define NOMINMAX
 #define WIN32_LEAN_AND_MEAN
@@ -778,13 +783,35 @@ int main()
 
 	glBindVertexArray(0);
 
+	// ========================== Process Input & Callbacks ==========================
+	glm::vec2 camera_position(0.0f, 0.0f);
+	float camera_zoom = 1.0f;
+	float camera_rotation = 0.0f;  // Camera rotation in degrees (-89 to +89)
+	float camera_move_speed = CameraConstants::CAMERA_MOVE_SPEED;
+	glm::vec2 camera_velocity(0.0f, 0.0f);
+	float friction = CameraConstants::CAMERA_FRICTION;
+	float map_bound_x = MapConstants::MAP_BOUND_X;
+	float map_bound_y = MapConstants::MAP_BOUND_Y;
+
+	std::vector<glm::vec2> points;
+	std::mutex  points_mutex;
+
+	UI ui;
+
+	AppContext appContext;
+	appContext.zoom = &camera_zoom;
+	appContext.points = &points;
+	appContext.points_mutex = &points_mutex;
+	appContext.ui = &ui;
+
+	glfwSetWindowUserPointer(window, &appContext);
+	glfwSetScrollCallback(window, scroll_callback);
+	glfwSetDropCallback(window, drop_callback);
+
 	// ================= UI Initialization ==================
 
-
-
 	std::cout << "[MAIN] Initializing UI..." << std::endl;
-	
-	UI ui;
+
 	if (!ui.Initialize(window))
 	{
 		std::cerr << "Failed UI Initialization" << endl;
@@ -792,7 +819,7 @@ int main()
 		return -1;
 	}
 	g_ui = &ui;
-	
+
 	std::cout << "[MAIN] UI initialized successfully" << std::endl;
 
 
@@ -841,31 +868,8 @@ int main()
 	glEnable(GL_PROGRAM_POINT_SIZE);
 
 	// ========================== Process Input ==========================
-	glm::vec2 camera_position(0.0f, 0.0f);
-	float camera_zoom = 1.0f;
-	float camera_rotation = 0.0f;  // Camera rotation in degrees (-89 to +89)
-	float camera_move_speed = CameraConstants::CAMERA_MOVE_SPEED;
-	glm::vec2 camera_velocity(0.0f, 0.0f);
-	float friction = CameraConstants::CAMERA_FRICTION;
-	float map_bound_x = MapConstants::MAP_BOUND_X;
-	float map_bound_y = MapConstants::MAP_BOUND_Y;
 
-	std::vector<glm::vec2> points;
-	std::mutex  points_mutex;
-	
-	// Store smooth track for vehicle simulation
-	// ???????: std::vector<SplinePoint> g_smooth_track_points; - ?????????? ?????????? ?????? (?????? 48)
-
-	AppContext appContext;
-	appContext.zoom = &camera_zoom;
-	appContext.points = &points;
-	appContext.points_mutex = &points_mutex;
-    appContext.ui = &ui;
-
-	glfwSetWindowUserPointer(window, &appContext);
-	glfwSetScrollCallback(window, scroll_callback);
-	glfwSetDropCallback(window, drop_callback);
-
+	// Variables moved above UI initialization
 
 	// ========================== INPUT ==========================
 	

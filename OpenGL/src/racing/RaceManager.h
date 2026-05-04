@@ -4,6 +4,7 @@
 #include <vector>
 #include <glm/glm.hpp>
 #include "../vehicle/Vehicle.h"
+#include "StopReset/StartStop.h"
 
 // LapData is defined in Vehicle.h
 
@@ -51,7 +52,11 @@ public:
     // ========================================================================
     // SESSION CONTROL
     // ========================================================================
+    void StartSession();
+    void StopSession();
     void ResetSession();                        // Clear all lap data and timers
+    void ResetMap();
+    SessionState GetSessionState() const;
     void SetStartFinishLine(const glm::vec2& p1, const glm::vec2& p2);  // Define start/finish line
     
     // ========================================================================
@@ -80,6 +85,11 @@ public:
     bool SaveResultsToFile() const;
     
 private:
+    // ========================================================================
+    // SESSION TRACKING
+    // ========================================================================
+    SessionState m_sessionState = SessionState::Idle;
+
     // ========================================================================
     // START/FINISH LINE (defined as two points: left and right edge)
     // ========================================================================
