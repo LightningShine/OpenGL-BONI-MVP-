@@ -6,11 +6,13 @@
 #include <mutex>
 #include <glm/vec2.hpp>
 #include <chrono>
+#include "src/ui/UIRaceManager/RaceDisplay/RaceDisplay.h"
 
 struct ImGuiContext;
 struct ImFont;
 class MapOrigin;
 class UIElements;
+class ModeManager;
 
 class UI
 {
@@ -46,6 +48,9 @@ public:
     // Input capture checks
     bool WantsMouseCapture() const;
     bool WantsKeyboardCapture() const;
+
+    // Race Status Bar rendering
+    void RenderRaceStatusBar(ModeManager* modeManager);
 
     // Start/Finish line text rendering
     void RenderStartFinishText(const std::vector<glm::vec2>& track_points, 
@@ -90,9 +95,14 @@ private:
     // Track Data
     std::vector<glm::vec2>* m_points;
     std::mutex* m_pointsMutex;
-    
+
     // UI Elements (Compass, Laptimer, etc.)
     UIElements* m_ui_elements;
+
+    // Race Status Bar
+    RaceDisplay m_raceDisplay;
+    uint32_t m_sessionElapsedMs;
+    std::chrono::steady_clock::time_point m_sessionStartTime;
 
     enum class NetworkingModalMode { None, Client, Server };
     NetworkingModalMode m_networkingModalMode;

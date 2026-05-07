@@ -48,11 +48,13 @@
 #include "../track/TrackRecorder.h"
 #include "../vehicle/Vehicle.h"
 #include "../racing/RaceManager.h"
+#include "../racing/ModeManager/ModeManager.h"
 
 
 using namespace std;
 
 UI* g_ui = nullptr;
+ModeManager* g_mode_manager = nullptr;
 
 
 struct AppContext {
@@ -798,6 +800,12 @@ int main()
 
 	UI ui;
 
+	// Initialize Mode Manager
+	ModeManager modeManager;
+	g_mode_manager = &modeManager;
+	modeManager.SetMode(RaceMode::CircuitRace);
+	modeManager.SetPhase(RacePhase::Practice);
+
 	AppContext appContext;
 	appContext.zoom = &camera_zoom;
 	appContext.points = &points;
@@ -1114,6 +1122,12 @@ int main()
 
 		// Render UI AFTER track and vehicles so it's on top
 		ui.Render();
+
+		// Render race status bar
+		if (g_mode_manager)
+		{
+			ui.RenderRaceStatusBar(g_mode_manager);
+		}
 
 		// Render compass (show after splash, rotates based on camera yaw)
 		if (ui.ShouldCloseSplash() && ui.getElements())

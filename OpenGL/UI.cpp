@@ -32,9 +32,12 @@
 #include "src/network/ESP32_Code.h"
 #include "src/network/SimulationServer.h"
 #include "src/racing/RaceManager.h"
+#include "src/racing/ModeManager/ModeManager.h"
+#include "src/vehicle/Vehicle.h"
 #include "src/track/TelemetryTrackBuilder.h"
 
 void RenderRaceMenu();
+
 
 extern int g_focused_vehicle_id;
 
@@ -594,6 +597,8 @@ UI::UI()
     , m_protoPhotoTexture(nullptr)
     , m_points(nullptr)
     , m_pointsMutex(nullptr)
+    , m_sessionElapsedMs(0)
+    , m_sessionStartTime(std::chrono::steady_clock::now())
    , m_showPrototypeToast(true)
     , m_allowPrototypeToast(true)
     , m_lastPrototypeRaceId(0)
@@ -871,6 +876,10 @@ bool UI::Initialize(GLFWwindow* window)
     io.MouseDrawCursor = false; // Disable ImGui software cursor to prevent visual trailing
 
     LoadResources();
+
+    m_raceDisplay.Initialize(static_cast<uint32_t>(window_width), static_cast<uint32_t>(window_height));
+    m_sessionElapsedMs = 0;
+    m_sessionStartTime = std::chrono::steady_clock::now();
     
     // Initialize UI Elements
     m_ui_elements = new UIElements();
@@ -1024,7 +1033,7 @@ void UI::BeginFrame()
             ofn.hwndOwner = glfwGetWin32Window(m_window);
             ofn.lpstrFile = szFile;
             ofn.nMaxFile = sizeof(szFile);
-            ofn.lpstrFilter = "All Files\0*.*\0";
+            ofn.lpstrFilter = "All Files\0*.*\0GPX Files\0*.gpx\0";
             ofn.nFilterIndex = 1;
             ofn.lpstrFileTitle = NULL;
             ofn.nMaxFileTitle = 0;
@@ -1043,18 +1052,46 @@ void UI::BeginFrame()
                     {
                         std::stringstream buffer;
                         buffer << file.rdbuf();
-                        file.close();
-
-                        void loadTrackFromData(const std::string&, std::vector<glm::vec2>&, std::mutex&);
                         loadTrackFromData(buffer.str(), *m_points, *m_pointsMutex);
 
-                        TrackCenterInfo calculateTrackCenter(const std::vector<glm::vec2>& points);
-                        void recenterTrack(std::vector<glm::vec2>& points, const TrackCenterInfo& center_info);
+                        {
+                            std::lock_guard<std::mutex> lock(*m_pointsMutex);
+                            TrackCenterInfo center_info = calculateTrackCenter(*m_points);
 
-                        std::lock_guard<std::mutex> lock(*m_pointsMutex);
-                        TrackCenterInfo center_info = calculateTrackCenter(*m_points);
-                        if (center_info.is_closed)
-                            recenterTrack(*m_points, center_info);
+                            if (center_info.is_closed)
+                            {
+                                recenterTrack(*m_points, center_info);
+
+                                const double dx_m = static_cast<double>(center_info.offset.x) * static_cast<double>(MapConstants::MAP_SIZE);
+                                const double dy_m = static_cast<double>(center_info.offset.y) * static_cast<double>(MapConstants::MAP_SIZE);
+
+                                g_map_origin.m_origin_meters_easting += dx_m;
+                                g_map_origin.m_origin_meters_northing += dy_m;
+
+                                try {
+                                    using namespace GeographicLib;
+                                    const bool northp = (g_map_origin.m_origin_zone_char >= 'N');
+                                    UTMUPS::Reverse(
+                                        g_map_origin.m_origin_zone_int,
+                                        northp,
+                                        g_map_origin.m_origin_meters_easting,
+                                        g_map_origin.m_origin_meters_northing,
+                                        g_map_origin.m_origin_lat_dd,
+                                        g_map_origin.m_origin_lon_dd);
+                                }
+                                catch (const std::exception& e) {
+                                    std::cerr << "[TRACK] Failed to update origin GPS from UTM: " << e.what() << std::endl;
+                                }
+                            }
+                        }
+
+                        TrackRenderer::rebuildTrackCache(*m_points, *m_pointsMutex);
+                        m_showSplash = false;
+                        m_closeSplash = true;
+                    }
+                    else
+                    {
+                        std::cerr << "[UI] Failed to open file: " << ofn.lpstrFile << std::endl;
                     }
                 }
             }
@@ -1237,6 +1274,96 @@ void UI::Render()
     
     // Render help modal if open
     RenderHelpModal();
+}
+
+void UI::RenderRaceStatusBar(ModeManager* modeManager)
+{
+    if (!modeManager || m_showSplash)
+        return;
+
+    ImGuiIO& io = ImGui::GetIO();
+    const uint32_t width = static_cast<uint32_t>(io.DisplaySize.x);
+    const uint32_t height = static_cast<uint32_t>(io.DisplaySize.y);
+
+    static uint32_t s_last_width = 0;
+    static uint32_t s_last_height = 0;
+    if (s_last_width != width || s_last_height != height)
+    {
+        m_raceDisplay.OnScreenResized(width, height);
+        s_last_width = width;
+        s_last_height = height;
+    }
+
+    if (g_race_manager)
+    {
+        modeManager->SyncWithSessionState(g_race_manager->GetSessionState());
+        const float elapsed_seconds = std::max(0.0f, g_race_manager->GetRaceElapsedTime());
+        m_sessionElapsedMs = static_cast<uint32_t>(elapsed_seconds * 1000.0f);
+        m_raceDisplay.GetStatusBar().UpdateSessionTime(m_sessionElapsedMs);
+    }
+
+    m_raceDisplay.Render(*modeManager);
+
+    const RaceStatusBar& status_bar = m_raceDisplay.GetStatusBar();
+    const float bar_x = status_bar.GetXPosition();
+    const float bar_y = status_bar.GetYPosition();
+    const float bar_w = status_bar.GetBarWidth();
+    const float bar_h = status_bar.GetBarHeight();
+
+    const std::string system_time = status_bar.GetSystemTimeString();
+    const std::string session_time = status_bar.GetSessionTimeString();
+    const char* phase_label = modeManager->GetPhaseLabel();
+
+    ImFont* font = m_fontUI ? m_fontUI : ImGui::GetFont();
+    ImGui::PushFont(font);
+
+    const ImVec2 system_size = ImGui::CalcTextSize(system_time.c_str());
+    const ImVec2 session_size = ImGui::CalcTextSize(session_time.c_str());
+    const ImVec2 phase_size = ImGui::CalcTextSize(phase_label);
+
+    const float flag_size = bar_h * 0.6f;
+    const float flag_y = bar_y + (bar_h - flag_size) * 0.5f;
+    const float flag_rounding = flag_size * 0.15f;
+
+    const float pill_pad_x = bar_h * 0.35f;
+    const float flag_to_text = bar_h * 3.5f; 
+
+    const float pill_w = pill_pad_x + flag_size + flag_to_text + phase_size.x + flag_to_text + flag_size + pill_pad_x;
+    const float pill_h = bar_h;
+    const float pill_x = bar_x + (bar_w - pill_w) * 0.5f;
+    const float pill_y = bar_y;
+    const float pill_rounding = pill_h * 0.25f;
+
+    const float left_flag_x = pill_x + pill_pad_x;
+    const float text_x = left_flag_x + flag_size + flag_to_text;
+    const float right_flag_x = text_x + phase_size.x + flag_to_text;
+
+    const float time_margin = bar_h * 1.2f;
+    const float system_x = pill_x - time_margin - system_size.x;
+    const float session_x = pill_x + pill_w + time_margin;
+
+    const ImU32 pill_bg = IM_COL32(24, 24, 24, 255);
+    const ImU32 pill_border = IM_COL32(160, 160, 160, 180);
+    const ImU32 flag_fill = IM_COL32(73, 143, 73, 255);
+    const ImU32 text_color = IM_COL32(240, 240, 240, 255);
+
+    ImDrawList* draw_list = ImGui::GetForegroundDrawList();
+
+    draw_list->AddRectFilled(ImVec2(pill_x, pill_y), ImVec2(pill_x + pill_w, pill_y + pill_h), pill_bg, pill_rounding);
+    draw_list->AddRect(ImVec2(pill_x, pill_y), ImVec2(pill_x + pill_w, pill_y + pill_h), pill_border, pill_rounding, 0, 1.5f);
+
+    draw_list->AddRectFilled(ImVec2(left_flag_x, flag_y), ImVec2(left_flag_x + flag_size, flag_y + flag_size), flag_fill, flag_rounding);
+    draw_list->AddRectFilled(ImVec2(right_flag_x, flag_y), ImVec2(right_flag_x + flag_size, flag_y + flag_size), flag_fill, flag_rounding);
+
+    const float text_y_sys = bar_y + (bar_h - system_size.y) * 0.5f;
+    const float text_y_ses = bar_y + (bar_h - session_size.y) * 0.5f;
+    const float text_y_phase = bar_y + (bar_h - phase_size.y) * 0.5f;
+
+    draw_list->AddText(ImVec2(system_x, text_y_sys), text_color, system_time.c_str());
+    draw_list->AddText(ImVec2(text_x, text_y_phase), text_color, phase_label);
+    draw_list->AddText(ImVec2(session_x, text_y_ses), text_color, session_time.c_str());
+
+    ImGui::PopFont();
 }
 
 void UI::EndFrame()
@@ -1736,7 +1863,7 @@ void UI::RenderTopMenu()
                 ofn.hwndOwner = glfwGetWin32Window(m_window);
                 ofn.lpstrFile = szFile;
                 ofn.nMaxFile = sizeof(szFile);
-                ofn.lpstrFilter = "GPX Files\0*.gpx\0All Files\0*.*\0";
+                ofn.lpstrFilter = "All Files\0*.*\0GPX Files\0*.gpx\0";
                 ofn.nFilterIndex = 1;
                 ofn.lpstrFileTitle = NULL;
                 ofn.nMaxFileTitle = 0;
@@ -1976,6 +2103,40 @@ void UI::RenderTopMenu()
                     AppContextLayout* ctx = static_cast<AppContextLayout*>(raw_context);
                     if (ctx && ctx->zoom) *ctx->zoom = 1.0f;
                 }
+            }
+            if (ImGui::MenuItem("Reset Map", nullptr, false, true)) {
+                if (g_race_manager)
+                    g_race_manager->ResetMap();
+
+                simulationStopAll();
+
+                {
+                    std::lock_guard<std::mutex> lock(g_vehicles_mutex);
+                    g_vehicles.clear();
+                }
+
+                g_focused_vehicle_id = -1;
+                g_is_map_loaded = false;
+                g_track_render_offset = glm::vec2(0.0f, 0.0f);
+                g_map_origin.m_origin_lat_dd = 0.0;
+                g_map_origin.m_origin_lon_dd = 0.0;
+                g_map_origin.m_origin_meters_easting = 0.0;
+                g_map_origin.m_origin_meters_northing = 0.0;
+                g_map_origin.m_origin_zone_int = 0;
+                g_map_origin.m_origin_zone_char = 0;
+                g_map_origin.m_map_size = MapConstants::MAP_SIZE;
+
+                if (m_points && m_pointsMutex)
+                {
+                    std::lock_guard<std::mutex> lock(*m_pointsMutex);
+                    m_points->clear();
+                }
+
+                TrackRenderer::clearTrackCache();
+                TrackRenderer::clearStartFinishLine();
+                telemetryResetPpsCounters();
+                telemetryResetPrototypeIdMapping();
+                TelemetryTrackBuilder::Stop();
             }
             ImGui::Separator();
            ImGui::MenuItem("Prototype panel", nullptr, &m_allowPrototypeToast);

@@ -2,6 +2,7 @@
 
 #include <map>
 #include <vector>
+#include <chrono>
 #include <glm/glm.hpp>
 #include "../vehicle/Vehicle.h"
 #include "StopReset/StartStop.h"
@@ -57,6 +58,7 @@ public:
     void ResetSession();                        // Clear all lap data and timers
     void ResetMap();
     SessionState GetSessionState() const;
+    float GetRaceElapsedTime() const;
     void SetStartFinishLine(const glm::vec2& p1, const glm::vec2& p2);  // Define start/finish line
     
     // ========================================================================
@@ -89,6 +91,10 @@ private:
     // SESSION TRACKING
     // ========================================================================
     SessionState m_sessionState = SessionState::Idle;
+    std::map<int32_t, int> m_finishPositions;
+    std::chrono::steady_clock::time_point m_raceStartTime;
+    bool m_raceTimerRunning = false;
+    float m_raceElapsedSeconds = 0.0f;
 
     // ========================================================================
     // START/FINISH LINE (defined as two points: left and right edge)

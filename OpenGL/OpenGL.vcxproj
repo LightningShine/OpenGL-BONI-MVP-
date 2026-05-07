@@ -238,6 +238,8 @@
     <ClCompile Include="src\rendering\Render.cpp" />
     <ClCompile Include="src\track\TelemetryTrackBuilder.cpp" />
     <ClCompile Include="src\track\TrackRecorder.cpp" />
+    <ClCompile Include="src\ui\UIRaceManager\RaceDisplay\RaceDisplay.cpp" />
+    <ClCompile Include="src\ui\UIRaceManager\RaceDisplay\RaceStatusBar.cpp" />
     <ClCompile Include="src\ui\UIRaceManager\UIRaceManager.cpp" />
     <ClCompile Include="src\vehicle\Vehicle.cpp" />
     <ClCompile Include="src\thirdparty\glad.c" />
@@ -261,6 +263,7 @@
     <ClInclude Include="src\network\ESP32_Code.h" />
     <ClInclude Include="src\network\Server.h" />
     <ClInclude Include="src\network\SimulationServer.h" />
+    <ClInclude Include="src\racing\ModeManager\ModeManager.h" />
     <ClInclude Include="src\racing\RaceManager.h" />
     <ClInclude Include="src\racing\StopReset\StartStop.h" />
     <ClInclude Include="src\racing\TimeDiffirence\TimeDiff.h" />
@@ -268,6 +271,9 @@
     <ClInclude Include="src\rendering\Render.h" />
     <ClInclude Include="src\track\TelemetryTrackBuilder.h" />
     <ClInclude Include="src\track\TrackRecorder.h" />
+    <ClInclude Include="src\ui\UIRaceManager\RaceDisplay\RaceDisplay.h" />
+    <ClInclude Include="src\ui\UIRaceManager\RaceDisplay\RaceFlags.h" />
+    <ClInclude Include="src\ui\UIRaceManager\RaceDisplay\RaceStatusBar.h" />
     <ClInclude Include="src\ui\UIRaceManager\UIRaceManager.h" />
     <ClInclude Include="src\ui\UI_Config.h" />
     <ClInclude Include="src\ui\UI_Elements_Config.h" />
@@ -278,6 +284,14 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="..\code_writing_guide.md" />
+    <None Include="src\ui\UIRaceManager\RaceDisplay\IMPLEMENTATION_SUMMARY.py" />
+    <None Include="src\ui\UIRaceManager\RaceDisplay\INTEGRATION_GUIDE.md" />
+    <None Include="src\ui\UIRaceManager\RaceDisplay\QUICK_REFERENCE.md" />
+    <None Include="src\ui\UIRaceManager\RaceDisplay\README.md" />
+  </ItemGroup>
+  <ItemGroup>
+    <Text Include="src\ui\UIRaceManager\RaceDisplay\USAGE_EXAMPLE.txt" />
+    <Text Include="src\ui\UIRaceManager\RaceDisplay\VISUAL_LAYOUT.txt" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

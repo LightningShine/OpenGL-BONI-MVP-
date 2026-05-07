@@ -58,6 +58,12 @@
     <Filter Include="src\ui\UIRaceManager">
       <UniqueIdentifier>{fee0cdfc-c156-4191-8298-8cb60b84f2c4}</UniqueIdentifier>
     </Filter>
+    <Filter Include="src\Racing\ModeManager">
+      <UniqueIdentifier>{f53e180c-9771-429f-a97f-72cd8b01548c}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="src\ui\UIRaceManager\RaceDisplay">
+      <UniqueIdentifier>{43d8300f-40e4-4e5d-a151-f7f540b1ca94}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\core\main.cpp">
@@ -141,6 +147,8 @@
     <ClCompile Include="src\ui\UIRaceManager\UIRaceManager.cpp">
       <Filter>src\ui\UIRaceManager</Filter>
     </ClCompile>
+    <ClCompile Include="src\ui\UIRaceManager\RaceDisplay\RaceStatusBar.cpp" />
+    <ClCompile Include="src\ui\UIRaceManager\RaceDisplay\RaceDisplay.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\input\Input.h">
@@ -206,8 +214,24 @@
       <Filter>src\TrackBuilding</Filter>
     </ClInclude>
     <ClInclude Include="src\ui\UIRaceManager\UIRaceManager.h" />
+    <ClInclude Include="src\racing\ModeManager\ModeManager.h">
+      <Filter>src\Racing\ModeManager</Filter>
+    </ClInclude>
+    <ClInclude Include="src\ui\UIRaceManager\RaceDisplay\RaceDisplay.h">
+      <Filter>src\ui\UIRaceManager\RaceDisplay</Filter>
+    </ClInclude>
+    <ClInclude Include="src\ui\UIRaceManager\RaceDisplay\RaceFlags.h" />
+    <ClInclude Include="src\ui\UIRaceManager\RaceDisplay\RaceStatusBar.h" />
   </ItemGroup>
   <ItemGroup>
     <None Include="..\code_writing_guide.md" />
+    <None Include="src\ui\UIRaceManager\RaceDisplay\INTEGRATION_GUIDE.md" />
+    <None Include="src\ui\UIRaceManager\RaceDisplay\IMPLEMENTATION_SUMMARY.py" />
+    <None Include="src\ui\UIRaceManager\RaceDisplay\QUICK_REFERENCE.md" />
+    <None Include="src\ui\UIRaceManager\RaceDisplay\README.md" />
+  </ItemGroup>
+  <ItemGroup>
+    <Text Include="src\ui\UIRaceManager\RaceDisplay\VISUAL_LAYOUT.txt" />
+    <Text Include="src\ui\UIRaceManager\RaceDisplay\USAGE_EXAMPLE.txt" />
   </ItemGroup>
 </Project>

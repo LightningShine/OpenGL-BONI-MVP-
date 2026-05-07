@@ -35,6 +35,7 @@ extern std::vector<SplinePoint> g_smooth_track_points;
 extern std::mutex g_track_mutex;
 extern RaceManager* g_race_manager;
 
+static std::atomic<bool> g_simulation_stop_requested{ false };
 
 static std::atomic<uint32_t> g_telemetry_packets_in_window{ 0 };
 static std::atomic<uint32_t> g_telemetry_packets_per_second{ 0 };
@@ -1111,7 +1112,7 @@ static void simulationThreadWorker(int vehicle_id, std::vector<SplinePoint> smoo
     std::cout << "[SIM] Vehicle #" << vehicle_id << " initial speed: " << currentSpeedKph << " km/h" << std::endl;
 
     // ? 4. Main simulation loop
-    while (true)
+    while (!g_simulation_stop_requested.load(std::memory_order_relaxed))
     {
         // Vehicle will be created by first telemetry packet via processIncomingTelemetry()
         // No need to check if it exists here - simulation keeps running
@@ -1202,6 +1203,11 @@ static void simulationThreadWorker(int vehicle_id, std::vector<SplinePoint> smoo
     }
 }
 
+void simulationStopAll()
+{
+    g_simulation_stop_requested.store(true, std::memory_order_relaxed);
+}
+
 void simulateVehicleMovement(int vehicle_id, const std::vector<SplinePoint>& smooth_track_points)
 {
     // Guard clauses
@@ -1223,6 +1229,7 @@ void simulateVehicleMovement(int vehicle_id, const std::vector<SplinePoint>& smo
 
     // Launch simulation in separate thread.
     // Vehicle IDs are shared with prototypes in the 1..99 range; caller must pick a free ID.
+    g_simulation_stop_requested.store(false, std::memory_order_relaxed);
     std::thread simulation_thread(simulationThreadWorker, vehicle_id, smooth_track_points);
     simulation_thread.detach();
 }

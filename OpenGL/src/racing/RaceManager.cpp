@@ -9,6 +9,7 @@
 #include <filesystem>
 #include <algorithm>
 #include <cmath>
+#include <sstream>
 
 // ============================================================================
 // EXTERNAL GLOBALS
@@ -61,6 +62,9 @@ void RaceManager::Update(float deltaTime)
     if (!g_is_map_loaded || !m_lineInitialized)
         return;
 
+    if (m_sessionState == SessionState::Ended)
+        return;
+
     std::lock_guard<std::mutex> lock(g_vehicles_mutex);
 
     for (auto& [vehicleID, vehicle] : g_vehicles)
@@ -72,7 +76,7 @@ void RaceManager::Update(float deltaTime)
         // IMPORTANT: On clients, vehicles can be authoritative (replicated)
         // and we still need to record samples, otherwise TimeDiff can't work.
         // ====================================================================
-        if (vehicle.m_has_started_first_lap)
+        if (vehicle.m_has_started_first_lap && !vehicle.m_is_finished)
         {
             LapInfo sample;
             sample.timefromstart = vehicle.m_current_lap_timer;
@@ -169,7 +173,6 @@ void RaceManager::Update(float deltaTime)
         if (vehicle.m_is_finished)
         {
             // Just driving after finishing. Ignore laps.
-            vehicle.m_current_lap_timer += deltaTime;
             vehicle.m_total_progress = vehicle.m_completed_laps + vehicle.m_track_progress;
             continue;
         }
@@ -203,6 +206,11 @@ void RaceManager::Update(float deltaTime)
                 // State checking for Finish
                 if (m_sessionState == SessionState::Finishing) {
                     vehicle.m_is_finished = true;
+                    if (m_finishPositions.find(vehicleID) == m_finishPositions.end())
+                    {
+                        m_finishPositions[vehicleID] = static_cast<int>(m_finishPositions.size() + 1);
+                    }
+                    vehicle.m_current_lap_timer = 0.0f;
                     std::cout << "[RACE MANAGER] Vehicle #" << vehicleID << " HAS FINISHED!" << std::endl;
                 } else {
                     // Start new lap only if not finished
@@ -282,6 +290,13 @@ void RaceManager::Update(float deltaTime)
         }
         if (allFinished && !g_vehicles.empty()) {
             m_sessionState = SessionState::Ended;
+            if (m_raceTimerRunning)
+            {
+                auto now = std::chrono::steady_clock::now();
+                std::chrono::duration<float> elapsed = now - m_raceStartTime;
+                m_raceElapsedSeconds = elapsed.count();
+                m_raceTimerRunning = false;
+            }
             std::cout << "[SESSION] Session Ended! All cars have finished." << std::endl;
         }
     }
@@ -387,12 +402,26 @@ bool RaceManager::CheckLineSegmentIntersection(
     return false;
 }
 
+    auto formatTime = [](float totalSeconds) {
+        if (totalSeconds < 0.0f)
+            totalSeconds = 0.0f;
+
+        int minutes = static_cast<int>(totalSeconds) / 60;
+        float seconds = std::fmod(totalSeconds, 60.0f);
+
+        std::ostringstream ss;
+        ss << minutes << ":" << std::setw(6) << std::setfill('0')
+           << std::fixed << std::setprecision(3) << seconds;
+        return ss.str();
+    };
+
 // ============================================================================
 // GET STANDINGS (sorted leaderboard) - Internal version without mutex lock
 // ============================================================================
 std::vector<VehicleStanding> RaceManager::GetStandingsInternal() const
 {
     std::vector<VehicleStanding> standings;
+    const bool useFinishOrder = (m_sessionState == SessionState::Finishing || m_sessionState == SessionState::Ended);
     
     for (const auto& [vehicleID, vehicle] : g_vehicles)
     {
@@ -400,7 +429,7 @@ std::vector<VehicleStanding> RaceManager::GetStandingsInternal() const
         standing.vehicleID = vehicleID;
         standing.completedLaps = vehicle.m_completed_laps;
         standing.currentLapNumber = vehicle.m_current_lap_number;
-        standing.currentLapTime = vehicle.m_current_lap_timer;
+        standing.currentLapTime = vehicle.m_is_finished ? 0.0f : vehicle.m_current_lap_timer;
         standing.hasStartedFirstLap = vehicle.m_has_started_first_lap;
         standing.distanceFromStart = vehicle.m_track_progress;
         
@@ -418,8 +447,16 @@ std::vector<VehicleStanding> RaceManager::GetStandingsInternal() const
         // ====================================================================
         // CALCULATE TIME DIFFERENCES (using Internal versions - no mutex)
         // ====================================================================
-        standing.deltaTimeToBest = CalculateLapTimeDiffInternal(vehicleID);
-        standing.deltaTimeToLeader = CalculateLeaderTimeDiffInternal(vehicleID);
+        if (vehicle.m_is_finished || m_sessionState == SessionState::Ended)
+        {
+            standing.deltaTimeToBest = 0.0f;
+            standing.deltaTimeToLeader = 0.0f;
+        }
+        else
+        {
+            standing.deltaTimeToBest = CalculateLapTimeDiffInternal(vehicleID);
+            standing.deltaTimeToLeader = CalculateLeaderTimeDiffInternal(vehicleID);
+        }
         
         standings.push_back(standing);
     }
@@ -427,15 +464,29 @@ std::vector<VehicleStanding> RaceManager::GetStandingsInternal() const
     // ========================================================================
     // SORT: 1) Started racing? 2) Completed laps (desc), 3) Progress (desc)
     // ========================================================================
-    std::sort(standings.begin(), standings.end(), 
-        [](const VehicleStanding& a, const VehicleStanding& b) -> bool
+    std::sort(standings.begin(), standings.end(),
+        [this, useFinishOrder](const VehicleStanding& a, const VehicleStanding& b) -> bool
         {
             if (a.hasStartedFirstLap != b.hasStartedFirstLap)
                 return a.hasStartedFirstLap > b.hasStartedFirstLap;
-            
+
+            if (useFinishOrder)
+            {
+                const auto aIt = m_finishPositions.find(a.vehicleID);
+                const auto bIt = m_finishPositions.find(b.vehicleID);
+                const bool aFinished = (aIt != m_finishPositions.end());
+                const bool bFinished = (bIt != m_finishPositions.end());
+
+                if (aFinished != bFinished)
+                    return aFinished > bFinished;
+
+                if (aFinished && bFinished)
+                    return aIt->second < bIt->second;
+            }
+
             if (a.completedLaps != b.completedLaps)
                 return a.completedLaps > b.completedLaps;
-            
+
             return a.distanceFromStart > b.distanceFromStart;
         }
     );
@@ -510,7 +561,7 @@ float RaceManager::GetVehicleCurrentLapTime(int32_t vehicleID) const
     std::lock_guard<std::mutex> lock(g_vehicles_mutex);
     auto it = g_vehicles.find(vehicleID);
     if (it != g_vehicles.end())
-        return it->second.m_current_lap_timer;
+        return it->second.m_is_finished ? 0.0f : it->second.m_current_lap_timer;
     
     return 0.0f;
 }
@@ -567,11 +618,31 @@ float RaceManager::GetVehiclePreviousLapTime(int32_t vehicleID) const
 // ============================================================================
 float RaceManager::GetVehicleLapDelta(int32_t vehicleID) const
 {
+    if (m_sessionState == SessionState::Ended)
+        return 0.0f;
+
+    {
+        std::lock_guard<std::mutex> lock(g_vehicles_mutex);
+        auto it = g_vehicles.find(vehicleID);
+        if (it != g_vehicles.end() && it->second.m_is_finished)
+            return 0.0f;
+    }
+
     return CalculateLapTimeDiff(vehicleID); // Thread-safe (has mutex inside)
 }
 
 float RaceManager::GetVehicleLeaderDelta(int32_t vehicleID) const
 {
+    if (m_sessionState == SessionState::Ended)
+        return 0.0f;
+
+    {
+        std::lock_guard<std::mutex> lock(g_vehicles_mutex);
+        auto it = g_vehicles.find(vehicleID);
+        if (it != g_vehicles.end() && it->second.m_is_finished)
+            return 0.0f;
+    }
+
     return CalculateLeaderTimeDiff(vehicleID); // Thread-safe (has mutex inside)
 }
 
@@ -695,18 +766,12 @@ bool RaceManager::SaveResultsToFile() const
             // Total race time (sum of all laps + current lap)
             if (standing.completedLaps > 0 || standing.currentLapTime > 0.0f)
             {
-                int total_minutes = static_cast<int>(standing.totalRaceTime) / 60;
-                float total_seconds = std::fmod(standing.totalRaceTime, 60.0f);
-                file << "  Total Race Time: " << total_minutes << ":" 
-                     << std::fixed << std::setprecision(3) << total_seconds << "\n";
+                file << "  Total Race Time: " << formatTime(standing.totalRaceTime) << "\n";
             }
             
             if (standing.bestLapTime < 999999.0f)
             {
-                int minutes = static_cast<int>(standing.bestLapTime) / 60;
-                float seconds = std::fmod(standing.bestLapTime, 60.0f);
-                file << "  Best Lap Time: " << minutes << ":" 
-                     << std::fixed << std::setprecision(3) << seconds << "\n";
+                file << "  Best Lap Time: " << formatTime(standing.bestLapTime) << "\n";
             }
             else
             {
@@ -724,10 +789,8 @@ bool RaceManager::SaveResultsToFile() const
                 if (vehicle.m_current_lap_timer > 0.0f)
                 {
                     int current_lap_num = vehicle.m_current_lap_number;
-                    int current_minutes = static_cast<int>(vehicle.m_current_lap_timer) / 60;
-                    float current_seconds = std::fmod(vehicle.m_current_lap_timer, 60.0f);
-                    file << "  Current Lap " << current_lap_num << ": " << current_minutes << ":" 
-                         << std::fixed << std::setprecision(3) << current_seconds << " (in progress)\n";
+                    file << "  Current Lap " << current_lap_num << ": "
+                         << formatTime(vehicle.m_current_lap_timer) << " (in progress)\n";
                 }
                 
                 // Completed laps
@@ -736,10 +799,8 @@ bool RaceManager::SaveResultsToFile() const
                     file << "  Lap Times:\n";
                     for (auto lap_it = vehicle.m_laps.begin(); lap_it != vehicle.m_laps.end(); ++lap_it)
                     {
-                        int lap_minutes = static_cast<int>(lap_it->second.lapTime) / 60;
-                        float lap_seconds = std::fmod(lap_it->second.lapTime, 60.0f);
-                        file << "    Lap " << lap_it->first << ": " << lap_minutes << ":" 
-                             << std::fixed << std::setprecision(3) << lap_seconds << "\n";
+                        file << "    Lap " << lap_it->first << ": "
+                             << formatTime(lap_it->second.lapTime) << "\n";
                     }
                 }
             }

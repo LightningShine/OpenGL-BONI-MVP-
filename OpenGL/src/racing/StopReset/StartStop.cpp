@@ -3,10 +3,14 @@
 #include "../../rendering/Render.h"
 #include "../../Config.h"
 #include <iostream>
+#include <chrono>
 
 void RaceManager::StartSession() {
     ResetSession();
     m_sessionState = SessionState::Active;
+    m_raceStartTime = std::chrono::steady_clock::now();
+    m_raceTimerRunning = true;
+    m_raceElapsedSeconds = 0.0f;
     std::cout << "[SESSION] Session Started!" << std::endl;
 }
 
@@ -19,6 +23,9 @@ void RaceManager::StopSession() {
 
 void RaceManager::ResetSession() {
     m_sessionState = SessionState::Idle;
+    m_finishPositions.clear();
+    m_raceTimerRunning = false;
+    m_raceElapsedSeconds = 0.0f;
 
     std::lock_guard<std::mutex> lock(g_vehicles_mutex);
     for (auto& [id, vehicle] : g_vehicles) {
@@ -45,4 +52,13 @@ void RaceManager::ResetMap() {
 
 SessionState RaceManager::GetSessionState() const {
     return m_sessionState;
+}
+
+float RaceManager::GetRaceElapsedTime() const {
+    if (m_raceTimerRunning) {
+        auto now = std::chrono::steady_clock::now();
+        std::chrono::duration<float> elapsed = now - m_raceStartTime;
+        return elapsed.count();
+    }
+    return m_raceElapsedSeconds;
 }
