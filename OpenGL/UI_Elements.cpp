@@ -137,7 +137,8 @@ void UIElements::drawCompass(float camera_yaw, const MapOrigin& origin)
 // ============================================================================
 
 void UIElements::drawLapTimer(float current_lap_time, float last_lap_time, 
-                              float best_lap_time, float time_diff)
+                              float best_lap_time, float time_diff,
+                              int current_lap, int target_laps)
 {
     if (!m_font_title)
         return;
@@ -196,7 +197,16 @@ void UIElements::drawLapTimer(float current_lap_time, float last_lap_time,
     // === LAPTIME (title) ===
     ImGui::SetCursorPos(ImVec2(left_padding, current_y));
     ImGui::SetWindowFontScale(title_size / ImGui::GetFontSize());
-    ImGui::TextColored(label_color, "LAPTIME");
+    if (target_laps > 0 && current_lap > 0)
+    {
+        char lap_buf[64];
+        snprintf(lap_buf, sizeof(lap_buf), "LAP %d / %d", current_lap, target_laps);
+        ImGui::TextColored(label_color, lap_buf);
+    }
+    else
+    {
+        ImGui::TextColored(label_color, "LAPTIME");
+    }
     ImGui::SetWindowFontScale(1.0f);
     
     current_y += title_size;

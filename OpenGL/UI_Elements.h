@@ -26,7 +26,9 @@ public:
     void drawLapTimer(float current_lap_time = 0.0f, 
                      float last_lap_time = -1.0f,   // -1 means no data
                      float best_lap_time = -1.0f,   // -1 means no data
-                     float time_diff = 0.0f);
+                     float time_diff = 0.0f,
+                     int current_lap = 0,
+                     int target_laps = 0);
     
     // Leaderboard
     void drawLeaderboard();

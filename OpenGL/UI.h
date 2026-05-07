@@ -31,6 +31,7 @@ public:
     void RenderBottomMenu();
     void RenderNetworkingModal();
     void RenderHelpModal();
+    void RenderAutoStopModal();
     void RenderPrototypeToast();
     void EndFrame();
     
@@ -66,6 +67,10 @@ private:
     bool m_closeSplash;
     bool m_show_help_modal;
     
+    // Auto Stop config
+    int m_autostop_laps = 1;
+    char m_autostop_time[64] = "00:00";
+
     // Fonts
     ImFont* m_fontRegular;  // 12px for menu
     ImFont* m_fontUI;       // 16px for UI elements (modals, etc.)

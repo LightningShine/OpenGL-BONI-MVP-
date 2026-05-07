@@ -60,7 +60,12 @@ public:
     SessionState GetSessionState() const;
     float GetRaceElapsedTime() const;
     void SetStartFinishLine(const glm::vec2& p1, const glm::vec2& p2);  // Define start/finish line
-    
+
+    // Auto-stop mechanics
+    void SetAutoStopConditions(int maxLaps, float maxSeconds);
+    int GetAutoStopLaps() const;
+    float GetAutoStopSeconds() const;
+
     // ========================================================================
     // LEADERBOARD & STANDINGS
     // ========================================================================
@@ -95,6 +100,10 @@ private:
     std::chrono::steady_clock::time_point m_raceStartTime;
     bool m_raceTimerRunning = false;
     float m_raceElapsedSeconds = 0.0f;
+
+    // Auto-stop config
+    int m_autoStopMaxLaps = 0;
+    float m_autoStopMaxSeconds = 0.0f;
 
     // ========================================================================
     // START/FINISH LINE (defined as two points: left and right edge)

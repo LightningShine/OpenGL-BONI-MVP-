@@ -48,10 +48,29 @@ void RaceManager::SetStartFinishLine(const glm::vec2& p1, const glm::vec2& p2)
     m_startFinishP1 = p1;
     m_startFinishP2 = p2;
     m_lineInitialized = true;
-    
+
     std::cout << "[RACE MANAGER] Start/Finish line set: "
               << "P1(" << p1.x << ", " << p1.y << ") -> "
               << "P2(" << p2.x << ", " << p2.y << ")" << std::endl;
+}
+
+// ============================================================================
+// AUTO STOP
+// ============================================================================
+void RaceManager::SetAutoStopConditions(int maxLaps, float maxSeconds)
+{
+    m_autoStopMaxLaps = maxLaps;
+    m_autoStopMaxSeconds = maxSeconds;
+}
+
+int RaceManager::GetAutoStopLaps() const
+{
+    return m_autoStopMaxLaps;
+}
+
+float RaceManager::GetAutoStopSeconds() const
+{
+    return m_autoStopMaxSeconds;
 }
 
 // ============================================================================
@@ -64,6 +83,29 @@ void RaceManager::Update(float deltaTime)
 
     if (m_sessionState == SessionState::Ended)
         return;
+
+    if (m_sessionState == SessionState::Active)
+    {
+        bool timeHit = (m_autoStopMaxSeconds > 0.0f && GetRaceElapsedTime() >= m_autoStopMaxSeconds);
+        bool lapHit = false;
+
+        if (m_autoStopMaxLaps > 0)
+        {
+            for (const auto& [id, veh] : g_vehicles)
+            {
+                if (veh.m_completed_laps >= m_autoStopMaxLaps)
+                {
+                    lapHit = true;
+                    break;
+                }
+            }
+        }
+
+        if (timeHit || lapHit)
+        {
+            StopSession();
+        }
+    }
 
     std::lock_guard<std::mutex> lock(g_vehicles_mutex);
 

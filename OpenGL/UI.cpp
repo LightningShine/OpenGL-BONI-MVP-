@@ -40,6 +40,7 @@ void RenderRaceMenu();
 
 
 extern int g_focused_vehicle_id;
+bool g_show_autostop_modal = false;
 
 // Windows API for native file dialogs (include AFTER C++ standard library)
 #ifdef _WIN32
@@ -1260,18 +1261,21 @@ void UI::Render()
             const float lastLap = g_race_manager->GetVehiclePreviousLapTime(trackedVehicleId);
             const float bestLap = g_race_manager->GetVehicleBestLapTime(trackedVehicleId);
             const float deltaToBest = g_race_manager->GetVehicleLapDelta(trackedVehicleId);
+            const int currentLapNum = g_race_manager->GetVehicleCurrentLapNumber(trackedVehicleId);
+            const int targetLaps = g_race_manager->GetAutoStopLaps();
 
-            m_ui_elements->drawLapTimer(currentLap, lastLap, bestLap, deltaToBest);
+            m_ui_elements->drawLapTimer(currentLap, lastLap, bestLap, deltaToBest, currentLapNum, targetLaps);
         }
         else
         {
-            m_ui_elements->drawLapTimer(0.0f, -1.0f, -1.0f, 0.0f);
+            m_ui_elements->drawLapTimer(0.0f, -1.0f, -1.0f, 0.0f, 0, 0);
         }
     }
 
     RenderPrototypeToast();
     RenderNetworkingModal();
-    
+    RenderAutoStopModal();
+
     // Render help modal if open
     RenderHelpModal();
 }
@@ -1297,8 +1301,17 @@ void UI::RenderRaceStatusBar(ModeManager* modeManager)
     if (g_race_manager)
     {
         modeManager->SyncWithSessionState(g_race_manager->GetSessionState());
-        const float elapsed_seconds = std::max(0.0f, g_race_manager->GetRaceElapsedTime());
-        m_sessionElapsedMs = static_cast<uint32_t>(elapsed_seconds * 1000.0f);
+
+        float max_time = g_race_manager->GetAutoStopSeconds();
+        if (max_time > 0.0f) {
+            float elapsed = g_race_manager->GetRaceElapsedTime();
+            float remaining = std::max(0.0f, max_time - elapsed);
+            m_sessionElapsedMs = static_cast<uint32_t>(remaining * 1000.0f);
+        } else {
+            const float elapsed_seconds = std::max(0.0f, g_race_manager->GetRaceElapsedTime());
+            m_sessionElapsedMs = static_cast<uint32_t>(elapsed_seconds * 1000.0f);
+        }
+
         m_raceDisplay.GetStatusBar().UpdateSessionTime(m_sessionElapsedMs);
     }
 
@@ -1325,8 +1338,8 @@ void UI::RenderRaceStatusBar(ModeManager* modeManager)
     const float flag_y = bar_y + (bar_h - flag_size) * 0.5f;
     const float flag_rounding = flag_size * 0.15f;
 
-    const float pill_pad_x = bar_h * 0.35f;
-    const float flag_to_text = bar_h * 3.5f; 
+    const float pill_pad_x = bar_h * 0.4f;
+    const float flag_to_text = bar_h * 5.0f; 
 
     const float pill_w = pill_pad_x + flag_size + flag_to_text + phase_size.x + flag_to_text + flag_size + pill_pad_x;
     const float pill_h = bar_h;
@@ -2526,4 +2539,136 @@ bool UI::WantsMouseCapture() const {
 
 bool UI::WantsKeyboardCapture() const {
     return ImGui::GetIO().WantCaptureKeyboard;
+}
+
+void UI::RenderAutoStopModal()
+{
+    if (!g_show_autostop_modal)
+        return;
+
+    ImVec2 display_size = ImGui::GetIO().DisplaySize;
+
+    ImGui::SetNextWindowPos(ImVec2(0, 0));
+    ImGui::SetNextWindowSize(display_size);
+    ImGui::SetNextWindowBgAlpha(UIConfig::MODAL_OVERLAY_ALPHA);
+
+    ImGuiWindowFlags bg_flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+        ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings;
+
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.0f, 0.0f, 0.0f, UIConfig::MODAL_OVERLAY_ALPHA));
+    if (ImGui::Begin("##AutoStopBackground", nullptr, bg_flags))
+    {
+        ImVec2 modal_size = ImVec2(UIConfig::HELP_MODAL_WIDTH * display_size.x * 0.8f, UIConfig::HELP_MODAL_HEIGHT * display_size.y * 0.6f);
+        ImVec2 modal_pos = ImVec2((display_size.x - modal_size.x) * 0.5f, (display_size.y - modal_size.y) * 0.5f);
+        ImVec2 mouse_pos = ImGui::GetMousePos();
+
+        bool clicked_outside = ImGui::IsMouseClicked(0) &&
+            (mouse_pos.x < modal_pos.x || mouse_pos.x > modal_pos.x + modal_size.x ||
+             mouse_pos.y < modal_pos.y || mouse_pos.y > modal_pos.y + modal_size.y);
+
+        if (clicked_outside)
+            g_show_autostop_modal = false;
+    }
+    ImGui::End();
+    ImGui::PopStyleColor();
+
+    ImVec2 modal_size = ImVec2(UIConfig::HELP_MODAL_WIDTH * display_size.x * 0.8f, UIConfig::HELP_MODAL_HEIGHT * display_size.y * 0.6f);
+    ImGui::SetNextWindowPos(ImVec2(display_size.x * 0.5f, display_size.y * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(modal_size);
+    ImGui::SetNextWindowFocus();
+
+    ImGuiWindowFlags modal_flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse;
+
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(UIConfig::MODAL_PADDING_X * display_size.x + 10.0f, UIConfig::MODAL_PADDING_Y * display_size.y + 10.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(UIConfig::MODAL_ITEM_SPACING_X * display_size.x, 15.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 12.0f);
+
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(UIConfig::MODAL_BG_R, UIConfig::MODAL_BG_G, UIConfig::MODAL_BG_B, UIConfig::MODAL_BG_ALPHA));
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_TitleBg, ImVec4(UIConfig::MODAL_TITLE_BG_R, UIConfig::MODAL_TITLE_BG_G, UIConfig::MODAL_TITLE_BG_B, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_TitleBgActive, ImVec4(UIConfig::MODAL_TITLE_ACTIVE_R, UIConfig::MODAL_TITLE_ACTIVE_G, UIConfig::MODAL_TITLE_ACTIVE_B, 1.0f));
+
+    bool modal_open = true;
+    if (ImGui::Begin("Auto Stop Conditions", &modal_open, modal_flags))
+    {
+        ImGui::PushFont(m_fontUI);
+
+        float windowWidth = ImGui::GetWindowSize().x;
+        const char* headerText = "Choose when the race will automatically end:";
+        float textWidth = ImGui::CalcTextSize(headerText).x;
+
+        ImGui::SetCursorPos(ImVec2((windowWidth - textWidth) * 0.5f, ImGui::GetCursorPosY()));
+        ImGui::TextUnformatted(headerText);
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        // Inputs are 2 steps lighter than background
+        ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(UIConfig::MODAL_BG_R + 0.12f, UIConfig::MODAL_BG_G + 0.12f, UIConfig::MODAL_BG_B + 0.13f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ImVec4(UIConfig::MODAL_BG_R + 0.18f, UIConfig::MODAL_BG_G + 0.18f, UIConfig::MODAL_BG_B + 0.19f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_FrameBgActive, ImVec4(UIConfig::MODAL_BG_R + 0.22f, UIConfig::MODAL_BG_G + 0.22f, UIConfig::MODAL_BG_B + 0.23f, 1.0f));
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(8.0f, 8.0f));
+
+        ImGui::Text("Laps:");
+        ImGui::SetNextItemWidth(windowWidth * 0.9); // Use available width
+        // Explicitly format integer input to be visible and editable easily
+        ImGui::InputInt("##laps", &m_autostop_laps, 0, 0);
+
+        ImGui::Spacing();
+
+        ImGui::Text("Time (HH:MM:SS):");
+        ImGui::SetNextItemWidth(windowWidth * 0.9);
+        ImGui::InputText("##time", m_autostop_time, sizeof(m_autostop_time));
+
+        ImGui::PopStyleVar(2);
+        ImGui::PopStyleColor(3);
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0xDA / 255.0f, 0xA5 / 255.0f, 0x40 / 255.0f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0xDA / 255.0f, 0xA5 / 255.0f, 0x40 / 255.0f, 0.85f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0xDA / 255.0f, 0xA5 / 255.0f, 0x40 / 255.0f, 0.75f));
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 8.0f); // More rounded edges
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0.0f, 10.0f)); // Taller button
+
+        // Slightly bigger button based on the prompt width
+        float btnW = 180.0f;
+        float btnH = 45.0f; // Adjusted below with frame padding anyway
+        ImGui::SetCursorPosX((windowWidth - btnW) * 0.5f);
+        if (ImGui::Button("Start Race", ImVec2(btnW, btnH)))
+        {
+            if (g_race_manager)
+            {
+                // Parse HH:MM:SS
+                int h = 0, m = 0, s = 0;
+                float totalSeconds = 0.0f;
+                if (sscanf_s(m_autostop_time, "%d:%d:%d", &h, &m, &s) == 3)
+                {
+                    totalSeconds = static_cast<float>(h * 3600 + m * 60 + s);
+                }
+                else if (sscanf_s(m_autostop_time, "%d:%d", &m, &s) == 2)
+                {
+                    totalSeconds = static_cast<float>(m * 60 + s);
+                }
+
+                g_race_manager->SetAutoStopConditions(m_autostop_laps, totalSeconds);
+                g_race_manager->StartSession();
+            }
+            g_show_autostop_modal = false;
+        }
+
+        ImGui::PopStyleVar(2);
+        ImGui::PopStyleColor(3);
+
+        ImGui::PopFont();
+    }
+    ImGui::End();
+
+    if (!modal_open)
+        g_show_autostop_modal = false;
+
+    ImGui::PopStyleColor(4);
+    ImGui::PopStyleVar(3);
 }

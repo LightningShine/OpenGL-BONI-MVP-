@@ -9,6 +9,8 @@
 
 extern RaceManager* g_race_manager;
 
+extern bool g_show_autostop_modal;
+
 void RenderRaceMenu()
 {
     if (ImGui::BeginMenu("Race"))
@@ -40,6 +42,19 @@ void RenderRaceMenu()
             std::cout << "[UI] Race Restarted\n";
             g_race_manager->ResetSession();
         }
+
+        ImGui::Separator();
+
+        if (ImGui::MenuItem("Auto Stop..."))
+        {
+            g_show_autostop_modal = true;
+        }
+
+        ImGui::Separator();
+
+        ImGui::BeginDisabled();
+        ImGui::MenuItem("Settings");
+        ImGui::EndDisabled();
 
         ImGui::EndMenu();
     }
