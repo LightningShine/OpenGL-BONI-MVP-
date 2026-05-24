@@ -120,23 +120,34 @@ void RaceManager::Update(float deltaTime)
         // ====================================================================
         if (vehicle.m_has_started_first_lap && !vehicle.m_is_finished)
         {
-            LapInfo sample;
-            sample.timefromstart = vehicle.m_current_lap_timer;
-            sample.progress = vehicle.m_track_progress;
-            sample.timestamp = std::chrono::steady_clock::now();
-            sample.total_progress = vehicle.m_total_progress;
-            sample.gForceX = static_cast<float>(vehicle.m_g_force_x);
-            sample.gForceY = static_cast<float>(vehicle.m_g_force_y);
-            sample.aceleration = static_cast<float>(vehicle.m_acceleration);
-            sample.speed = static_cast<float>(vehicle.m_speed_kph);
-            sample.curentPosition = 0; // Updated after standings sort
+            constexpr float kTelemetrySampleInterval = 0.1f; // 10 Hz
+            constexpr size_t kMaxSamplesPerLap = 36000;       // 1 hour cap per lap
+            vehicle.m_telemetry_sample_timer += deltaTime;
 
-            if (vehicle.laps.find(vehicle.m_current_lap_number) == vehicle.laps.end())
+            if (vehicle.m_telemetry_sample_timer >= kTelemetrySampleInterval)
             {
-                vehicle.laps[vehicle.m_current_lap_number] = CarLapSessions();
-                vehicle.laps[vehicle.m_current_lap_number].lapnumber = vehicle.m_current_lap_number;
+                vehicle.m_telemetry_sample_timer = 0.0f;
+
+                LapInfo sample;
+                sample.timefromstart = vehicle.m_current_lap_timer;
+                sample.progress = vehicle.m_track_progress;
+                sample.timestamp = std::chrono::steady_clock::now();
+                sample.total_progress = vehicle.m_total_progress;
+                sample.gForceX = static_cast<float>(vehicle.m_g_force_x);
+                sample.gForceY = static_cast<float>(vehicle.m_g_force_y);
+                sample.aceleration = static_cast<float>(vehicle.m_acceleration);
+                sample.speed = static_cast<float>(vehicle.m_speed_kph);
+                sample.curentPosition = 0; // Updated after standings sort
+
+                if (vehicle.laps.find(vehicle.m_current_lap_number) == vehicle.laps.end())
+                {
+                    vehicle.laps[vehicle.m_current_lap_number] = CarLapSessions();
+                    vehicle.laps[vehicle.m_current_lap_number].lapnumber = vehicle.m_current_lap_number;
+                }
+                auto& currentLapSamples = vehicle.laps[vehicle.m_current_lap_number].samples;
+                if (currentLapSamples.size() < kMaxSamplesPerLap)
+                    currentLapSamples.push_back(sample);
             }
-            vehicle.laps[vehicle.m_current_lap_number].samples.push_back(sample);
         }
 
         // Vehicles driven by processed server state already have authoritative
@@ -856,7 +867,14 @@ bool RaceManager::SaveResultsToFile() const
     file << "========================================\n";
     
     file.close();
-    
+
+    // Free telemetry memory now that results are saved
+    {
+        std::lock_guard<std::mutex> lock(g_vehicles_mutex);
+        for (auto& [id, vehicle] : g_vehicles)
+            vehicle.laps.clear();
+    }
+
     std::cout << "[RACE MANAGER] Results saved to: " << filename << std::endl;
     return true;
 }

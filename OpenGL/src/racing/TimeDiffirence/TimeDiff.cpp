@@ -1,4 +1,6 @@
 ﻿#include "./TimeDiff.h"
+#include "../../rendering/Interpolation.h"
+#include "../../Config.h"
 #include <algorithm>
 #include <chrono>
 #include <limits>
@@ -6,6 +8,7 @@
 #include <cmath>
 #include <iostream>
 #include <iomanip>
+#include <unordered_map>
 
 // ============================================================================
 // DEBUG: Uncomment to enable detailed time diff logging
@@ -15,6 +18,8 @@
 // Prevent Windows.h min/max macros from interfering
 #undef max
 #undef min
+
+extern std::vector<SplinePoint> g_smooth_track_points;
 
 // ============================================================================
 // CALCULATE LAP TIME DIFFERENCE TO BEST LAP (INTERNAL - NO MUTEX)
@@ -79,85 +84,154 @@ float CalculateLapTimeDiff(int vehicleID)
 }
 
 // ============================================================================
+// TRACK LENGTH CACHE
+// Computes total spline length in normalized units once and caches it.
+// g_smooth_track_points uses normalized coordinates (same as m_track_progress),
+// so the result is in the same unit space. Multiply by a meters-per-unit scale
+// to convert to real-world meters when needed.
+// ============================================================================
+float GetCachedTrackLengthMeters()
+{
+    static float s_cachedLength = 0.0f;
+    static size_t s_cachedPointCount = 0;
+
+    if (g_smooth_track_points.size() == s_cachedPointCount && s_cachedLength > 0.0f)
+        return s_cachedLength;
+
+    s_cachedPointCount = g_smooth_track_points.size();
+    if (s_cachedPointCount < 2)
+    {
+        s_cachedLength = 0.0f;
+        return 0.0f;
+    }
+
+    float total = 0.0f;
+    for (size_t i = 1; i < s_cachedPointCount; ++i)
+    {
+        glm::vec2 d = g_smooth_track_points[i].position - g_smooth_track_points[i - 1].position;
+        total += std::sqrt(d.x * d.x + d.y * d.y);
+    }
+    // Close the loop
+    {
+        glm::vec2 d = g_smooth_track_points[0].position - g_smooth_track_points[s_cachedPointCount - 1].position;
+        total += std::sqrt(d.x * d.x + d.y * d.y);
+    }
+
+    s_cachedLength = total;
+    return s_cachedLength;
+}
+
+// ============================================================================
 // CALCULATE TIME DIFFERENCE TO LEADER (INTERNAL - NO MUTEX)
-// Finds when leader was at same total progress and calculates time gap
-// Called from GetStandingsInternal where mutex is already locked
+//
+// Algorithm:
+//   gap_time = progressGap × trackLengthMeters / referenceSpeedMs
+//
+// Reference speed priority:
+//   1. trackLength / leaderBestLapTime  — immune to instantaneous braking,
+//      changes only when a new best lap is recorded (F1/WEC standard approach).
+//   2. EMA-smoothed leader speed        — fallback when no best lap exists yet,
+//      ~2 s time constant prevents gap collapse on hard braking.
+//
+// Using a single reference speed for ALL cars guarantees monotonic gaps:
+// a car further behind always shows a strictly larger gap than one ahead.
 // ============================================================================
 float CalculateLeaderTimeDiffInternal(int vehicleID)
 {
-    // 1. Get Vehicle current total lap progress by Vehicle ID
-    // 2. Find when leader was at this same track progress 
-    // 3. Calculate the difference between Vehicle current progress and leader progress time at the same track progress
-
     if (g_vehicles.find(vehicleID) == g_vehicles.end()) return 0.0f;
     auto& vehicle = g_vehicles.at(vehicleID);
-    if (vehicle.m_is_leader) return 0.0f;
 
-    // Find leader
+    // -----------------------------------------------------------------------
+    // Find leader by highest total_progress — NOT by m_is_leader flag.
+    // m_is_leader is updated AFTER GetStandingsInternal() runs, so on a lap
+    // boundary it can be stale for one frame and return 0 for everyone.
+    // -----------------------------------------------------------------------
     int leaderID = -1;
+    double leaderProgress = -1.0;
     for (auto& [id, v] : g_vehicles)
     {
-        if (v.m_is_leader) {
+        if (v.m_has_started_first_lap && v.m_total_progress > leaderProgress)
+        {
+            leaderProgress = v.m_total_progress;
             leaderID = id;
-            break;
         }
     }
-    if (leaderID == -1) return 0.0f;
+    if (leaderID == -1 || leaderID == vehicleID) return 0.0f;
 
     auto& leader = g_vehicles.at(leaderID);
 
-    // ========================================================================
-    // Get vehicle's CURRENT position (total_progress accounts for lap count)
-    // ========================================================================
-    double vehicleProgress = vehicle.m_total_progress;
+    // -----------------------------------------------------------------------
+    // 1. Progress gap (dimensionless, 1.0 = one full lap ahead)
+    // -----------------------------------------------------------------------
+    double progressGap = leader.m_total_progress - vehicle.m_total_progress;
+    if (progressGap <= 0.0) return 0.0f;
 
-    // ========================================================================
-    // Find when LEADER was at the SAME total_progress point
-    // Uses total_progress (not track_progress) to account for lap count
-    // This prevents cars 1 lap behind from being considered ahead
-    // ========================================================================
-    std::chrono::steady_clock::time_point leaderTimeAtThisProgress;
-    double bestDiff = std::numeric_limits<double>::max();
-    bool found = false;
-    int foundLapNum = -1;
-    double foundProgress = 0.0;
+    // -----------------------------------------------------------------------
+    // 2. Convert progress gap to real meters.
+    //    GetCachedTrackLengthMeters() returns spline length in NORMALIZED units.
+    //    MAP_SIZE = 100 means 1 normalized unit = 100 meters.
+    // -----------------------------------------------------------------------
+    float trackLengthNorm = GetCachedTrackLengthMeters();
+    if (trackLengthNorm <= 0.0f) return 0.0f;
+    const float trackLengthMeters = trackLengthNorm * static_cast<float>(MapConstants::MAP_SIZE);
 
-    // Search all leader's lap history
-    for (auto& [lapNum, lap] : leader.laps)
+    // -----------------------------------------------------------------------
+    // 3. Reference speed for gap calculation.
+    //
+    // Professional approach (F1/WEC): use trackLength / bestLapTime as the
+    // reference speed. This value only changes when a new best lap is set,
+    // so hard braking by the leader has ZERO effect on the displayed gaps.
+    //
+    // Fallback (no best lap yet): EMA-smoothed speed with a long time constant
+    // so that instantaneous deceleration does not collapse the gap display.
+    // -----------------------------------------------------------------------
+    constexpr float kMinSpeedKph = 10.0f; // absolute floor to avoid div-by-zero
+
+    float referenceSpeedMs = 0.0f;
+
+    // Primary: theoretical lap pace (most stable, immune to braking)
+    const float leaderBestLap = leader.m_best_lap_time;
+    if (leaderBestLap > 0.0f)
     {
-        for (auto& sample : lap.samples)
+        referenceSpeedMs = trackLengthMeters / leaderBestLap;
+    }
+    else
+    {
+        // Fallback: EMA-smoothed leader speed.
+        // alpha = 0.05 → ~20-sample time constant at 10 Hz ≈ 2 seconds of smoothing.
+        // Stored per leaderID so it survives across calls.
+        constexpr float kEmaAlpha = 0.05f;
+
+        static std::unordered_map<int, float> s_emaSpeed;
+
+        float rawKph = static_cast<float>(leader.m_speed_kph);
+        auto emaIt = s_emaSpeed.find(leaderID);
+        if (emaIt == s_emaSpeed.end())
         {
-            double diff = std::abs(sample.total_progress - vehicleProgress);
-            
-            if (diff < bestDiff)
-            {
-                bestDiff = diff;
-                leaderTimeAtThisProgress = sample.timestamp;
-                foundLapNum = lapNum;
-                foundProgress = sample.total_progress;
-                found = true;
-            }
+            s_emaSpeed[leaderID] = rawKph;
+            emaIt = s_emaSpeed.find(leaderID);
         }
+        else
+        {
+            emaIt->second = emaIt->second + kEmaAlpha * (rawKph - emaIt->second);
+        }
+
+        float smoothedKph = emaIt->second;
+        if (smoothedKph < kMinSpeedKph)
+            smoothedKph = kMinSpeedKph;
+
+        referenceSpeedMs = smoothedKph / 3.6f;
     }
 
-    if (!found) return 0.0f;
+    const float gapMeters = static_cast<float>(progressGap) * trackLengthMeters;
+    float gapSeconds      = gapMeters / referenceSpeedMs;
 
-    // ========================================================================
-    // Calculate time gap (in seconds)
-    // Uses SYSTEM TIME (now) to measure how long ago leader was at this position
-    // Positive = vehicle is behind (leader passed this point earlier)
-    // ========================================================================
-    auto now = std::chrono::steady_clock::now();
-    std::chrono::duration<float> timeDiff = now - leaderTimeAtThisProgress;
-    
-    float gapSeconds = timeDiff.count();
-
-    // Debug output to diagnose why gaps are identical
     #ifdef DEBUG_TIME_DIFF
-    std::cout << "[TIME DIFF] Vehicle #" << vehicleID 
-              << " | Progress: " << std::fixed << std::setprecision(4) << vehicleProgress
-              << " | Leader was at " << foundProgress << " (Lap " << foundLapNum << ")"
-              << " | Gap: " << std::setprecision(3) << gapSeconds << "s" << std::endl;
+    std::cout << "[LEADER DIFF] veh#" << vehicleID
+              << " gap=" << std::fixed << std::setprecision(4) << progressGap
+              << " gapM=" << gapMeters
+              << " leaderKph=" << leaderSpeedKph
+              << " result=" << std::setprecision(3) << gapSeconds << "s" << std::endl;
     #endif
 
     return gapSeconds;

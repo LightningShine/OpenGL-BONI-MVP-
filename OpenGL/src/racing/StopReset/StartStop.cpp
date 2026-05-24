@@ -40,6 +40,7 @@ void RaceManager::ResetSession() {
         vehicle.bestlapID = -1;
         vehicle.m_prev_track_progress = 0.0;
         vehicle.m_is_finished = false;
+        vehicle.m_telemetry_sample_timer = 0.0f;
     }
     std::cout << "[SESSION] Session Reset! All lap data cleared." << std::endl;
 }

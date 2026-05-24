@@ -108,6 +108,9 @@ public:
 	// FUTURE: Detailed telemetry history
 	// ========================================================================
 	std::map<int, CarLapSessions> laps;
+
+	// Accumulator for throttling telemetry sample recording (seconds)
+	float m_telemetry_sample_timer = 0.0f;
 	
 	// ========================================================================
 	// COLOR GENERATION

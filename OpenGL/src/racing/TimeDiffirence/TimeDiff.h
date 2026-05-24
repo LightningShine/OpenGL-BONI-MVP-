@@ -12,3 +12,7 @@ float CalculateLapTimeDiffInternal(int vehicleID);  // Internal (no mutex)
 // Calculate time difference to race leader at same total progress
 float CalculateLeaderTimeDiff(int vehicleID);          // Thread-safe (with mutex)
 float CalculateLeaderTimeDiffInternal(int vehicleID);  // Internal (no mutex)
+
+// Returns cached track length in meters (computed from g_smooth_track_points).
+// Returns 0 if track is not loaded.
+float GetCachedTrackLengthMeters();
