@@ -40,6 +40,7 @@ void RenderRaceMenu();
 
 
 extern int g_focused_vehicle_id;
+extern bool g_show_vehicle_names;
 bool g_show_autostop_modal = false;
 
 // Windows API for native file dialogs (include AFTER C++ standard library)
@@ -2153,6 +2154,7 @@ void UI::RenderTopMenu()
             }
             ImGui::Separator();
            ImGui::MenuItem("Prototype panel", nullptr, &m_allowPrototypeToast);
+            ImGui::MenuItem("Vehicle names", nullptr, &g_show_vehicle_names);
             if (ImGui::MenuItem("Toggle Fullscreen", "F11", false, false)) {}
             ImGui::EndMenu();
         }

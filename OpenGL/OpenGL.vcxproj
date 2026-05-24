@@ -236,6 +236,7 @@
     <ClCompile Include="src\racing\TimeDiffirence\TimeDiff.cpp" />
     <ClCompile Include="src\rendering\Interpolation.cpp" />
     <ClCompile Include="src\rendering\Render.cpp" />
+    <ClCompile Include="src\rendering\VehicleNameRenderer.cpp" />
     <ClCompile Include="src\track\TelemetryTrackBuilder.cpp" />
     <ClCompile Include="src\track\TrackRecorder.cpp" />
     <ClCompile Include="src\ui\UIRaceManager\RaceDisplay\RaceDisplay.cpp" />
@@ -269,6 +270,7 @@
     <ClInclude Include="src\racing\TimeDiffirence\TimeDiff.h" />
     <ClInclude Include="src\rendering\Interpolation.h" />
     <ClInclude Include="src\rendering\Render.h" />
+    <ClInclude Include="src\rendering\VehicleNameRenderer.h" />
     <ClInclude Include="src\track\TelemetryTrackBuilder.h" />
     <ClInclude Include="src\track\TrackRecorder.h" />
     <ClInclude Include="src\ui\UIRaceManager\RaceDisplay\RaceDisplay.h" />

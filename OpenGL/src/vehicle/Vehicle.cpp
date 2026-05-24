@@ -3,11 +3,15 @@
 #include "../input/Input.h"
 #include "../Config.h"
 #include "../rendering/Interpolation.h"
+#include "../rendering/VehicleNameRenderer.h"
+#include "../../UI.h"
 #include <cmath>
 #include <iostream>
 #include <iomanip>
 #include <thread>
 #include <GeographicLib/UTMUPS.hpp>
+
+extern UI* g_ui;
 
 // === ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ===
 std::map<int32_t, Vehicle> g_vehicles;
@@ -16,6 +20,8 @@ std::atomic<bool> g_is_vehicles_active = false;
 
 // ✅ Система выбора машины для отслеживания
 int g_focused_vehicle_id = -1;  // -1 = лидер (дефолт)
+
+bool g_show_vehicle_names = true; // show TLA names above vehicles
 
 // ✅ Генератор уникальных ID
 int32_t generateVehicleID()
@@ -516,6 +522,19 @@ void renderAllVehicles(GLuint shader_program, GLuint vao, GLuint vbo,
     // ✅ Рендеринг БЕЗ блокировки (может занять 10-20ms)
     for (const RenderData& data : vehiclesToRender) {
         renderVehicle(shader_program, vao, vbo, data.vehicle, projection);
+    }
+
+    // Draw TLA names above each vehicle if enabled
+    if (g_show_vehicle_names) {
+        for (const RenderData& data : vehiclesToRender) {
+            if (!data.vehicle.name.empty()) {
+                VehicleNameRenderer::DrawName(
+                    data.vehicle.name,
+                    static_cast<float>(data.vehicle.m_normalized_x),
+                    static_cast<float>(data.vehicle.m_normalized_y),
+                    projection, g_ui ? g_ui->GetTitleFont() : nullptr, 1.0f);
+            }
+        }
     }
 }
 

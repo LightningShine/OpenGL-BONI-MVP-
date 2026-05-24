@@ -59,6 +59,8 @@ public:
                               const glm::mat4& projection_matrix,
                               float finish_line_bias = 0.0f);
 
+    ImFont* GetTitleFont() const { return m_fontTitle; }
+
 private:
     GLFWwindow* m_window;
     ImGuiContext* m_context;

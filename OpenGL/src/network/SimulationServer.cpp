@@ -770,6 +770,10 @@ void processIncomingTelemetry(const TelemetryPacket& packet)
 
             new_vehicle.m_has_authoritative_state = false;
 
+            // Assign display name: simulation vehicles get "CAR<ID>", real prototypes "Unknown"
+            // (Real prototype name lookup will be added when PilotDatabase is implemented.)
+            new_vehicle.name = "CAR" + std::to_string(raceID);
+
             // ? Use emplace to avoid default constructor call!
             auto [insertIt, inserted] = g_vehicles.emplace(raceID, std::move(new_vehicle));
 
@@ -1165,6 +1169,7 @@ static void simulationThreadWorker(int vehicle_id, std::vector<SplinePoint> smoo
                 new_vehicle.m_prev_track_progress = track_progress;
                 new_vehicle.m_has_authoritative_state = false;
                 new_vehicle.m_last_update_time = std::chrono::steady_clock::now();
+                new_vehicle.name = "CAR" + std::to_string(vehicle_id);
                 auto [insertedIt, inserted] = g_vehicles.emplace(vehicle_id, std::move(new_vehicle));
                 it = insertedIt;
             }

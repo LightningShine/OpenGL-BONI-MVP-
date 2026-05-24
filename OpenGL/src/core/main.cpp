@@ -39,6 +39,7 @@
 #include "../input/Input.h"
 #include "../rendering/Interpolation.h"
 #include "../rendering/Render.h"          
+#include "../rendering/VehicleNameRenderer.h"
 #include "../../UI.h"
 #include "../../UI_Elements.h"
 #include "../network/Server.h"
@@ -879,6 +880,9 @@ int main()
 
 	// Variables moved above UI initialization
 
+	// ========================== VEHICLE NAME RENDERER INITIALIZATION ==========================
+	VehicleNameRenderer::Initialize();
+
 	// ========================== INPUT ==========================
 	
 	ui.SetTrackData(&points, &points_mutex);
@@ -1215,6 +1219,7 @@ int main()
 #endif
 	
 	TrackRenderer::clearTrackCache();  // Clear track VAO/VBO
+	VehicleNameRenderer::Shutdown();
 	glDeleteVertexArrays(1, &vao);
 	glDeleteBuffers(1, &vbo);
 	glDeleteVertexArrays(1, &grid_vao);  // Clean grid VAO/VBO

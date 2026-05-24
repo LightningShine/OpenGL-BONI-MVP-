@@ -10,6 +10,7 @@
 #include <glm/gtc/type_ptr.hpp>
 
 extern int g_focused_vehicle_id;  // -1 = лидер (дефолт), иначе ID машины
+extern bool g_show_vehicle_names; // true = show TLA names above vehicles
 
 struct LapData
 {

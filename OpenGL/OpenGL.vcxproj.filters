@@ -149,6 +149,7 @@
     </ClCompile>
     <ClCompile Include="src\ui\UIRaceManager\RaceDisplay\RaceStatusBar.cpp" />
     <ClCompile Include="src\ui\UIRaceManager\RaceDisplay\RaceDisplay.cpp" />
+    <ClCompile Include="src\rendering\VehicleNameRenderer.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\input\Input.h">
@@ -222,6 +223,7 @@
     </ClInclude>
     <ClInclude Include="src\ui\UIRaceManager\RaceDisplay\RaceFlags.h" />
     <ClInclude Include="src\ui\UIRaceManager\RaceDisplay\RaceStatusBar.h" />
+    <ClInclude Include="src\rendering\VehicleNameRenderer.h" />
   </ItemGroup>
   <ItemGroup>
     <None Include="..\code_writing_guide.md" />
