@@ -12,6 +12,10 @@
 
 UIElements::UIElements()
     : m_font_title(nullptr)
+    , m_font_roboto_mono(nullptr)
+    , m_font_oswald(nullptr)
+    , m_font_oswald_bold(nullptr)
+    , m_font_jetbrains_mono(nullptr)
     , m_compass_texture(nullptr)
 {
 }
@@ -509,256 +513,279 @@ void UIElements::RenderStartFinishText(float camera_zoom, const glm::vec2& camer
 }
 
 // ============================================================================
-// LEADERBOARD with Fixed Aspect Ratio
+// LEADERBOARD - F1-style with POS | DRIVER | TIME/GAP columns
 // ============================================================================
 
 void UIElements::drawLeaderboard()
 {
-    // Get race standings (thread-safe)
     extern RaceManager* g_race_manager;
-    extern std::mutex g_vehicles_mutex;
     extern int g_focused_vehicle_id;
-    
+
     if (!g_race_manager)
         return;
-    
+
     std::vector<VehicleStanding> standings = g_race_manager->GetStandings();
-    
     if (standings.empty())
         return;
-    
-    // ✅ Нужен шрифт Russo One
-    if (!m_font_title)
-        return;
-    
+
     ImGuiIO& io = ImGui::GetIO();
     ImVec2 display_size = io.DisplaySize;
-    
-    // Calculate window dimensions maintaining aspect ratio
-    float window_height = display_size.y * UIElementsConfig::Leaderboard::HEIGHT_RATIO;
-    float window_width = display_size.x * UIElementsConfig::Leaderboard::WIDTH_RATIO;
-    
-    // Position: left margin
-    float left_margin = display_size.x * ( 1.0f - UIElementsConfig::Leaderboard::LEFT_MARGIN_RATIO ) - window_width;
-    ImVec2 window_pos(left_margin, display_size.y * 0.05f); // 5% from top
-    
-    // Setup window
-    ImGui::SetNextWindowPos(window_pos);
-    ImGui::SetNextWindowSize(ImVec2(window_width, window_height));
-    
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(
-        UIElementsConfig::Leaderboard::BG_COLOR_R,
-        UIElementsConfig::Leaderboard::BG_COLOR_G,
-        UIElementsConfig::Leaderboard::BG_COLOR_B,
-        UIElementsConfig::Leaderboard::BG_COLOR_A
-    ));
-    
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8.0f);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
-    
-    ImGui::Begin("##Leaderboard", nullptr, 
-        ImGuiWindowFlags_NoTitleBar | 
-        ImGuiWindowFlags_NoResize | 
-        ImGuiWindowFlags_NoMove | 
-        ImGuiWindowFlags_NoScrollbar |
-        ImGuiWindowFlags_NoCollapse |
-        ImGuiWindowFlags_NoSavedSettings);
-    
-    ImDrawList* draw_list = ImGui::GetWindowDrawList();
-    
-    // ✅ Используем Russo One для всего
-    ImGui::PushFont(m_font_title);
-    
-    // Text padding
-    float text_padding = window_width * (UIElementsConfig::Leaderboard::TEXT_PADDING_RATIO / UIElementsConfig::Leaderboard::WIDTH_RATIO);
-    
-    // Font sizes (относительно шрифта Russo One)
-    float base_font_size = ImGui::GetFontSize(); // Размер после PushFont
-    float header_size = display_size.y * UIElementsConfig::Leaderboard::HEADER_SIZE_RATIO;
-    float position_size = display_size.y * UIElementsConfig::Leaderboard::POSITION_SIZE_RATIO;
-    float name_size = display_size.y * UIElementsConfig::Leaderboard::NAME_SIZE_RATIO;
-    float delta_size = display_size.y * UIElementsConfig::Leaderboard::DELTA_SIZE_RATIO;
-    
-    // Row height
-    float row_height = display_size.y * UIElementsConfig::Leaderboard::ROW_HEIGHT_RATIO;
-    
+
+    // =========================================================
+    // RESPONSIVE SCALING
+    // w_scale drives layout (panel width, column widths, position)
+    // ui_scale drives font sizes and row heights — uses the smaller
+    // axis ratio so the panel never overflows on tall/narrow displays
+    // =========================================================
+    const float w_scale  = display_size.x / 1600.0f;
+    const float h_scale  = display_size.y / 900.0f;
+    const float ui_scale = (w_scale < h_scale) ? w_scale : h_scale;
+
+    // =========================================================
+    // COLUMN WIDTHS  (base values at 1600px width)
+    // =========================================================
+    const float col_pos    = 52.0f  * w_scale;
+    const float col_driver = 96.0f  * w_scale;
+    const float col_gap    = 96.0f * w_scale;
+    const float panel_w    = col_pos + col_driver + col_gap;
+
+    // Row heights  (scale with ui_scale, not w_scale)
+    const float header_row_h = 44.0f * ui_scale;
+    const float col_header_h = 32.0f * ui_scale;
+    const float row_h        = 40.0f * ui_scale;
+
+    const int max_rows = static_cast<int>(standings.size());
+    const float panel_h = header_row_h + col_header_h + row_h * max_rows;
+
+    // Position: top-right with small margin
+    const float margin_right = 12.0f * w_scale;
+    const float margin_top   = display_size.y * 0.05f;
+    const float panel_x = display_size.x - panel_w - margin_right;
+    const float panel_y = margin_top;
+
     // Colors
-    ImVec4 leader_color(
-        UIElementsConfig::Leaderboard::LEADER_COLOR_R,
-        UIElementsConfig::Leaderboard::LEADER_COLOR_G,
-        UIElementsConfig::Leaderboard::LEADER_COLOR_B,
-        1.0f
-    );
-    
-    ImVec4 text_color(
-        UIElementsConfig::Leaderboard::TEXT_COLOR_R,
-        UIElementsConfig::Leaderboard::TEXT_COLOR_G,
-        UIElementsConfig::Leaderboard::TEXT_COLOR_B,
-        1.0f
-    );
-    
-    ImVec4 lap_color(
-        UIElementsConfig::Leaderboard::LAP_COLOR_R,
-        UIElementsConfig::Leaderboard::LAP_COLOR_G,
-        UIElementsConfig::Leaderboard::LAP_COLOR_B,
-        1.0f
-    );
-    
-    ImVec4 lapped_color(
-        UIElementsConfig::Leaderboard::LAPPED_COLOR_R,
-        UIElementsConfig::Leaderboard::LAPPED_COLOR_G,
-        UIElementsConfig::Leaderboard::LAPPED_COLOR_B,
-        1.0f
-    );
-    
-    float current_y = window_pos.y + 15.0f; // Top padding
-    
-    // === HEADER: CURRENT LAP X ===
-    if (!standings.empty())
+    const ImU32 col_bg         = IM_COL32(0x18, 0x18, 0x18, 255);
+    const ImU32 col_header_bg  = IM_COL32(0x18, 0x18, 0x18, 255);
+    const ImU32 col_divider    = IM_COL32(0x3A, 0x3A, 0x3A, 255);
+    const ImU32 col_text       = IM_COL32(0xD5, 0xD5, 0xD5, 255);
+    const ImU32 col_gold       = IM_COL32(0xDA, 0xA5, 0x40, 255);
+    const ImU32 col_focus_bg   = IM_COL32(0x2B, 0x2B, 0x2B, 255);
+    const ImU32 col_lapped     = IM_COL32(0xF3, 0xCE, 0x87, 255);
+    const ImU32 col_lap_accent = IM_COL32(0x18, 0x18, 0x18, 255);
+
+    // Font sizes (all driven by ui_scale for consistent proportions)
+    const float fs_header = 26.0f * ui_scale; // "Current Lap X"
+    const float fs_col    = 17.0f * ui_scale; // column label (POS/DRIVER/TIME/GAP)
+    const float fs_data   = 25.0f * ui_scale; // driver name & gap
+
+    const float corner_r = 8.0f * ui_scale;
+
+    // Window setup
+    ImGui::SetNextWindowPos(ImVec2(panel_x, panel_y));
+    ImGui::SetNextWindowSize(ImVec2(panel_w, panel_h));
+    ImGui::SetNextWindowBgAlpha(0.0f);
+
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, corner_r);
+
+    ImGuiWindowFlags flags =
+        ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+        ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
+        ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoSavedSettings |
+        ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoBringToFrontOnFocus;
+
+    ImGui::Begin("##Leaderboard2", nullptr, flags);
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+
+    // Draw full panel background with rounded corners
+    const ImVec2 panel_min(panel_x, panel_y);
+    const ImVec2 panel_max(panel_x + panel_w, panel_y + panel_h);
+    dl->AddRectFilled(panel_min, panel_max, col_bg, corner_r);
+    dl->PushClipRect(panel_min, panel_max, true);
+
+    // Helper: draw centered text in a rect
+    auto drawCenteredText = [&](ImFont* font, float fs, ImU32 color,
+                                 float rx, float ry, float rw, float rh,
+                                 const char* text)
     {
+        ImVec2 ts = font->CalcTextSizeA(fs, FLT_MAX, 0.0f, text);
+        float tx = rx + (rw - ts.x) * 0.5f;
+        float ty = ry + (rh - ts.y) * 0.5f;
+        dl->AddText(font, fs, ImVec2(tx, ty), color, text);
+    };
+
+    ImFont* font_header  = m_font_title         ? m_font_title         : ImGui::GetFont(); // Russo One  — "Current Lap X"
+    ImFont* font_col     = m_font_jetbrains_mono ? m_font_jetbrains_mono : ImGui::GetFont(); // JetBrains Mono — column headers (POS/DRIVER/TIME/GAP)
+    ImFont* font_pos     = m_font_title         ? m_font_title         : ImGui::GetFont(); // Russo One  — position number
+    ImFont* font_data    = m_font_oswald_bold   ? m_font_oswald_bold   : ImGui::GetFont(); // Oswald Bold — driver name & gap
+
+    // =========================================================
+    // HEADER: "Current Lap X"
+    // =========================================================
+    {
+        float hy = panel_y;
+        dl->AddRectFilled(ImVec2(panel_x, hy), ImVec2(panel_x + panel_w, hy + header_row_h), col_header_bg);
+
         int leader_lap = standings[0].currentLapNumber;
-        char header_buffer[64];
-        snprintf(header_buffer, sizeof(header_buffer), "CURRENT LAP %d", leader_lap);
-        
-        ImGui::SetCursorPos(ImVec2(text_padding, current_y - window_pos.y));
-        ImGui::SetWindowFontScale(header_size / base_font_size);
-        ImGui::TextColored(lap_color, "%s", header_buffer);
-        ImGui::SetWindowFontScale(1.0f);
-        
-        current_y += header_size + 8.0f;
+        char buf[64];
+        snprintf(buf, sizeof(buf), "Current Lap %d", leader_lap);
+        drawCenteredText(font_header, fs_header, col_text,
+                         panel_x, hy, panel_w, header_row_h, buf);
     }
-    
-    // === SEPARATOR LINE ===
-    float line_y = current_y;
-    ImU32 line_color = IM_COL32(
-        static_cast<int>(UIElementsConfig::Leaderboard::LINE_COLOR_R * 255),
-        static_cast<int>(UIElementsConfig::Leaderboard::LINE_COLOR_G * 255),
-        static_cast<int>(UIElementsConfig::Leaderboard::LINE_COLOR_B * 255),
-        255
-    );
-    
-    draw_list->AddLine(
-        ImVec2(window_pos.x + text_padding, line_y),
-        ImVec2(window_pos.x + window_width - text_padding, line_y),
-        line_color,
-        UIElementsConfig::Leaderboard::LINE_THICKNESS
-    );
-    
-    current_y += 12.0f; // Space after line
-    
-    // === STANDINGS ===
-    int leader_laps = standings.empty() ? 0 : standings[0].completedLaps;
-    
-    for (size_t i = 0; i < standings.size(); i++)
+
+    // =========================================================
+    // COLUMN HEADERS: POS | DRIVER | TIME/GAP
+    // =========================================================
     {
-        const VehicleStanding& driver = standings[i];
-        
-        // Check if this row needs background (focused vehicle)
-        bool is_focused = (driver.vehicleID == g_focused_vehicle_id);
-        
+        float chy = panel_y + header_row_h;
+        dl->AddRectFilled(ImVec2(panel_x, chy), ImVec2(panel_x + panel_w, chy + col_header_h), col_lap_accent);
+
+        // POS
+        drawCenteredText(font_col, fs_col, col_text,
+                         panel_x, chy, col_pos, col_header_h, "POS");
+        // Divider after POS
+        float div1x = panel_x + col_pos;
+        dl->AddLine(ImVec2(div1x, chy), ImVec2(div1x, chy + col_header_h), col_divider, 1.0f * ui_scale);
+
+        // DRIVER
+        drawCenteredText(font_col, fs_col, col_text,
+                         div1x, chy, col_driver, col_header_h, "DRIVER");
+        // Divider after DRIVER
+        float div2x = div1x + col_driver;
+        dl->AddLine(ImVec2(div2x, chy), ImVec2(div2x, chy + col_header_h), col_divider, 1.0f * ui_scale);
+
+        // TIME/GAP
+        drawCenteredText(font_col, fs_col, col_text,
+                         div2x, chy, col_gap, col_header_h, "TIME/GAP");
+
+        // Bottom separator line
+        float bot = chy + col_header_h;
+        dl->AddLine(ImVec2(panel_x, bot), ImVec2(panel_x + panel_w, bot), col_divider, 1.0f * ui_scale);
+    }
+
+    // =========================================================
+    // DRIVER ROWS
+    // =========================================================
+    int leader_laps = standings[0].completedLaps;
+
+    for (size_t i = 0; i < standings.size(); ++i)
+    {
+        const VehicleStanding& s = standings[i];
+        bool is_focused = (s.vehicleID == g_focused_vehicle_id);
+        bool is_leader  = (i == 0);
+
+        float ry = panel_y + header_row_h + col_header_h + static_cast<float>(i) * row_h;
+
+        // Row background
+        ImU32 row_bg = is_focused ? col_focus_bg : col_bg;
+        dl->AddRectFilled(ImVec2(panel_x, ry), ImVec2(panel_x + panel_w, ry + row_h), row_bg);
+
+        // Yellow left accent for focused row
         if (is_focused)
+            dl->AddRectFilled(ImVec2(panel_x, ry), ImVec2(panel_x + 4.0f * ui_scale, ry + row_h), col_gold);
+
+        // (no per-row horizontal/vertical dividers)
+        float div1x = panel_x + col_pos;
+        float div2x = div1x + col_driver;
+
+        // --- POS ---
         {
-            ImU32 focus_bg = IM_COL32(
-                static_cast<int>(UIElementsConfig::Leaderboard::FOCUS_BG_R * 255),
-                static_cast<int>(UIElementsConfig::Leaderboard::FOCUS_BG_G * 255),
-                static_cast<int>(UIElementsConfig::Leaderboard::FOCUS_BG_B * 255),
-                static_cast<int>(UIElementsConfig::Leaderboard::FOCUS_BG_A * 255)
-            );
-            
-            draw_list->AddRectFilled(
-                ImVec2(window_pos.x, current_y - 2.0f),
-                ImVec2(window_pos.x + window_width, current_y + row_height),
-                focus_bg
-            );
+            char pos_buf[8];
+            snprintf(pos_buf, sizeof(pos_buf), "%d", s.position);
+            ImU32 pos_col = is_focused ? col_gold : col_text;
+            drawCenteredText(font_pos, fs_data, pos_col,
+                             panel_x, ry, col_pos, row_h, pos_buf);
         }
-        
-        // ✅ Лидер: только "Leader" золотой, остальное обычный цвет
-        
-        
-        // ✅ НОВАЯ ЛОГИКА ОТСТУПОВ:
-        // Позиция: без отступа (прямо у края)
-        // Имя: с отступом
-        // Дельта: справа
-        
-        float position_x = UIElementsConfig::Leaderboard::TEXT_PADDING_RATIO * window_pos.x; // Позиция у левого края (8px от края)
-        float name_x = position_x + text_padding; // Имя с отступом
-        float delta_x = window_width * 0.5; // Дельта справа
-        //float delta_x = name_x + text_padding; // Дельта справа
-        
-        // Position number (всегда обычный цвет)
-        char pos_buffer[16];
-        snprintf(pos_buffer, sizeof(pos_buffer), "%d", driver.position);
-        
-        ImGui::SetCursorPos(ImVec2(position_x, current_y - window_pos.y));
-        ImGui::SetWindowFontScale(position_size / base_font_size);
-        ImGui::TextColored(text_color, "%s", pos_buffer);
-        ImGui::SetWindowFontScale(1.0f);
-        
-        // Driver name (всегда обычный цвет)
-        char name_buffer[16];
-        snprintf(name_buffer, sizeof(name_buffer), "CAR %d", driver.vehicleID);
-        
-        ImGui::SetCursorPos(ImVec2(name_x, current_y - window_pos.y));
-        ImGui::SetWindowFontScale(name_size / base_font_size);
-        ImGui::TextColored(text_color, "%s", name_buffer);
-        ImGui::SetWindowFontScale(1.0f);
-        
-        // Delta (for non-leaders) or "Leader" text (golden)
-        bool is_leader = (i == 0);
-        if (!is_leader)
+
+        // --- DRIVER: color bar + name ---
         {
-            char delta_buffer[32];
-            int lap_diff = leader_laps - driver.completedLaps;
-            
-            if (lap_diff >= 1)
+            // Get vehicle color from standings vehicleID
+            extern std::map<int32_t, Vehicle> g_vehicles;
+            extern std::mutex g_vehicles_mutex;
+
+            glm::vec3 veh_color(0.5f, 0.5f, 0.5f);
+            std::string driver_name = "???";
             {
-                // Lapped: show "+N LAP"
+                std::lock_guard<std::mutex> lk(g_vehicles_mutex);
+                auto it = g_vehicles.find(s.vehicleID);
+                if (it != g_vehicles.end())
+                {
+                    veh_color = it->second.getColor();
+                    // First 3 chars of name (or "CAR N")
+                    std::string full = it->second.name;
+                    if (full == "Unknown" || full.empty())
+                    {
+                        char nb[8];
+                        snprintf(nb, sizeof(nb), "C%d", s.vehicleID);
+                        full = nb;
+                    }
+                    // Take first 4 chars uppercase
+                    driver_name = full.substr(0, 4);
+                    for (char& c : driver_name) c = static_cast<char>(toupper(c));
+                }
+            }
+
+            ImU32 bar_col = IM_COL32(
+                static_cast<int>(veh_color.r * 255),
+                static_cast<int>(veh_color.g * 255),
+                static_cast<int>(veh_color.b * 255),
+                255);
+
+            // Color bar: wider, centered vertically, 65% row height
+            float bar_w   = 5.0f * ui_scale;
+            float bar_h   = row_h * 0.65f;
+            float bar_x   = div1x + 5.0f * ui_scale;
+            float bar_y   = ry + (row_h - bar_h) * 0.5f;
+            dl->AddRectFilled(ImVec2(bar_x, bar_y), ImVec2(bar_x + bar_w, bar_y + bar_h), bar_col);
+
+            // Driver name centered in remaining space between bar and div2x
+            ImU32 name_col = is_focused ? col_gold : col_text;
+            ImVec2 name_ts = font_data->CalcTextSizeA(fs_data, FLT_MAX, 0.0f, driver_name.c_str());
+            float text_zone_x = bar_x + bar_w + 3.0f * ui_scale;
+            float text_zone_w = div2x - text_zone_x;
+            float name_x = text_zone_x + (text_zone_w - name_ts.x) * 0.5f;
+            float name_y = ry + (row_h - name_ts.y) * 0.5f;
+            dl->AddText(font_data, fs_data, ImVec2(name_x, name_y), name_col, driver_name.c_str());
+        }
+
+        // --- TIME/GAP ---
+        {
+            int lap_diff = leader_laps - s.completedLaps;
+            char gap_buf[32];
+            ImU32 gap_col = is_focused ? col_gold : col_text;
+
+            if (is_leader)
+            {
+                snprintf(gap_buf, sizeof(gap_buf), "Leader");
+                gap_col = col_gold;
+            }
+            else if (lap_diff >= 1)
+            {
                 if (lap_diff == 1)
-                    snprintf(delta_buffer, sizeof(delta_buffer), "+1 LAP");
+                    snprintf(gap_buf, sizeof(gap_buf), "+1 LAP");
                 else
-                    snprintf(delta_buffer, sizeof(delta_buffer), "+%d LAPS", lap_diff);
-                
-                ImGui::SetCursorPos(ImVec2(delta_x, current_y - window_pos.y));
-                ImGui::SetWindowFontScale(delta_size / base_font_size);
-                ImGui::TextColored(lapped_color, "%s", delta_buffer);
-                ImGui::SetWindowFontScale(1.0f);
+                    snprintf(gap_buf, sizeof(gap_buf), "+%d LAPS", lap_diff);
+                gap_col = col_lapped;
             }
             else
             {
-                // Use pre-calculated leader delta from TimeDiff function
-                float time_delta = driver.deltaTimeToLeader;
-                
-                if (time_delta != 0.0f)
-                {
-                    snprintf(delta_buffer, sizeof(delta_buffer), "+%.3f", time_delta);
-                    
-                    ImGui::SetCursorPos(ImVec2(delta_x, current_y - window_pos.y));
-                    ImGui::SetWindowFontScale(delta_size / base_font_size);
-                    ImGui::TextColored(text_color, "%s", delta_buffer);
-                    ImGui::SetWindowFontScale(1.0f);
-                }
+                float delta = s.deltaTimeToLeader;
+                if (delta != 0.0f)
+                    snprintf(gap_buf, sizeof(gap_buf), "+%.3f", delta);
+                else
+                    snprintf(gap_buf, sizeof(gap_buf), "---");
             }
+
+            drawCenteredText(font_data, fs_data, gap_col,
+                             div2x, ry, col_gap, row_h, gap_buf);
         }
-        else
-        {
-            // Leader: golden text
-            ImGui::SetCursorPos(ImVec2(delta_x, current_y - window_pos.y));
-            ImGui::SetWindowFontScale(delta_size / base_font_size);
-            ImGui::TextColored(leader_color, "Leader");
-            ImGui::SetWindowFontScale(1.0f);
-        }
-        
-        current_y += row_height;
-        
-        // Stop if we exceed window height
-        if (current_y > window_pos.y + window_height - 10.0f)
-            break;
     }
-    
-    ImGui::PopFont();
+
+    dl->PopClipRect();
+    // Rounded outline border
+    dl->AddRect(panel_min, panel_max, col_divider, corner_r, 0, 1.0f * ui_scale);
+
     ImGui::End();
-    
     ImGui::PopStyleVar(3);
-    ImGui::PopStyleColor();
 }

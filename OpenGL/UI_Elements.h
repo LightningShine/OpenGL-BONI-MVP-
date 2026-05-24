@@ -39,11 +39,19 @@ public:
     
     // Setters
     void setFontTitle(ImFont* font) { m_font_title = font; }
+    void setFontRobotoMono(ImFont* font) { m_font_roboto_mono = font; }
+    void setFontOswald(ImFont* font) { m_font_oswald = font; }
+    void setFontOswaldBold(ImFont* font) { m_font_oswald_bold = font; }
+    void setFontJetBrainsMono(ImFont* font) { m_font_jetbrains_mono = font; }
     void setCompassTexture(void* texture) { m_compass_texture = texture; }
-    
+
 private:
     // Fonts
-    ImFont* m_font_title;  // Russo One Regular
+    ImFont* m_font_title;       // Russo One Regular
+    ImFont* m_font_roboto_mono;  // Roboto Mono (leaderboard headers)
+    ImFont* m_font_oswald;       // Oswald Regular (leaderboard data)
+    ImFont* m_font_oswald_bold;  // Oswald Bold (leaderboard data)
+    ImFont* m_font_jetbrains_mono; // JetBrains Mono (leaderboard POS/DRIVER/GAP)
     
     // Textures
     void* m_compass_texture;

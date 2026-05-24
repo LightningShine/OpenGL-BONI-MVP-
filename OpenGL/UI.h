@@ -74,10 +74,14 @@ private:
     char m_autostop_time[64] = "00:00";
 
     // Fonts
-    ImFont* m_fontRegular;  // 12px for menu
-    ImFont* m_fontUI;       // 16px for UI elements (modals, etc.)
-    ImFont* m_fontTitle;    // 36px Russo One for LapTimer
-    ImFont* m_fontRace;     // F1 font
+    ImFont* m_fontRegular;      // 12px for menu
+    ImFont* m_fontUI;           // 16px for UI elements (modals, etc.)
+    ImFont* m_fontTitle;        // 36px Russo One for LapTimer
+    ImFont* m_fontRace;         // F1 font
+    ImFont* m_fontRobotoMono;   // Roboto Mono - leaderboard column headers
+    ImFont* m_fontOswald;       // Oswald - leaderboard data rows
+    ImFont* m_fontOswaldBold;   // Oswald Bold - leaderboard data rows
+    ImFont* m_fontJetBrainsMono; // JetBrains Mono - leaderboard POS/DRIVER/GAP
     
     // Textures (using void* instead of ImTextureID to avoid forward declaration issues)
     void* m_backgroundTexture;

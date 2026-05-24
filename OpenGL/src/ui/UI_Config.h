@@ -32,6 +32,10 @@ static constexpr const char* FONT_PATH_UBUNTU_REGULAR = "styles/fonts/Ubuntu/Ubu
 static constexpr const char* FONT_PATH_UBUNTU_BOLD = "styles/fonts/Ubuntu/Ubuntu-Bold.ttf";
 static constexpr const char* FONT_PATH_F1 = "styles/fonts/F1-Font-Family/Formula1-Regular-1.ttf";
 static constexpr const char* FONT_PATH_RUSSO_ONE = "styles/fonts/Russo_One/RussoOne-Regular.ttf";
+static constexpr const char* FONT_PATH_ROBOTO_MONO = "styles/fonts/Roboto_Mono/RobotoMono-Regular.ttf";
+static constexpr const char* FONT_PATH_OSWALD = "styles/fonts/Oswald/ttf/Oswald-Regular.ttf";
+static constexpr const char* FONT_PATH_OSWALD_BOLD = "styles/fonts/Oswald/ttf/Oswald-Bold.ttf";
+static constexpr const char* FONT_PATH_JETBRAINS_MONO = "styles/fonts/JetBrains_Mono/JetBrainsMono-Regular.ttf";
 
 // ============================================================================
 // MENU BAR SETTINGS (as ratios)

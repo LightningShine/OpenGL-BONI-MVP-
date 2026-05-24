@@ -587,6 +587,10 @@ UI::UI()
 , m_fontUI(nullptr)
 , m_fontTitle(nullptr)
 , m_fontRace(nullptr)
+, m_fontRobotoMono(nullptr)
+, m_fontOswald(nullptr)
+, m_fontOswaldBold(nullptr)
+, m_fontJetBrainsMono(nullptr)
 , m_backgroundTexture(nullptr)
     , m_iconFile(nullptr)
     , m_iconContact(nullptr)
@@ -807,29 +811,22 @@ bool UI::Initialize(GLFWwindow* window)
     float font_size_title = 32.0f / UIConfig::BASE_HEIGHT * window_height;  // 32px base for Russo One (better quality when scaled)
     float font_size_race = UIConfig::FONT_SIZE_RACE * window_height;
     
-    m_fontRegular = io.Fonts->AddFontFromFileTTF("styles/fonts/Ubuntu/Ubuntu-Regular.ttf", font_size_menu, &font_config);
-    m_fontUI = io.Fonts->AddFontFromFileTTF("styles/fonts/Ubuntu/Ubuntu-Regular.ttf", font_size_ui, &font_config);
-    m_fontTitle = io.Fonts->AddFontFromFileTTF("styles/fonts/Russo_One/RussoOne-Regular.ttf", font_size_title, &font_config);
-    m_fontRace = io.Fonts->AddFontFromFileTTF(UIConfig::FONT_PATH_F1, font_size_race, &font_config);
-    
-    // Fallback to default font if Ubuntu not found
-    if (!m_fontRegular) {
-        std::cerr << "[UI] Warning: Ubuntu font (menu) not found, using default\n";
-        m_fontRegular = io.Fonts->AddFontDefault(&font_config);
-    }
-    if (!m_fontUI) {
-        std::cerr << "[UI] Warning: Ubuntu font (UI) not found, using default\n";
-        m_fontUI = io.Fonts->AddFontDefault(&font_config);
-    }
-    if (!m_fontTitle) {
-        std::cerr << "[UI] Warning: RussoOne Regular not found, using default\n";
-        m_fontTitle = io.Fonts->AddFontDefault(&font_config);
-    }
-    if (!m_fontRace) {
-        std::cerr << "[UI] Warning: F1 font not found, using default\n";
-        m_fontRace = io.Fonts->AddFontDefault(&font_config);
-    }
-    
+    auto loadFont = [&](const char* path, float size) -> ImFont* {
+        if (std::filesystem::exists(path))
+            return io.Fonts->AddFontFromFileTTF(path, size, &font_config);
+        std::cerr << "[UI] Warning: Font not found: " << path << ", using default\n";
+        return io.Fonts->AddFontDefault(&font_config);
+    };
+
+    m_fontRegular    = loadFont("styles/fonts/Ubuntu/Ubuntu-Regular.ttf", font_size_menu);
+    m_fontUI         = loadFont("styles/fonts/Ubuntu/Ubuntu-Regular.ttf", font_size_ui);
+    m_fontTitle      = loadFont("styles/fonts/Russo_One/RussoOne-Regular.ttf", font_size_title);
+    m_fontRace       = loadFont(UIConfig::FONT_PATH_F1, font_size_race);
+    m_fontRobotoMono = loadFont(UIConfig::FONT_PATH_ROBOTO_MONO, font_size_title);
+    m_fontOswald     = loadFont(UIConfig::FONT_PATH_OSWALD, font_size_title);
+    m_fontOswaldBold = loadFont(UIConfig::FONT_PATH_OSWALD_BOLD, font_size_title);
+    m_fontJetBrainsMono = loadFont(UIConfig::FONT_PATH_JETBRAINS_MONO, font_size_title);
+
     // Setup ImGui style - Blender-like
     ImGuiStyle& style = ImGui::GetStyle();
     
@@ -895,6 +892,10 @@ bool UI::Initialize(GLFWwindow* window)
     
     // Pass fonts and textures to UI Elements
     m_ui_elements->setFontTitle(m_fontTitle);
+    m_ui_elements->setFontRobotoMono(m_fontRobotoMono);
+    m_ui_elements->setFontOswald(m_fontOswald);
+    m_ui_elements->setFontOswaldBold(m_fontOswaldBold);
+    m_ui_elements->setFontJetBrainsMono(m_fontJetBrainsMono);
     m_ui_elements->setCompassTexture(m_compassTexture);
     
     std::cout << "[UI] Initialized successfully\n";
