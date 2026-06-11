@@ -2438,215 +2438,234 @@ void UI::RenderHelpModal()
 {
     if (!m_show_help_modal)
         return;
-    
-    ImVec2 display_size = ImGui::GetIO().DisplaySize;
-    
-    // Darken background - CLICKABLE to close
+
+    ImGuiIO& io         = ImGui::GetIO();
+    const ImVec2 dsz    = io.DisplaySize;
+    const float  mW     = UIConfig::HELP_MODAL_WIDTH  * dsz.x;
+    const float  mH     = UIConfig::HELP_MODAL_HEIGHT * dsz.y;
+    const ImVec2 mPos((dsz.x - mW) * 0.5f, (dsz.y - mH) * 0.5f);
+    const ImVec2 mEnd(mPos.x + mW, mPos.y + mH);
+
+    // ── colors ─────────────────────────────────────────────────────────────
+    const ImVec4 colGold (218.f/255.f, 165.f/255.f, 64.f/255.f, 1.f);
+    const ImU32  uGold   = IM_COL32(218, 165, 64, 255);
+    const ImU32  uSep    = IM_COL32(55,  55,  55, 255);
+    const ImU32  uBadge  = IM_COL32(38,  38,  38, 255);
+    const ImU32  uBadgeB = IM_COL32(80,  80,  80, 255);
+
+    // ── overlay (blocks world input) ───────────────────────────────────────
     ImGui::SetNextWindowPos(ImVec2(0, 0));
-    ImGui::SetNextWindowSize(display_size);
+    ImGui::SetNextWindowSize(dsz);
     ImGui::SetNextWindowBgAlpha(UIConfig::MODAL_OVERLAY_ALPHA);
-    
-    ImGuiWindowFlags bg_flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | 
-                                ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar | 
+    ImGuiWindowFlags bg_flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+                                ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
                                 ImGuiWindowFlags_NoSavedSettings;
-    
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.0f, 0.0f, 0.0f, UIConfig::MODAL_OVERLAY_ALPHA));
-    if (ImGui::Begin("##ModalBackground", nullptr, bg_flags))
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.f, 0.f, 0.f, UIConfig::MODAL_OVERLAY_ALPHA));
+    if (ImGui::Begin("##HelpOverlay", nullptr, bg_flags))
     {
-        // Calculate modal size and position
-        ImVec2 modal_size = ImVec2(
-            UIConfig::HELP_MODAL_WIDTH * display_size.x, 
-            UIConfig::HELP_MODAL_HEIGHT * display_size.y
-        );
-        ImVec2 modal_pos = ImVec2(
-            (display_size.x - modal_size.x) * 0.5f,
-            (display_size.y - modal_size.y) * 0.5f
-        );
         ImVec2 mouse_pos = ImGui::GetMousePos();
-        
-        bool clicked_outside = ImGui::IsMouseClicked(0) &&
-            (mouse_pos.x < modal_pos.x || mouse_pos.x > modal_pos.x + modal_size.x ||
-             mouse_pos.y < modal_pos.y || mouse_pos.y > modal_pos.y + modal_size.y);
-        
-        if (clicked_outside)
+        if (ImGui::IsMouseClicked(0) &&
+            (mouse_pos.x < mPos.x || mouse_pos.x > mEnd.x ||
+             mouse_pos.y < mPos.y || mouse_pos.y > mEnd.y))
         {
             m_show_help_modal = false;
         }
     }
     ImGui::End();
     ImGui::PopStyleColor();
+
+    if (!m_show_help_modal) return;
+    if (ImGui::IsKeyPressed(ImGuiKey_Escape)) { m_show_help_modal = false; return; }
     
-    // Help modal window with scroll - CAPTURE MOUSE
-    ImVec2 modal_size = ImVec2(
-        UIConfig::HELP_MODAL_WIDTH * display_size.x, 
-        UIConfig::HELP_MODAL_HEIGHT * display_size.y
-    );
-    
-    ImGui::SetNextWindowPos(ImVec2(display_size.x * 0.5f, display_size.y * 0.5f), 
-                            ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(modal_size);
-    ImGui::SetNextWindowFocus(); // Force focus on modal
-    
-    ImGuiWindowFlags modal_flags = ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse;
-    
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(
-        UIConfig::MODAL_PADDING_X * display_size.x, 
-        UIConfig::MODAL_PADDING_Y * display_size.y
-    ));
-    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(
-        UIConfig::MODAL_ITEM_SPACING_X * display_size.x, 
-        UIConfig::MODAL_ITEM_SPACING_Y * display_size.y
-    ));
-    
-    // ПРИМЕНЯЕМ НАСТРОЙКИ ИЗ UI_CONFIG.H
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(UIConfig::MODAL_BG_R, UIConfig::MODAL_BG_G, UIConfig::MODAL_BG_B, UIConfig::MODAL_BG_ALPHA));
-    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(UIConfig::MODAL_TEXT_R, UIConfig::MODAL_TEXT_G, UIConfig::MODAL_TEXT_B, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_TitleBg, ImVec4(UIConfig::MODAL_TITLE_BG_R, UIConfig::MODAL_TITLE_BG_G, UIConfig::MODAL_TITLE_BG_B, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_TitleBgActive, ImVec4(UIConfig::MODAL_TITLE_ACTIVE_R, UIConfig::MODAL_TITLE_ACTIVE_G, UIConfig::MODAL_TITLE_ACTIVE_B, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(UIConfig::MODAL_BUTTON_R, UIConfig::MODAL_BUTTON_G, UIConfig::MODAL_BUTTON_B, UIConfig::MODAL_BUTTON_ALPHA));
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(UIConfig::MODAL_BUTTON_HOVER_R, UIConfig::MODAL_BUTTON_HOVER_G, UIConfig::MODAL_BUTTON_HOVER_B, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(UIConfig::MODAL_BUTTON_ACTIVE_R, UIConfig::MODAL_BUTTON_ACTIVE_G, UIConfig::MODAL_BUTTON_ACTIVE_B, 1.0f));
-    
+    // ── modal window ───────────────────────────────────────────────────────
+    const float padX   = mW * 0.044f;
+    const float padY   = mH * 0.03f;
+    const float titleH = mH * 0.11f;
+
+    ImGui::SetNextWindowPos(mPos);
+    ImGui::SetNextWindowSize(ImVec2(mW, mH));
+    ImGui::SetNextWindowFocus();
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,    ImVec2(0, 0));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding,   0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize,  1.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_ScrollbarSize,     5.0f);
+    ImGui::PushStyleColor(ImGuiCol_WindowBg,      ImVec4(UIConfig::MODAL_BG_R, UIConfig::MODAL_BG_G, UIConfig::MODAL_BG_B, UIConfig::MODAL_BG_ALPHA));
+    ImGui::PushStyleColor(ImGuiCol_Border,         ImVec4(0.22f, 0.22f, 0.22f, 1.f));
+    ImGui::PushStyleColor(ImGuiCol_ScrollbarBg,    ImVec4(0.08f, 0.08f, 0.08f, 1.f));
+    ImGui::PushStyleColor(ImGuiCol_ScrollbarGrab,  ImVec4(0.32f, 0.32f, 0.32f, 1.f));
+    ImGui::PushStyleColor(ImGuiCol_ScrollbarGrabHovered, ImVec4(0.50f, 0.50f, 0.50f, 1.f));
+    ImGui::PushStyleColor(ImGuiCol_ScrollbarGrabActive,  ImVec4(0.70f, 0.70f, 0.70f, 1.f));
+
     bool modal_open = true;
-    if (ImGui::Begin("Keyboard Shortcuts", &modal_open, modal_flags))
+    if (ImGui::Begin("##HelpModal", &modal_open,
+        ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+        ImGuiWindowFlags_NoCollapse  | ImGuiWindowFlags_NoSavedSettings))
     {
-        ImGui::PushFont(m_fontUI);  // Use 16px font for modal content
-        
-        ImGui::TextColored(ImVec4(0.5f, 0.8f, 1.0f, 1.0f), "Camera Controls:");
-        ImGui::Separator();
-        ImGui::Spacing();
-        
-        ImGui::Columns(2, nullptr, false);
-        ImGui::SetColumnWidth(0, 250.0f / 1600.0f * display_size.x); // Adaptive column width
-        
-        ImGui::Text("W / Up Arrow");
-        ImGui::NextColumn();
-        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Move camera up");
-        ImGui::NextColumn();
-        
-        ImGui::Text("S / Down Arrow");
-        ImGui::NextColumn();
-        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Move camera down");
-        ImGui::NextColumn();
-        
-        ImGui::Text("A / Left Arrow");
-        ImGui::NextColumn();
-        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Move camera left");
-        ImGui::NextColumn();
-        
-        ImGui::Text("D / Right Arrow");
-        ImGui::NextColumn();
-        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Move camera right");
-        ImGui::NextColumn();
-        
-        ImGui::Text("Mouse Wheel");
-        ImGui::NextColumn();
-        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Zoom in/out");
-        ImGui::NextColumn();
-        
-        ImGui::Columns(1);
-        ImGui::Spacing();
-        ImGui::Spacing();
-        
-        ImGui::TextColored(ImVec4(0.5f, 0.8f, 1.0f, 1.0f), "Application:");
-        ImGui::Separator();
-        ImGui::Spacing();
+        ImDrawList* dl = ImGui::GetWindowDrawList();
 
-        ImGui::Columns(2, nullptr, false);
-        ImGui::SetColumnWidth(0, 250);
+        // ── Custom title bar ───────────────────────────────────────────────
+        const float titleBarBot = mPos.y + titleH;
+        dl->AddRectFilled(mPos, ImVec2(mEnd.x, titleBarBot),
+            IM_COL32((int)(UIConfig::MODAL_TITLE_BG_R*255),
+                     (int)(UIConfig::MODAL_TITLE_BG_G*255),
+                     (int)(UIConfig::MODAL_TITLE_BG_B*255), 255),
+            10.0f, ImDrawFlags_RoundCornersTop);
+        dl->AddLine(ImVec2(mPos.x, titleBarBot), ImVec2(mEnd.x, titleBarBot), uSep, 1.0f);
+        // gold left accent bar
+        dl->AddRectFilled(ImVec2(mPos.x,        mPos.y + 3.f),
+                          ImVec2(mPos.x + 4.0f, titleBarBot - 3.f),
+                          uGold, 2.0f);
+        // title text
+        if (m_fontUBold) ImGui::PushFont(m_fontUBold);
+        {
+            const char* tTxt = "Keyboard Shortcuts";
+            const ImVec2 tSz = ImGui::CalcTextSize(tTxt);
+            dl->AddText(ImVec2(mPos.x + padX + 8.f, mPos.y + (titleH - tSz.y) * 0.5f),
+                        IM_COL32(235, 235, 235, 255), tTxt);
+        }
+        if (m_fontUBold) ImGui::PopFont();
+        // version text top-right (no badge)
+        if (m_fontRegular) ImGui::PushFont(m_fontRegular);
+        {
+            const char* vTxt = UIConfig::APP_VERSION;
+            const ImVec2 vSz = ImGui::CalcTextSize(vTxt);
+            dl->AddText(ImVec2(mEnd.x - vSz.x - padX * 0.6f, mPos.y + (titleH - vSz.y) * 0.5f),
+                        uGold, vTxt);
+        }
+        if (m_fontRegular) ImGui::PopFont();
 
-        ImGui::Text("ESC");
-        ImGui::NextColumn();
-        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Close application");
-        ImGui::NextColumn();
+        // ── Scrollable content child ───────────────────────────────────────
+        const float btnH    = mH * 0.062f;   // proportional button height
+        // content = space between titlebar and close button, with equal padY gaps
+        const float contentH = mH - titleH - 3.f * padY - btnH;
+        ImGui::SetCursorPos(ImVec2(padX, titleH + padY));
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8.f, 6.f));
+        ImGui::BeginChild("##HelpContent", ImVec2(mW - padX * 2, contentH), false, ImGuiWindowFlags_None);
 
-        ImGui::Text("F11");
-        ImGui::NextColumn();
-        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Toggle fullscreen");
-        ImGui::NextColumn();
+        ImFont* bodyFont = m_fontUI    ? m_fontUI    : ImGui::GetFont();
+        ImFont* boldFont = m_fontUBold ? m_fontUBold : bodyFont;
 
-        ImGui::Text("Ctrl + O");
-        ImGui::NextColumn();
-        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Open track file");
-        ImGui::NextColumn();
+        // fixed column: description always starts here (px from child-window left)
+        const float descCol = mW * 0.40f;
 
-        ImGui::Text("+ / -");
-        ImGui::NextColumn();
-        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Zoom in / Zoom out");
-        ImGui::NextColumn();
+        // Section header ─────────────────────────────────────────────────────
+        auto sectionHeader = [&](const char* label)
+        {
+            ImGui::Dummy(ImVec2(0, 6.f));
+            ImGui::PushFont(boldFont);
+            ImGui::TextColored(colGold, "%s", label);
+            ImGui::PopFont();
+            const ImVec2 p = ImGui::GetItemRectMin();
+            const ImVec2 q = ImGui::GetItemRectMax();
+            ImGui::GetWindowDrawList()->AddLine(
+                ImVec2(p.x,       q.y + 3.f),
+                ImVec2(p.x + mW - padX * 2 - 4.f, q.y + 3.f),
+                IM_COL32(218, 165, 64, 140), 2.f);
+            ImGui::Dummy(ImVec2(0, 3.f));
+        };
 
-        ImGui::Text("Home");
-        ImGui::NextColumn();
-        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Reset View");
-        ImGui::NextColumn();
+        // Key-bind row ────────────────────────────────────────────────────────
+        // Uses ImGui::Button for the key badge so clipping and padding are handled
+        // correctly by ImGui's own layout system.
+        auto bindRow = [&](const char* keys, const char* desc)
+        {
+            // format: "W|Up" → "W / Up"
+            char keyDisp[128] = {};
+            {
+                int di = 0;
+                for (int i = 0; keys[i] && di < 125; ++i)
+                {
+                    if (keys[i] == '|')
+                    { keyDisp[di++] = ' '; keyDisp[di++] = '/'; keyDisp[di++] = ' '; }
+                    else
+                        keyDisp[di++] = keys[i];
+                }
+            }
 
-        ImGui::Columns(1);
-        ImGui::Spacing();
-        ImGui::Spacing();
-        
-        ImGui::TextColored(ImVec4(0.5f, 0.8f, 1.0f, 1.0f), "Network:");
-        ImGui::Separator();
-        ImGui::Spacing();
-        
-        ImGui::Columns(2, nullptr, false);
-        ImGui::SetColumnWidth(0, 250);
-        
-        ImGui::Text("Shift + S");
-        ImGui::NextColumn();
-        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Toggle server");
-        ImGui::NextColumn();
-        
-        ImGui::Text("Shift + C");
-        ImGui::NextColumn();
-        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Toggle client");
-        ImGui::NextColumn();
-        
-        ImGui::Columns(1);
-        ImGui::Spacing();
-        ImGui::Spacing();
-        
-        ImGui::TextColored(ImVec4(0.5f, 0.8f, 1.0f, 1.0f), "Testing:");
-        ImGui::Separator();
-        ImGui::Spacing();
-        
-        ImGui::Columns(2, nullptr, false);
-        ImGui::SetColumnWidth(0, 250.0f / 1600.0f * display_size.x);
-        
-        ImGui::Text("T");
-        ImGui::NextColumn();
-        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Create test vehicle");
-        ImGui::NextColumn();
-        
-        ImGui::Columns(1);
-        ImGui::Spacing();
-        ImGui::Spacing();
-        
-        ImGui::TextColored(ImVec4(0.5f, 0.8f, 1.0f, 1.0f), "Race Results:");
-        ImGui::Separator();
-        ImGui::Spacing();
-        
-        ImGui::Columns(2, nullptr, false);
-        ImGui::SetColumnWidth(0, 250.0f / 1600.0f * display_size.x);
-        
-        ImGui::Text("Ctrl + P");
-        ImGui::NextColumn();
-        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Save race results to file");
-        ImGui::NextColumn();
-        
-        ImGui::Columns(1);
-        
-        ImGui::PopFont();
+            // Key badge via Button (non-interactive, styled dark/flat)
+            ImGui::PushFont(boldFont);
+            ImGui::PushStyleVar  (ImGuiStyleVar_FrameRounding,   0.f);
+            ImGui::PushStyleVar  (ImGuiStyleVar_FrameBorderSize,  1.f);
+            ImGui::PushStyleVar  (ImGuiStyleVar_FramePadding,     ImVec2(7.f, 3.f));
+            ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.13f, 0.13f, 0.13f, 1.f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.18f, 0.18f, 0.18f, 1.f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.13f, 0.13f, 0.13f, 1.f));
+            ImGui::PushStyleColor(ImGuiCol_Border,        ImVec4(0.38f, 0.38f, 0.38f, 1.f));
+            ImGui::PushStyleColor(ImGuiCol_Text,          ImVec4(0.92f, 0.92f, 0.92f, 1.f));
+            // unique ID per row to avoid collisions
+            ImGui::PushID(desc);
+            ImGui::Button(keyDisp);
+            ImGui::PopID();
+            ImGui::PopStyleColor(5);
+            ImGui::PopStyleVar(3);
+            ImGui::PopFont();
+
+            // Description — always starts at fixed column
+            ImGui::SameLine(descCol);
+            ImGui::PushFont(bodyFont);
+            ImGui::TextColored(ImVec4(0.70f, 0.70f, 0.70f, 1.f), "%s", desc);
+            ImGui::PopFont();
+        };
+
+        // ── CAMERA ────────────────────────────────────────────────────────
+        sectionHeader("Camera");
+        bindRow("W|Up",           "Move camera up");
+        bindRow("S|Down",         "Move camera down");
+        bindRow("A|Left",         "Move camera left");
+        bindRow("D|Right",        "Move camera right");
+        bindRow("Mouse Wheel",    "Zoom in / Zoom out");
+        bindRow("+ (Plus)",       "Zoom in");
+        bindRow("- (Minus)",      "Zoom out");
+        bindRow("Home",           "Reset zoom to default");
+        bindRow("R|Left Arrow",   "Rotate view counter-clockwise");
+        bindRow("R|Right Arrow",  "Rotate view clockwise");
+
+        // ── FILE ──────────────────────────────────────────────────────────
+        sectionHeader("File");
+        bindRow("Ctrl+O",         "Open track file (dialog)");
+        bindRow("Ctrl+V",         "Paste track from clipboard");
+        bindRow("Ctrl+P",         "Save race results to file");
+        bindRow("Space",          "Finalize open track recording");
+
+        // ── NETWORK ───────────────────────────────────────────────────────
+        sectionHeader("Network");
+        bindRow("Shift+S",        "Open Create Server dialog");
+        bindRow("Shift+C",        "Open Connect to Server dialog");
+
+        // ── RACE / SIMULATION ─────────────────────────────────────────────
+        sectionHeader("Race & Simulation");
+        bindRow("T",              "Spawn test simulation vehicle");
+        bindRow("Y",              "Run test track recording (circle)");
+
+        // ── APPLICATION ───────────────────────────────────────────────────
+        sectionHeader("Application");
+        bindRow("F11",            "Toggle fullscreen / windowed");
+        bindRow("ESC",            "Close application");
+
+        ImGui::EndChild();
+        ImGui::PopStyleVar(); // ItemSpacing
+
+        // ── Close button — anchored exactly padY above modal bottom ───────
+        const float btnW = mW * 0.22f;
+        ImGui::SetCursorPos(ImVec2((mW - btnW) * 0.5f, mH - padY - btnH));
+        ImGui::PushStyleVar  (ImGuiStyleVar_FrameRounding, 0.0f);
+        ImGui::PushStyleColor(ImGuiCol_Button,        colGold);
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(238.f/255.f, 185.f/255.f, 84.f/255.f, 1.f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(198.f/255.f, 145.f/255.f, 44.f/255.f, 1.f));
+        ImGui::PushStyleColor(ImGuiCol_Text,          ImVec4(0.07f, 0.07f, 0.07f, 1.f));
+        if (m_fontUBold) ImGui::PushFont(m_fontUBold);
+        if (ImGui::Button("Close", ImVec2(btnW, btnH)))
+            m_show_help_modal = false;
+        if (m_fontUBold) ImGui::PopFont();
+        ImGui::PopStyleColor(4);
+        ImGui::PopStyleVar();
     }
     ImGui::End();
-    
-    // Close modal if user clicked X or clicked outside
-    if (!modal_open)
-    {
-        m_show_help_modal = false;
-    }
-    
-    ImGui::PopStyleColor(7);
-    ImGui::PopStyleVar(2);
+
+    if (!modal_open) m_show_help_modal = false;
+
+    ImGui::PopStyleColor(6);
+    ImGui::PopStyleVar(4);
 }
 
 
