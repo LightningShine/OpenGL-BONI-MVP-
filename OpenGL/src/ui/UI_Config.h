@@ -17,8 +17,8 @@ static constexpr float BASE_HEIGHT = 900.0f;
 // ============================================================================
 // APPLICATION INFO
 // ============================================================================
-static constexpr const char* APP_VERSION = "v0.7.0";
-static constexpr const char* APP_NAME = "R.A.J.A Prime";
+static constexpr const char* APP_VERSION = "v0.9.0";
+static constexpr const char* APP_NAME = "RAJAGP";
 
 // ============================================================================
 // FONT SETTINGS (as ratios of screen height)

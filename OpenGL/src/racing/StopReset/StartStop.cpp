@@ -17,7 +17,42 @@ void RaceManager::StartSession() {
 void RaceManager::StopSession() {
     if (m_sessionState == SessionState::Active) {
         m_sessionState = SessionState::Finishing;
-        std::cout << "[SESSION] Session Stopped! Awaiting finishing laps..." << std::endl;
+
+        // Record leader state so finishing order is enforced correctly:
+        // 1) The stored leader must be the first to cross the finish line.
+        // 2) Lapped cars may only finish after all lead-lap cars have finished.
+        {
+            std::lock_guard<std::mutex> lock(g_vehicles_mutex);
+
+            int maxLaps = 0;
+            for (const auto& [id, veh] : g_vehicles)
+                if (veh.m_has_started_first_lap && veh.m_completed_laps > maxLaps)
+                    maxLaps = veh.m_completed_laps;
+            m_leaderLapsAtStop = maxLaps;
+
+            // Break lap ties by total progress to find the actual leader
+            int32_t leaderId = -1;
+            double  leaderProg = -1.0;
+            for (const auto& [id, veh] : g_vehicles) {
+                if (veh.m_has_started_first_lap && veh.m_completed_laps == maxLaps) {
+                    if (leaderId == -1 || veh.m_total_progress > leaderProg) {
+                        leaderId   = id;
+                        leaderProg = veh.m_total_progress;
+                    }
+                }
+            }
+            m_leaderAtStop = leaderId;
+
+            m_leadLapCarCount = 0;
+            for (const auto& [id, veh] : g_vehicles)
+                if (veh.m_has_started_first_lap && veh.m_completed_laps >= maxLaps)
+                    m_leadLapCarCount++;
+        }
+
+        std::cout << "[SESSION] Session Stopped! Leader=#" << m_leaderAtStop
+                  << " laps=" << m_leaderLapsAtStop
+                  << " leadLapCars=" << m_leadLapCarCount
+                  << " Awaiting finishing laps..." << std::endl;
     }
 }
 
@@ -26,6 +61,9 @@ void RaceManager::ResetSession() {
     m_finishPositions.clear();
     m_raceTimerRunning = false;
     m_raceElapsedSeconds = 0.0f;
+    m_leaderLapsAtStop = 0;
+    m_leaderAtStop = -1;
+    m_leadLapCarCount = 0;
 
     std::lock_guard<std::mutex> lock(g_vehicles_mutex);
     for (auto& [id, vehicle] : g_vehicles) {

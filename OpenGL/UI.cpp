@@ -585,6 +585,7 @@ UI::UI()
 , m_show_help_modal(false)
 , m_fontRegular(nullptr)
 , m_fontUI(nullptr)
+, m_fontUBold(nullptr)
 , m_fontTitle(nullptr)
 , m_fontRace(nullptr)
 , m_fontRobotoMono(nullptr)
@@ -672,7 +673,7 @@ void UI::LoadResources()
 {
     int w, h;
     // ?????? ???? ? ???????????
-    if (!LoadTextureFromFile("styles/images/Background.png", &m_backgroundTexture, &w, &h))
+    if (!LoadTextureFromFile("styles/images/start.png", &m_backgroundTexture, &w, &h))
     {
         std::cerr << "[UI] Warning: Background image not loaded\n";
     }
@@ -820,6 +821,7 @@ bool UI::Initialize(GLFWwindow* window)
 
     m_fontRegular    = loadFont("styles/fonts/Ubuntu/Ubuntu-Regular.ttf", font_size_menu);
     m_fontUI         = loadFont("styles/fonts/Ubuntu/Ubuntu-Regular.ttf", font_size_ui);
+    m_fontUBold      = loadFont("styles/fonts/Ubuntu/Ubuntu-Bold.ttf",    font_size_ui);
     m_fontTitle      = loadFont("styles/fonts/Russo_One/RussoOne-Regular.ttf", font_size_title);
     m_fontRace       = loadFont(UIConfig::FONT_PATH_F1, font_size_race);
     m_fontRobotoMono = loadFont(UIConfig::FONT_PATH_ROBOTO_MONO, font_size_title);
@@ -1482,14 +1484,17 @@ void UI::RenderMainWindow()
         ImGuiWindowFlags_NoResize |
         ImGuiWindowFlags_NoMove |
         ImGuiWindowFlags_NoScrollbar);
-    
+
+    // Calculate accurate bottom limit
+    const float imageBottomH = windowSize.y * (289.0f / 509.0f);
+
     // === IMAGE ===
     if (m_backgroundTexture)
     {
         ImGui::GetWindowDrawList()->AddImageRounded(
             (ImTextureID)m_backgroundTexture,
             windowPos,
-            ImVec2(windowPos.x + windowSize.x, windowPos.y + windowSize.y - 320), // Image bootom size
+            ImVec2(windowPos.x + windowSize.x, windowPos.y + imageBottomH), // Image bootom size
             ImVec2(0, 0),
             ImVec2(1, 1),
             IM_COL32(255, 255, 255, 255),
@@ -1502,151 +1507,254 @@ void UI::RenderMainWindow()
         // Fallback: dark background
         ImGui::GetWindowDrawList()->AddRectFilled(
             windowPos,
-            ImVec2(windowPos.x + windowSize.x, windowPos.y + windowSize.y - 320), // Black Shape bottom size
+            ImVec2(windowPos.x + windowSize.x, windowPos.y + imageBottomH), // Black Shape bottom size
             IM_COL32(20, 20, 25, 255),
             ImGui::GetStyle().WindowRounding,
             ImDrawFlags_RoundCornersTop
         );
     }
     
-    // === TITLE "RACE APP" ===
-    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, 0));
-    
-    if (m_fontUI) ImGui::PushFont(m_fontUI);  // Use 16px UI font instead of huge title font
-    else if (m_fontRegular) ImGui::PushFont(m_fontRegular);
+	// === TITLE "RACE APP" ===
+	ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, -10));
 
-    ImGui::SetCursorPos(ImVec2(35, 35));
-	ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f)); // White color RACE APP color
-    ImGui::SetWindowFontScale(2.5f);  // Reduced from 3.5f (16px * 2.5 = 40px)
-    ImGui::Text("RACE");
-    ImGui::SetWindowFontScale(1.0f);
-    ImGui::PopStyleColor();
-    
-    ImGui::SetCursorPos(ImVec2(35, 110));
-    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
-    ImGui::SetWindowFontScale(2.5f);  // Reduced from 3.5f
-    ImGui::Text("APP");
-    ImGui::SetWindowFontScale(1.0f);
-    ImGui::PopStyleColor();
-    
-    if (m_fontRace) ImGui::PopFont();
-    else if (m_fontTitle) ImGui::PopFont();
+	// Position ratios from image (W:557 H:509)
+	const float titleX = windowSize.x * (20.0f / 557.0f);
+	const float titleRaceY = windowSize.y * (19.0f / 509.0f);
+	const float titleAppY = windowSize.y * (65.0f / 509.0f);
+	const float titleFontSize = windowSize.y * (48.0f / 509.0f);
 
-    ImGui::PopStyleVar();
-    
-    // === VERSION ===
-    if (m_fontTitle) ImGui::PushFont(m_fontTitle);
-    ImGui::SetCursorPos(ImVec2(windowSize.x - 100, 35));
-    ImGui::TextColored(ImVec4(0.835f, 0.835f, 0.835f, 1.0f), "0.0.6v");
-    if (m_fontTitle) ImGui::PopFont();
-    
-    // === AUTHOR NAME ===
-    if (m_fontTitle) ImGui::PushFont(m_fontTitle);
-    ImGui::SetCursorPos(ImVec2(35, windowSize.y - 350));
-    ImGui::TextColored(ImVec4(0.525f, 0.525f, 0.525f, 1.0f), "Uladizmir Liubamirski");
-    if (m_fontTitle) ImGui::PopFont();
-    
-    // === CREATE TRACK BUTTON ===
-    ImGui::SetCursorPos(ImVec2(18, windowSize.y - 290));
-    
-    if (m_fontTitle) ImGui::PushFont(m_fontTitle);
-    if (ImGui::Button("Create Track", ImVec2(395, 60)))
-    {
-        std::cout << "[UI] Create Track clicked\n";
-       TelemetryTrackBuilder::Settings s;
-        TelemetryTrackBuilder::Start(s);
-        std::cout << "[UI] Telemetry track creation mode enabled. Connect prototype and start driving." << std::endl;
-        m_showSplash = false;
-        m_closeSplash = true;
-    }
-    if (m_fontTitle) ImGui::PopFont();
+	if (m_fontTitle) 
+	{
+		ImGui::PushFont(m_fontTitle);
+		float targetScale = titleFontSize / m_fontTitle->FontSize;
+		ImGui::SetWindowFontScale(targetScale);
+	}
+	else if (m_fontUI) ImGui::PushFont(m_fontUI);
 
-    // === SEPARATORS ===
-    ImDrawList* drawList = ImGui::GetWindowDrawList();
-    ImU32 separatorColor = IM_COL32(100, 100, 100, 255);
-    
-    // CHANGE HEIGHT HERE: (windowSize.y - 40) is the Y position. Increase 40 to move higher, decrease to move lower.
-    float bottomBarY = windowSize.y - 45; // Moved higher to give space for content below
+	ImGui::SetCursorPos(ImVec2(titleX, titleRaceY));
+	ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+	ImGui::Text("RACE");
+	ImGui::PopStyleColor();
 
-    // Vertical Line
-    drawList->AddLine(
-        ImVec2(windowPos.x + 425, windowPos.y + (windowSize.y - 290)),
-        ImVec2(windowPos.x + 425, windowPos.y + bottomBarY),
-        separatorColor, 2.0f // Thicker line
-    );
+	ImGui::SetCursorPos(ImVec2(titleX, titleAppY));
+	ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+	ImGui::Text("APP");
+	ImGui::PopStyleColor();
 
-    // Horizontal Line
-    drawList->AddLine(
-        ImVec2(windowPos.x, windowPos.y + bottomBarY),
-        ImVec2(windowPos.x + windowSize.x, windowPos.y + bottomBarY),
-        separatorColor, 2.0f // Thicker line
-    );
-    
-    // === DRAG AND DROP ZONE ===
-    ImGui::SetCursorPos(ImVec2(21, windowSize.y - 215));
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
-    // Remove border color push as we draw it manually
-    // ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.525f, 0.525f, 0.525f, 0.6f));
-    // ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, 2.0f);
-    // ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 8.0f);
-    
-    // Disable border in BeginChild
-	// Increased height to 160 (was 140) DRAG AND DROP AREA
-    ImGui::BeginChild("##DragDrop", ImVec2(390, 160), false, ImGuiWindowFlags_NoScrollbar);
-    
-    // Check hover
-    bool isHovered = ImGui::IsWindowHovered();
-    ImU32 borderColor = isHovered ? IM_COL32(0, 184, 190, 255) : separatorColor; // Cyan if hovered
+	if (m_fontTitle) 
+	{
+		ImGui::SetWindowFontScale(1.0f);
+		ImGui::PopFont();
+	}
+	else if (m_fontUI) ImGui::PopFont();
 
-    // Draw Dashed Border
-    ImVec2 ddMin = ImVec2(windowPos.x + 21, windowPos.y + (windowSize.y - 215));
-    ImVec2 ddMax = ImVec2(ddMin.x + 390, ddMin.y + 160); // Increased height to 160
-    AddDashedRect(drawList, ddMin, ddMax, borderColor, 2.0f, 10.0f, 5.0f); // Thicker line (2.0f)
+	ImGui::PopStyleVar();
 
-    // Draw Download Icon
-    if (m_iconDragDrop)
-    {
-        ImGui::SetCursorPos(ImVec2(179, 55)); // Moved down (was 40)
-        ImGui::Image((ImTextureID)m_iconDragDrop, ImVec2(32, 32));
-    }
+	// === VERSION ===
+	const float versionY = windowSize.y * (19.0f / 509.0f);
 
-    ImGui::SetCursorPos(ImVec2(65, 110)); // Adjusted position
-    ImGui::TextColored(ImVec4(0.835f, 0.835f, 0.835f, 1.0f), "Drag and Drop or paste from clipboard");
-    
-    // Removed Button
+	if (m_fontRegular) ImGui::PushFont(m_fontRegular);
+	const ImVec2 verSize = ImGui::CalcTextSize(UIConfig::APP_VERSION);
+	ImGui::SetCursorPos(ImVec2(windowSize.x - verSize.x - windowSize.x * (14.0f / 557.0f), versionY));
+	ImGui::TextColored(ImVec4(1.0f, 1.0f, 1.0f, 1.0f), "%s", UIConfig::APP_VERSION);
+	if (m_fontRegular) ImGui::PopFont();
 
-    ImGui::EndChild();
+	// === AUTHOR NAME ===
+	const float authorX = windowSize.x * (20.0f / 557.0f);
+	const float authorY = windowSize.y * (260.0f / 509.0f);
+	const float authorFontSize = windowSize.y * (12.0f / 509.0f);
+
+	if (m_fontRegular) 
+	{
+		ImGui::PushFont(m_fontRegular);
+		ImGui::SetWindowFontScale(authorFontSize / m_fontRegular->FontSize);
+	}
+	ImGui::SetCursorPos(ImVec2(authorX, authorY));
+	ImGui::TextColored(ImVec4(1.0f, 1.0f, 1.0f, 1.0f), "Anastasia Korchagina");
+	if (m_fontRegular) 
+	{
+		ImGui::SetWindowFontScale(1.0f);
+		ImGui::PopFont();
+	}
     
-    ImGui::PopStyleColor(1); // Only ChildBg was pushed
-    // ImGui::PopStyleVar(2); // Removed vars
-    
-    // === RECENT FILES ===
-    // Position at right side of window (after vertical separator)
-    float files_x_pos = 435;  // This is relative to window, not screen
-    
-    ImGui::SetCursorPos(ImVec2(files_x_pos, windowSize.y - 290));
-    ImGui::TextColored(ImVec4(0.525f, 0.525f, 0.525f, 1.0f), "Recent Files");
-    
-    // Recent files list
-    float listStartY = windowSize.y - 255;
-    for (size_t i = 0; i < m_recentFiles.size() && i < 6; i++)
-    {
-        ImGui::SetCursorPos(ImVec2(files_x_pos, listStartY + i * 30));
-        
-        // Draw File Icon
-        if (m_iconFile)
-        {
-            ImGui::Image((ImTextureID)m_iconFile, ImVec2(18, 18));
-        }
-        
-        ImGui::SameLine();
-        ImGui::SetCursorPosX(files_x_pos + 30);  // Icon width + small gap
-        ImGui::TextColored(ImVec4(0.835f, 0.835f, 0.835f, 1.0f), m_recentFiles[i].name.c_str());
-        
-        // Clickable area
-        ImGui::SetCursorPos(ImVec2(files_x_pos, listStartY + i * 30));
-        if (ImGui::InvisibleButton(("##file" + std::to_string(i)).c_str(), ImVec2(390, 28)))
-        {
+	// === CREATE TRACK BUTTON ===
+	// Shared gold color constants – also used by DragDrop hover border
+	const ImVec4 btnCol        = ImVec4(218.0f/255.0f, 165.0f/255.0f,  64.0f/255.0f, 1.0f);
+	const ImVec4 btnHovCol     = ImVec4(238.0f/255.0f, 185.0f/255.0f,  84.0f/255.0f, 1.0f);
+	const ImVec4 btnActiveCol  = ImVec4(198.0f/255.0f, 145.0f/255.0f,  44.0f/255.0f, 1.0f);
+	const ImU32  ddHoverBorder = IM_COL32(238, 185, 84, 255); // same as btnHovCol
+
+	// Button lives in the left column (before vertical separator at 277/557)
+	const float buttonX       = windowSize.x * (14.0f / 557.0f);
+	const float buttonW       = windowSize.x * (255.0f / 557.0f);
+	const float buttonH       = windowSize.y * (42.0f / 509.0f);
+	const float buttonY       = windowSize.y * (307.0f / 509.0f);
+	const float buttonFontSz  = windowSize.y * (16.0f / 509.0f);
+	const float buttonRounding = windowSize.y * (8.0f / 509.0f);
+
+	ImGui::SetCursorPos(ImVec2(buttonX, buttonY));
+	ImGui::PushStyleColor(ImGuiCol_Button,        btnCol);
+	ImGui::PushStyleColor(ImGuiCol_ButtonHovered, btnHovCol);
+	ImGui::PushStyleColor(ImGuiCol_ButtonActive,  btnActiveCol);
+	ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, buttonRounding);
+	ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,  ImVec2(0.0f, 0.0f));
+
+	// Ubuntu Bold for button label
+	ImFont* btnFont = m_fontUBold ? m_fontUBold : (m_fontUI ? m_fontUI : m_fontRegular);
+	if (btnFont)
+	{
+		ImGui::PushFont(btnFont);
+		ImGui::SetWindowFontScale(buttonFontSz / btnFont->FontSize);
+	}
+
+	if (ImGui::Button("Create Track", ImVec2(buttonW, buttonH)))
+	{
+		std::cout << "[UI] Create Track clicked\n";
+		TelemetryTrackBuilder::Settings s;
+		TelemetryTrackBuilder::Start(s);
+		std::cout << "[UI] Telemetry track creation mode enabled. Connect prototype and start driving." << std::endl;
+		m_showSplash = false;
+		m_closeSplash = true;
+	}
+
+	if (btnFont)
+	{
+		ImGui::SetWindowFontScale(1.0f);
+		ImGui::PopFont();
+	}
+	ImGui::PopStyleColor(3);
+	ImGui::PopStyleVar(2);
+
+	// === SEPARATORS ===
+	ImDrawList* drawList = ImGui::GetWindowDrawList();
+	ImU32 separatorColor = IM_COL32(80, 80, 80, 255);
+
+	const float vertSepX = windowSize.x * (277.0f / 557.0f);
+	const float vertSepTopY = windowSize.y * (307.0f / 509.0f);
+	const float vertSepBotY = windowSize.y * (477.0f / 509.0f);
+
+	const float horizSepY = windowSize.y * (477.0f / 509.0f);
+
+	// Vertical Line
+	drawList->AddLine(
+		ImVec2(windowPos.x + vertSepX, windowPos.y + vertSepTopY),
+		ImVec2(windowPos.x + vertSepX, windowPos.y + vertSepBotY),
+		separatorColor, 4.0f
+	);
+
+	// Horizontal Line
+	drawList->AddLine(
+		ImVec2(windowPos.x, windowPos.y + horizSepY),
+		ImVec2(windowPos.x + windowSize.x, windowPos.y + horizSepY),
+		separatorColor, 4.0f
+	);
+
+	// === DRAG AND DROP ZONE ===
+	// Width matches the Create Track button
+	const float ddW = buttonW;
+	const float ddH = windowSize.y * (110.0f / 509.0f);
+	const float ddX = buttonX;
+	const float ddY = windowSize.y * (359.0f / 509.0f);
+
+	ImGui::SetCursorPos(ImVec2(ddX, ddY));
+	ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
+
+	ImGui::BeginChild("##DragDrop", ImVec2(ddW, ddH), false, ImGuiWindowFlags_NoScrollbar);
+
+	// Hover detection
+	bool isHovered = ImGui::IsWindowHovered();
+	ImU32 borderColor = isHovered ? ddHoverBorder : separatorColor;
+	ImVec4 ddTextCol  = isHovered
+		? ImVec4(btnHovCol.x, btnHovCol.y, btnHovCol.z, 1.0f)
+		: ImVec4(0.835f, 0.835f, 0.835f, 1.0f);
+
+	// Draw Dashed Border – thicker, rarer dashes
+	ImVec2 ddMin = ImVec2(windowPos.x + ddX, windowPos.y + ddY);
+	ImVec2 ddMax = ImVec2(ddMin.x + ddW, ddMin.y + ddH);
+	AddDashedRect(drawList, ddMin, ddMax, borderColor, 2.5f, 14.0f, 10.0f);
+
+	// Draw Download Icon (centered, in lower half)
+	if (m_iconDragDrop)
+	{
+		const float iconW = windowSize.y * (24.0f / 509.0f);
+		const float iconH = iconW;
+		const float iconX = (ddW - iconW) / 2.0f;
+		const float iconY = ddH * (55.0f / 110.0f);
+
+		ImGui::SetCursorPos(ImVec2(iconX, iconY));
+		ImGui::Image((ImTextureID)m_iconDragDrop, ImVec2(iconW, iconH));
+	}
+
+	// Text (centered, upper half) – color matches hover
+	if (m_fontRegular) ImGui::PushFont(m_fontRegular);
+	const char* dndText = "Drag and Drop file there";
+	ImVec2 textSize = ImGui::CalcTextSize(dndText);
+	const float textX = (ddW - textSize.x) / 2.0f;
+	const float textY = (ddH * 0.5f - textSize.y) * 0.5f; // centered in top half
+
+	ImGui::SetCursorPos(ImVec2(textX, textY));
+	ImGui::TextColored(ddTextCol, "%s", dndText);
+	if (m_fontRegular) ImGui::PopFont();
+
+	ImGui::EndChild();
+	ImGui::PopStyleColor(1);
+
+	// === RECENT FILES ===
+	const float files_x_pos    = windowSize.x * (293.0f / 557.0f);
+	// Bottom of recent list aligns with bottom of DragDrop zone
+	const float recfiles_bot_y  = ddY + ddH;
+	const float recfiles_item_h = windowSize.y * (20.0f / 509.0f);  // tighter rows
+	const int   maxFiles        = 6;
+	const float recfiles_list_h = maxFiles * recfiles_item_h;
+	// Title sits just above the list
+	const float recfiles_title_y = recfiles_bot_y - recfiles_list_h - windowSize.y * (18.0f / 509.0f);
+	const float recfiles_list_y  = recfiles_bot_y - recfiles_list_h;
+
+	if (m_fontRegular) ImGui::PushFont(m_fontRegular);
+	ImGui::SetCursorPos(ImVec2(files_x_pos, recfiles_title_y));
+	ImGui::TextColored(ImVec4(0.525f, 0.525f, 0.525f, 1.0f), "Recent Files");
+	if (m_fontRegular) ImGui::PopFont();
+
+	// Recent files list
+	if (m_fontRegular) ImGui::PushFont(m_fontRegular);
+	const float fileIconSz = windowSize.y * (13.0f / 509.0f);
+	const float list_w = windowSize.x - files_x_pos - windowSize.x * (8.0f / 557.0f);
+	const float textLineHRow = ImGui::GetTextLineHeight();
+	if (m_fontRegular) ImGui::PopFont();
+
+	if (m_fontRegular) ImGui::PushFont(m_fontRegular);
+	for (size_t i = 0; i < m_recentFiles.size() && i < (size_t)maxFiles; i++)
+	{
+		const float rowY = recfiles_list_y + i * recfiles_item_h;
+
+		// Invisible hover button first
+		ImGui::SetCursorPos(ImVec2(files_x_pos, rowY));
+		ImGui::InvisibleButton(("##filehover" + std::to_string(i)).c_str(), ImVec2(list_w, recfiles_item_h));
+		bool rowHovered = ImGui::IsItemHovered();
+		bool rowClicked = ImGui::IsItemClicked();
+		ImVec4 rowTextCol = rowHovered
+			? ImVec4(btnHovCol.x, btnHovCol.y, btnHovCol.z, 1.0f)
+			: ImVec4(0.835f, 0.835f, 0.835f, 1.0f);
+
+		// Icon vertically centered in row
+		const float iconPosX = files_x_pos;
+		const float iconPosY = rowY + (recfiles_item_h - fileIconSz) * 0.5f;
+		if (m_iconFile)
+		{
+			ImU32 iconTint = rowHovered
+				? IM_COL32((int)(btnHovCol.x*255), (int)(btnHovCol.y*255), (int)(btnHovCol.z*255), 255)
+				: IM_COL32(255, 255, 255, 255);
+			ImVec2 iMin = ImVec2(windowPos.x + iconPosX, windowPos.y + iconPosY);
+			ImVec2 iMax = ImVec2(iMin.x + fileIconSz, iMin.y + fileIconSz);
+			drawList->AddImage((ImTextureID)m_iconFile, iMin, iMax, ImVec2(0,0), ImVec2(1,1), iconTint);
+		}
+
+		// Label
+		ImGui::SetCursorPos(ImVec2(files_x_pos + fileIconSz + 5.0f, rowY + (recfiles_item_h - textLineHRow) * 0.5f));
+		ImGui::TextColored(rowTextCol, "%s", m_recentFiles[i].name.c_str());
+
+		if (rowClicked)
+		{
             std::cout << "[UI] Opening: " << m_recentFiles[i].path << "\n";
             
             // Load file
@@ -1706,7 +1814,7 @@ void UI::RenderMainWindow()
                 
                 // Rebuild track cache for rendering
                 TrackRenderer::rebuildTrackCache(*m_points, *m_pointsMutex);
-                
+
                 m_showSplash = false;
                 m_closeSplash = true;
             }
@@ -1716,57 +1824,66 @@ void UI::RenderMainWindow()
             }
         }
     }
-    
+    if (m_fontRegular) ImGui::PopFont();
+
     // === BOTTOM BAR ===
-    // float bottomBarY = windowSize.y - 40; // Already defined
-    float contentY = bottomBarY + 12; // Offset content below the line
-    
-    // Contact Us
-    ImGui::SetCursorPos(ImVec2(25, contentY));
-    if (m_iconContact)
+    const float bottomBarY = windowSize.y * (477.0f / 509.0f);
+    // Raise items slightly inside the bar
+    const float contentY = windowSize.y * (481.0f / 509.0f);
+
+    // Bottom bar layout constants
+    const float barIconSz = windowSize.y * (16.0f / 509.0f);
+    const float barBtnH   = windowSize.y * (20.0f / 509.0f);
+    const float iconOffY  = (barBtnH - barIconSz) * 0.5f;
+
+    if (m_fontRegular) ImGui::PushFont(m_fontRegular);
+    const float textLineH = ImGui::GetTextLineHeight();
+    const float textOffY  = (barBtnH - textLineH) * 0.5f;
+    const float gap = 5.0f;
+    const ImVec4 barTextCol = ImVec4(0.835f, 0.835f, 0.835f, 1.0f);
+    const ImVec4 barHovCol  = ImVec4(btnHovCol.x, btnHovCol.y, btnHovCol.z, 1.0f);
+
+    // barItem with icon tint on hover
+    auto barItem = [&](float x, const char* btnId, void* icon, const char* label, float btnW, auto onClick)
     {
-        ImGui::Image((ImTextureID)m_iconContact, ImVec2(20, 20));
-        ImGui::SameLine();
-    }
-    ImGui::TextColored(ImVec4(0.835f, 0.835f, 0.835f, 1.0f), " Contact Us");
-    
-    ImGui::SetCursorPos(ImVec2(25, contentY));
-    if (ImGui::InvisibleButton("##contact", ImVec2(140, 30)))
-    {
-        std::cout << "[UI] Contact Us\n";
-    }
-    
-    // Copyright
-    ImGui::SetCursorPos(ImVec2(215, contentY));
-    if (m_iconCopyright)
-    {
-        ImGui::Image((ImTextureID)m_iconCopyright, ImVec2(20, 20));
-        ImGui::SameLine();
-    }
-    ImGui::TextColored(ImVec4(0.835f, 0.835f, 0.835f, 1.0f), " Donate");
-    
-    ImGui::SetCursorPos(ImVec2(455, contentY));
-    if (ImGui::InvisibleButton("##donate", ImVec2(130, 30)))
-    {
-        std::cout << "[UI] Donate\n";
-    }
-    
-    // Close App
-    ImGui::SetCursorPos(ImVec2(windowSize.x - 155, contentY));
-    if (m_iconClose)
-    {
-        ImGui::Image((ImTextureID)m_iconClose, ImVec2(20, 20));
-        ImGui::SameLine();
-    }
-    ImGui::TextColored(ImVec4(0.835f, 0.835f, 0.835f, 1.0f), " Close App");
-    
-    ImGui::SetCursorPos(ImVec2(windowSize.x - 155, contentY));
-    if (ImGui::InvisibleButton("##close", ImVec2(130, 30)))
-    {
-        std::cout << "[UI] Close App\n";
-        glfwSetWindowShouldClose(m_window, true);
-    }
-    
+        // Measure full item width for hover area
+        if (m_fontRegular) ImGui::PushFont(m_fontRegular);
+        const float labelW = ImGui::CalcTextSize(label).x;
+        if (m_fontRegular) ImGui::PopFont();
+        const float totalW = (icon ? barIconSz + gap : 0.0f) + labelW;
+        const float hitW   = btnW > 0 ? btnW : totalW + 4.0f;
+
+        // Invisible hit area
+        ImGui::SetCursorPos(ImVec2(x, contentY));
+        ImGui::InvisibleButton(btnId, ImVec2(hitW, barBtnH));
+        bool hov = ImGui::IsItemHovered();
+        bool clicked = ImGui::IsItemClicked();
+
+        ImVec4 tint = hov ? barHovCol : ImVec4(1,1,1,1);
+        ImVec4 textC = hov ? barHovCol : barTextCol;
+
+        if (icon)
+        {
+            ImVec2 iMin = ImVec2(windowPos.x + x, windowPos.y + contentY + iconOffY);
+            ImVec2 iMax = ImVec2(iMin.x + barIconSz, iMin.y + barIconSz);
+            ImU32 iconTint = hov
+                ? IM_COL32((int)(btnHovCol.x*255), (int)(btnHovCol.y*255), (int)(btnHovCol.z*255), 255)
+                : IM_COL32(255, 255, 255, 255);
+            drawList->AddImage((ImTextureID)icon, iMin, iMax, ImVec2(0,0), ImVec2(1,1), iconTint);
+        }
+        ImGui::SetCursorPos(ImVec2(x + (icon ? barIconSz + gap : 0.0f), contentY + textOffY));
+        ImGui::TextColored(textC, "%s", label);
+
+        if (clicked) onClick();
+    };
+
+    barItem(windowSize.x * (14.0f  / 557.0f), "##contact", m_iconContact,   "Contact Us",     windowSize.x * (110.0f / 557.0f), [&]{ std::cout << "[UI] Contact Us\n"; });
+    barItem(windowSize.x * (148.0f / 557.0f), "##copy",    m_iconCopyright, "RAJAGP",          0.0f,                             [&]{ });
+    barItem(windowSize.x * (293.0f / 557.0f), "##donate",  m_iconHeart,     "Donate to Us",   windowSize.x * (110.0f / 557.0f), [&]{ std::cout << "[UI] Donate\n"; });
+    barItem(windowSize.x * (430.0f / 557.0f), "##close",   m_iconClose,     "Close App",      windowSize.x * (110.0f / 557.0f), [&]{ std::cout << "[UI] Close App\n"; glfwSetWindowShouldClose(m_window, true); });
+
+    if (m_fontRegular) ImGui::PopFont();
+
     ImGui::End();
     ImGui::PopStyleVar();
 }

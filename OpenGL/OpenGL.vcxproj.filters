@@ -236,4 +236,7 @@
     <Text Include="src\ui\UIRaceManager\RaceDisplay\VISUAL_LAYOUT.txt" />
     <Text Include="src\ui\UIRaceManager\RaceDisplay\USAGE_EXAMPLE.txt" />
   </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="app.rc" />
+  </ItemGroup>
 </Project>

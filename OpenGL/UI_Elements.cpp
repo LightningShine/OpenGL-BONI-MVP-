@@ -760,8 +760,18 @@ void UIElements::drawLeaderboard()
                 snprintf(gap_buf, sizeof(gap_buf), "Leader");
                 gap_col = col_gold;
             }
-            else if (lap_diff >= 1)
+            else if (s.isFinished && lap_diff >= 1)
             {
+                // Lapped car that has now finished: show how many laps down it was
+                if (lap_diff == 1)
+                    snprintf(gap_buf, sizeof(gap_buf), "LAPPED");
+                else
+                    snprintf(gap_buf, sizeof(gap_buf), "+%d LAPS", lap_diff);
+                gap_col = col_lapped;
+            }
+            else if (!s.isFinished && lap_diff >= 1)
+            {
+                // Still racing, behind by laps
                 if (lap_diff == 1)
                     snprintf(gap_buf, sizeof(gap_buf), "+1 LAP");
                 else

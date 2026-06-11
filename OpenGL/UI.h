@@ -76,6 +76,7 @@ private:
     // Fonts
     ImFont* m_fontRegular;      // 12px for menu
     ImFont* m_fontUI;           // 16px for UI elements (modals, etc.)
+    ImFont* m_fontUBold;        // 16px Ubuntu Bold - splash button
     ImFont* m_fontTitle;        // 36px Russo One for LapTimer
     ImFont* m_fontRace;         // F1 font
     ImFont* m_fontRobotoMono;   // Roboto Mono - leaderboard column headers

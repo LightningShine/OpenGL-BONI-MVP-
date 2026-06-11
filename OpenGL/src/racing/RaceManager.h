@@ -24,6 +24,7 @@ struct VehicleStanding
     int position;                    // Current race position (1st, 2nd, etc.)
     bool isLapped;                   // True if behind leader by 1+ laps
     bool hasStartedFirstLap;         // True if vehicle started racing
+    bool isFinished;                 // True if vehicle has crossed finish in Finishing state
     
     // Time difference calculations
     float deltaTimeToBest;           // Delta to best lap (from CalculateLapTimeDiff)
@@ -32,7 +33,7 @@ struct VehicleStanding
     VehicleStanding() 
         : vehicleID(0), completedLaps(0), currentLapNumber(0), currentLapTime(0.0f), 
           bestLapTime(-1.0f), totalRaceTime(0.0f), distanceFromStart(0.0), 
-          position(0), isLapped(false), hasStartedFirstLap(false),
+          position(0), isLapped(false), hasStartedFirstLap(false), isFinished(false),
           deltaTimeToBest(0.0f), deltaTimeToLeader(0.0f) {}
 };
 
@@ -104,6 +105,11 @@ private:
     // Auto-stop config
     int m_autoStopMaxLaps = 0;
     float m_autoStopMaxSeconds = 0.0f;
+
+    // Finishing state tracking
+    int     m_leaderLapsAtStop  = 0;   // Leader's completed laps when StopSession was called
+    int32_t m_leaderAtStop      = -1;  // Leader vehicleID when StopSession was called
+    int     m_leadLapCarCount   = 0;   // Cars on the lead lap at Stop (must finish before lapped cars)
 
     // ========================================================================
     // START/FINISH LINE (defined as two points: left and right edge)

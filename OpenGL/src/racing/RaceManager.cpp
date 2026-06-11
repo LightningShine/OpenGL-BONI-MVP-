@@ -239,39 +239,66 @@ void RaceManager::Update(float deltaTime)
 
             if (crossingTime > MIN_VALID_LAP_TIME)
             {
-                // Store completed lap
-                LapData lapData(crossingTime, 0);
-                vehicle.m_laps[vehicle.m_current_lap_number] = lapData;
-                vehicle.m_completed_laps++;
-
-                // Update best lap time and ID
-                if (crossingTime < vehicle.m_best_lap_time || vehicle.m_best_lap_time < 0.0f)
+                // ----------------------------------------------------------------
+                // In Finishing state, enforce correct finishing order:
+                //   1) The stored leader must finish first.
+                //   2) Same-lap cars may finish only after the leader has crossed.
+                //   3) Lapped cars may finish only after ALL same-lap cars are done.
+                // If a car is not yet allowed to finish, skip recording this
+                // crossing entirely — the timer resets below and it tries again.
+                // ----------------------------------------------------------------
+                bool processLap = true;
+                if (m_sessionState == SessionState::Finishing)
                 {
-                    vehicle.m_best_lap_time = crossingTime;
-                    vehicle.bestlapID = vehicle.m_current_lap_number; // Track which lap is best
+                    const bool isTheLeader       = (vehicleID == m_leaderAtStop);
+                    const bool leaderHasFinished = (m_leaderAtStop >= 0 &&
+                                                    m_finishPositions.count(m_leaderAtStop) > 0);
+                    // completed_laps not yet incremented here — compare against stored baseline
+                    const bool isLeadLapCar      = (vehicle.m_completed_laps >= m_leaderLapsAtStop);
+                    const bool allLeadLapFinished = (static_cast<int>(m_finishPositions.size()) >= m_leadLapCarCount);
+
+                    processLap = (isTheLeader ||
+                                  (isLeadLapCar  && leaderHasFinished) ||
+                                  (!isLeadLapCar && allLeadLapFinished));
                 }
 
-                std::cout << "[RACE MANAGER] Vehicle #" << vehicleID 
-                          << " completed Lap " << vehicle.m_current_lap_number
-                          << " in " << std::fixed << std::setprecision(3) << crossingTime << "s"
-                          << " | Total completed: " << vehicle.m_completed_laps << std::endl;
+                if (processLap)
+                {
+                    // Store completed lap
+                    LapData lapData(crossingTime, 0);
+                    vehicle.m_laps[vehicle.m_current_lap_number] = lapData;
+                    vehicle.m_completed_laps++;
 
-                // State checking for Finish
-                if (m_sessionState == SessionState::Finishing) {
-                    vehicle.m_is_finished = true;
-                    if (m_finishPositions.find(vehicleID) == m_finishPositions.end())
+                    // Update best lap time and ID
+                    if (crossingTime < vehicle.m_best_lap_time || vehicle.m_best_lap_time < 0.0f)
                     {
-                        m_finishPositions[vehicleID] = static_cast<int>(m_finishPositions.size() + 1);
+                        vehicle.m_best_lap_time = crossingTime;
+                        vehicle.bestlapID = vehicle.m_current_lap_number;
                     }
-                    vehicle.m_current_lap_timer = 0.0f;
-                    std::cout << "[RACE MANAGER] Vehicle #" << vehicleID << " HAS FINISHED!" << std::endl;
-                } else {
-                    // Start new lap only if not finished
-                    vehicle.m_current_lap_number++;
+
+                    std::cout << "[RACE MANAGER] Vehicle #" << vehicleID
+                              << " completed Lap " << vehicle.m_current_lap_number
+                              << " in " << std::fixed << std::setprecision(3) << crossingTime << "s"
+                              << " | Total completed: " << vehicle.m_completed_laps << std::endl;
+
+                    if (m_sessionState == SessionState::Finishing)
+                    {
+                        vehicle.m_is_finished = true;
+                        if (m_finishPositions.find(vehicleID) == m_finishPositions.end())
+                            m_finishPositions[vehicleID] = static_cast<int>(m_finishPositions.size() + 1);
+                        vehicle.m_current_lap_timer = 0.0f;
+                        std::cout << "[RACE MANAGER] Vehicle #" << vehicleID
+                                  << " HAS FINISHED! pos=" << m_finishPositions[vehicleID] << std::endl;
+                    }
+                    else
+                    {
+                        vehicle.m_current_lap_number++;
+                    }
                 }
+                // else: car not yet allowed to finish — timer resets below, it retries next crossing
             }
 
-            // Reset timer after crossing
+            // Reset timer after crossing (applies even when processLap==false)
             vehicle.m_current_lap_timer = deltaTime * (1.0f - intersectionRatio);
         }
         // ====================================================================
@@ -484,6 +511,7 @@ std::vector<VehicleStanding> RaceManager::GetStandingsInternal() const
         standing.currentLapNumber = vehicle.m_current_lap_number;
         standing.currentLapTime = vehicle.m_is_finished ? 0.0f : vehicle.m_current_lap_timer;
         standing.hasStartedFirstLap = vehicle.m_has_started_first_lap;
+        standing.isFinished = vehicle.m_is_finished;
         standing.distanceFromStart = vehicle.m_track_progress;
         
         // Best lap logic depends on LAP_START_NUMBER

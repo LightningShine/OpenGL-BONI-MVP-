@@ -15,6 +15,7 @@
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
 #include <fstream>
+#include "../../libraries/include/stb_image.h"
 
 
 // === WINDOWS BORDER COLOR ===
@@ -716,6 +717,28 @@ int main()
 	std::cout << "[MAIN] Window created successfully" << std::endl;
 
 
+
+	// === SET WINDOW ICON ===
+	{
+		int icon_w = 0, icon_h = 0, icon_channels = 0;
+		unsigned char* icon_pixels = stbi_load("styles/images/Icon", &icon_w, &icon_h, &icon_channels, 4);
+		if (!icon_pixels)
+			icon_pixels = stbi_load("./styles/icons/PNG/Icon.png", &icon_w, &icon_h, &icon_channels, 4);
+		if (icon_pixels)
+		{
+			GLFWimage icon_image;
+			icon_image.width  = icon_w;
+			icon_image.height = icon_h;
+			icon_image.pixels = icon_pixels;
+			glfwSetWindowIcon(window, 1, &icon_image);
+			stbi_image_free(icon_pixels);
+			std::cout << "[MAIN] Window icon set from styles/images/Icon" << std::endl;
+		}
+		else
+		{
+			std::cerr << "[MAIN] Warning: Could not load window icon from styles/images/Icon(.png)" << std::endl;
+		}
+	}
 
 	// === CHANGE WINDOW BORDER COLOR (Windows 11) ===
 #ifdef _WIN32
