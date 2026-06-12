@@ -46,4 +46,7 @@ namespace TrackRenderer
     void rebuildDualEdgePreviewCache(
         const std::vector<glm::vec2>& left,
         const std::vector<glm::vec2>& right);
+
+    // Thin single-line preview for left-edge recording (does not draw full track width).
+    void rebuildEdgeLineCache(const std::vector<glm::vec2>& points);
 }

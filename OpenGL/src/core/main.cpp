@@ -427,47 +427,10 @@ void scroll_callback(GLFWwindow* window, double xoffset, double yoffset)
 void drop_callback(GLFWwindow* window, int count, const char** paths)
 {
 	AppContext* context = (AppContext*)glfwGetWindowUserPointer(window);
-	if (context && context->points && context->points_mutex)
+	if (context && context->ui)
 	{
 		for (int i = 0; i < count; i++)
-		{
-			std::ifstream file(paths[i]);
-			if (file.is_open())
-			{
-				std::stringstream buffer;
-				buffer << file.rdbuf();
-				loadTrackFromData(buffer.str(), *context->points, *context->points_mutex);
-				std::cout << "Loaded file: " << paths[i] << std::endl;
-                
-				// Recenter track to (0, 0) if closed
-				{
-					std::lock_guard<std::mutex> lock(*context->points_mutex);
-					TrackCenterInfo center_info = calculateTrackCenter(*context->points);
-					
-					if (center_info.is_closed) {
-						std::cout << "[TRACK] Track is CLOSED - recentering to (0, 0)" << std::endl;
-						recenterTrack(*context->points, center_info);
-						g_track_render_offset = center_info.offset;
-					
-						std::cout << "[TRACK] Origin updated to: (" << g_map_origin.m_origin_lat_dd << ", " << g_map_origin.m_origin_lon_dd << ")" << std::endl;
-					} else {
-						std::cout << "[TRACK] Track is OPEN - keeping original position" << std::endl;
-                       g_track_render_offset = glm::vec2(0.0f, 0.0f);
-					}
-				}
-				
-				TrackRenderer::rebuildTrackCache(*context->points, *context->points_mutex);
-				
-                if (context->ui)
-                {
-                    context->ui->CloseSplash();
-                }
-			}
-			else
-			{
-				std::cerr << "Failed to open file: " << paths[i] << std::endl;
-			}
-		}
+			context->ui->HandleDroppedFile(paths[i]);
 	}
 }
 

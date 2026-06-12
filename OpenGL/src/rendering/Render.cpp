@@ -918,19 +918,33 @@ namespace TrackRenderer
     // ── New dual-edge functions ───────────────────────────────────────────────
 
     void rebuildTrackCacheFromEdges(
-        const std::vector<glm::vec2>& left,
-        const std::vector<glm::vec2>& right)
+        const std::vector<glm::vec2>& leftIn,
+        const std::vector<glm::vec2>& rightIn)
     {
-        if (left.size() < 2 || right.size() < 2) return;
+        if (leftIn.size() < 2 || rightIn.size() < 2) return;
+
+        // Compute centroid of the centre line and apply centering offset so the
+        // track appears at the screen centre (same behaviour as the TXT-path's
+        // recenterTrack).  g_track_render_offset is set so vehicle positions
+        // rendered from GPS telemetry are shifted by the same amount.
+        const size_t n = leftIn.size() < rightIn.size() ? leftIn.size() : rightIn.size();
+        glm::vec2 sum(0.f, 0.f);
+        for (size_t i = 0; i < n; ++i)
+            sum += (leftIn[i] + rightIn[i]) * 0.5f;
+        const glm::vec2 offset = -(sum / (float)n);
+
+        std::vector<glm::vec2> left(n), right(n), centres(n);
+        for (size_t i = 0; i < n; ++i) {
+            left[i]    = leftIn[i]    + offset;
+            right[i]   = rightIn[i]   + offset;
+            centres[i] = (left[i] + right[i]) * 0.5f;
+        }
+        g_track_render_offset = offset;
 
         auto [bL, bR] = outsetEdges(left, right, 0.015f);
         s_cached_border_layer  = generateTriangleStripFromEdges(bL, bR);
         s_cached_asphalt_layer = generateTriangleStripFromEdges(left, right);
 
-        // Centre spline for vehicle progress tracking
-        const size_t n = left.size() < right.size() ? left.size() : right.size();
-        std::vector<glm::vec2> centres(n);
-        for (size_t i = 0; i < n; ++i) centres[i] = (left[i] + right[i]) * 0.5f;
         g_smooth_track_points = interpolatePointsWithTangents(centres, 6);
 
         setupStartFinishFromEdgePoints(left[0], right[0]);
@@ -938,7 +952,8 @@ namespace TrackRenderer
 
         s_track_cache_valid = true;
         g_is_map_loaded     = true;
-        std::cout << "[CACHE] Track (dual-edge) uploaded to GPU\n";
+        std::cout << "[CACHE] Track (dual-edge) uploaded, centered offset=("
+                  << offset.x << "," << offset.y << ")\n";
     }
 
     void rebuildDualEdgePreviewCache(
@@ -951,6 +966,31 @@ namespace TrackRenderer
         auto [bL, bR] = outsetEdges(left, right, 0.010f);
         s_cached_border_layer  = generateTriangleStripFromEdges(bL, bR);
 
+        uploadEdgeGeometry(s_cached_border_layer, s_cached_asphalt_layer, GL_DYNAMIC_DRAW);
+        s_track_cache_valid = true;
+    }
+
+    void rebuildEdgeLineCache(const std::vector<glm::vec2>& pts)
+    {
+        if (pts.size() < 2) { s_track_cache_valid = false; return; }
+
+        std::vector<SplinePoint> spline;
+        spline.reserve(pts.size());
+        for (size_t i = 0; i < pts.size(); ++i) {
+            SplinePoint sp;
+            sp.position = pts[i];
+            if (i + 1 < pts.size()) {
+                glm::vec2 d = pts[i + 1] - pts[i];
+                sp.tangent = (glm::length(d) > 1e-6f) ? glm::normalize(d) : glm::vec2(1.f, 0.f);
+            } else {
+                sp.tangent = (i > 0) ? spline.back().tangent : glm::vec2(1.f, 0.f);
+            }
+            spline.push_back(sp);
+        }
+
+        // Narrow strips: just enough to be visible as a single edge line
+        s_cached_border_layer  = generateTriangleStripFromLine(spline, 0.007f);
+        s_cached_asphalt_layer = generateTriangleStripFromLine(spline, 0.003f);
         uploadEdgeGeometry(s_cached_border_layer, s_cached_asphalt_layer, GL_DYNAMIC_DRAW);
         s_track_cache_valid = true;
     }

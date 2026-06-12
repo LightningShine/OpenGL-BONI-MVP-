@@ -50,6 +50,10 @@ public:
     bool WantsMouseCapture() const;
     bool WantsKeyboardCapture() const;
 
+    // Load a track file by path and close the splash screen.
+    // Handles .trk2 (binary dual-edge) and .txt (legacy) automatically.
+    void HandleDroppedFile(const std::string& path);
+
     // Race Status Bar rendering
     void RenderRaceStatusBar(ModeManager* modeManager);
 

@@ -239,6 +239,13 @@ static void applyTrackFile(const std::string& path,
     applyTrackData(buf.str(), points, mtx);
 }
 
+void UI::HandleDroppedFile(const std::string& path)
+{
+    applyTrackFile(path, m_points, m_pointsMutex);
+    m_showSplash = false;
+    m_closeSplash = true;
+}
+
 void UI::RenderNetworkingModal()
 {
     if (!m_show_networking_modal)
@@ -798,8 +805,7 @@ void UI::LoadRecentFiles()
                 std::string filename = entry.path().filename().string();
                 std::string extension = entry.path().extension().string();
                 
-                // Load .json and .txt files
-                if (extension == ".json" || extension == ".txt")
+                if (extension == ".json" || extension == ".txt" || extension == ".trk2")
                 {
                     RecentFile file;
                     file.name = filename;
@@ -1003,7 +1009,7 @@ void UI::BeginFrame()
         ofn.lpstrFile = saveFile;
         ofn.nMaxFile = sizeof(saveFile);
         ofn.lpstrFilter = isDualEdge
-            ? "BONI Track\0*.trk2\0All Files\0*.*\0"
+            ? "trk2\0*.trk2\0All Files\0*.*\0"
             : "Track TXT\0*.txt\0All Files\0*.*\0";
         ofn.nFilterIndex = 1;
         ofn.Flags = OFN_OVERWRITEPROMPT | OFN_NOCHANGEDIR;
@@ -1094,7 +1100,7 @@ void UI::BeginFrame()
             ofn.hwndOwner = glfwGetWin32Window(m_window);
             ofn.lpstrFile = szFile;
             ofn.nMaxFile = sizeof(szFile);
-            ofn.lpstrFilter = "BONI Track\0*.trk2\0Track TXT\0*.txt\0All Files\0*.*\0";
+            ofn.lpstrFilter = "trk2\0*.trk2\0Track TXT\0*.txt\0All Files\0*.*\0";
             ofn.nFilterIndex = 1;
             ofn.lpstrFileTitle = NULL;
             ofn.nMaxFileTitle = 0;
@@ -1268,16 +1274,26 @@ void UI::Render()
 
             if (phase == EdgePhase::Right)
             {
-                // Show the forming track mesh: left (stored) + right (current)
+                // Show the forming track mesh while the right edge is being driven.
+                // Both edges are recorded at the same GPS packet rate, so index i
+                // in each array corresponds to roughly the same physical position.
+                // Using raw slices (not resample) avoids warping the full left edge
+                // to match a partially-driven right edge, which caused the "center
+                // fills first" artifact.
                 auto left  = TelemetryTrackBuilder::GetLeftEdgeSnapshot();
                 auto right = TelemetryTrackBuilder::GetRawPointsSnapshot();
-                if (left.size() >= 2 && right.size() >= 2)
+                if (left.size() >= 10 && right.size() >= 10)
                 {
-                    int n = (int)std::min(left.size(), right.size());
-                    left  = resamplePolyline(left,  n);
-                    right = resamplePolyline(right, n);
-                    alignPolylineDirection(right, left);
-                    TrackRenderer::rebuildDualEdgePreviewCache(left, right);
+                    int n = (int)(left.size() < right.size() ? left.size() : right.size());
+                    std::vector<glm::vec2> leftPart(left.begin(),  left.begin()  + n);
+                    std::vector<glm::vec2> rightPart(right.begin(), right.begin() + n);
+                    alignPolylineDirection(rightPart, leftPart);
+                    TrackRenderer::rebuildDualEdgePreviewCache(leftPart, rightPart);
+                }
+                else if (right.size() >= 2)
+                {
+                    // Too few right points yet — show just the right edge as a thin line.
+                    TrackRenderer::rebuildEdgeLineCache(right);
                 }
             }
             else
@@ -1285,10 +1301,7 @@ void UI::Render()
                 // Left edge: show single polyline preview
                 std::vector<glm::vec2> pts = TelemetryTrackBuilder::GetRawPointsSnapshot();
                 if (pts.size() >= 2)
-                {
-                    static std::mutex s_prev_mtx;
-                    TrackRenderer::rebuildTrackPreviewCache(pts, s_prev_mtx);
-                }
+                    TrackRenderer::rebuildEdgeLineCache(pts);
             }
         }
     }
@@ -2007,7 +2020,7 @@ void UI::RenderTopMenu()
                 ofn.hwndOwner = glfwGetWin32Window(m_window);
                 ofn.lpstrFile = szFile;
                 ofn.nMaxFile = sizeof(szFile);
-                ofn.lpstrFilter = "BONI Track\0*.trk2\0Track TXT\0*.txt\0All Files\0*.*\0";
+                ofn.lpstrFilter = "trk2\0*.trk2\0Track TXT\0*.txt\0All Files\0*.*\0";
                 ofn.nFilterIndex = 1;
                 ofn.lpstrFileTitle = NULL;
                 ofn.nMaxFileTitle = 0;
