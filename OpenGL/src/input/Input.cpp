@@ -2,6 +2,7 @@
 #include "Input.h"
 #include "../rendering/Interpolation.h"
 #include "../Config.h"
+#include <fstream>
 
 MapOrigin g_map_origin;
 std::atomic<bool> g_is_map_loaded = false;
@@ -215,8 +216,99 @@ void loadTrackFromData(const std::string& data, std::vector<glm::vec2>& points, 
 		}
 	}
 	
-	// ✅ Устанавливаем флаг что карта загружена
 	g_is_map_loaded = true;
+}
+
+bool isDualEdgeFormat(const std::string& data)
+{
+	return data.find("#version 2") == 0;
+}
+
+bool loadDualEdgeFromData(const std::string& data,
+	std::vector<glm::vec2>& leftOut,
+	std::vector<glm::vec2>& rightOut)
+{
+	if (!isDualEdgeFormat(data)) return false;
+
+	std::stringstream ss(data);
+	std::string line;
+
+	enum class Sec { None, Left, Right };
+	Sec sec = Sec::None;
+	bool firstPoint = true;
+
+	leftOut.clear();
+	rightOut.clear();
+
+	while (std::getline(ss, line))
+	{
+		if (line.rfind("#edge left",  0) == 0) { sec = Sec::Left;  continue; }
+		if (line.rfind("#edge right", 0) == 0) { sec = Sec::Right; continue; }
+		if (!line.empty() && line[0] == '#') continue;
+
+		bool hasDigit = false;
+		for (char c : line) { if (isdigit((unsigned char)c)) { hasDigit = true; break; } }
+		if (!hasDigit) continue;
+
+		double lat, lon;
+		coordinatesToDecimalFormat(line, lat, lon);
+
+		double e, n;
+		if (firstPoint)
+		{
+			createOriginDD(lat, lon, e, n);
+			g_map_origin.m_map_size = MapConstants::MAP_SIZE;
+			firstPoint = false;
+		}
+		else
+		{
+			coordinatesToMeters(lat, lon, e, n);
+		}
+
+		double nx, ny;
+		getCoordinateDifferenceFromOrigin(e, n, nx, ny);
+		glm::vec2 pt((float)nx, (float)ny);
+
+		if      (sec == Sec::Left)  leftOut.push_back(pt);
+		else if (sec == Sec::Right) rightOut.push_back(pt);
+	}
+
+	bool ok = leftOut.size() >= 2 && rightOut.size() >= 2;
+	if (ok) g_is_map_loaded = true;
+	return ok;
+}
+
+bool loadTrk2File(const std::string& path,
+	std::vector<glm::vec2>& leftOut,
+	std::vector<glm::vec2>& rightOut)
+{
+	std::ifstream f(path, std::ios::binary);
+	if (!f) return false;
+
+	Trk2FileHeader h;
+	if (!f.read(reinterpret_cast<char*>(&h), sizeof(h))) return false;
+	if (memcmp(h.magic, "TRK2", 4) != 0 || h.version != 2) return false;
+	if (h.left_count < 2 || h.right_count < 2) return false;
+
+	g_map_origin.m_origin_meters_easting  = h.origin_easting;
+	g_map_origin.m_origin_meters_northing = h.origin_northing;
+	g_map_origin.m_origin_zone_int        = h.origin_zone;
+	g_map_origin.m_origin_zone_char       = h.origin_zone_char;
+	g_map_origin.m_map_size               = h.map_size;
+	try {
+		bool northp = h.origin_zone_char >= 'N';
+		GeographicLib::UTMUPS::Reverse(h.origin_zone, northp,
+			h.origin_easting, h.origin_northing,
+			g_map_origin.m_origin_lat_dd, g_map_origin.m_origin_lon_dd);
+	} catch (...) {}
+
+	leftOut.resize(h.left_count);
+	rightOut.resize(h.right_count);
+	f.read(reinterpret_cast<char*>(leftOut.data()),  h.left_count  * sizeof(glm::vec2));
+	f.read(reinterpret_cast<char*>(rightOut.data()), h.right_count * sizeof(glm::vec2));
+
+	g_is_map_loaded = true;
+	return true;
 }
 
 void createOriginDD(double lat_deg, double lon_deg, double& easting_meters, double& northing_meters)

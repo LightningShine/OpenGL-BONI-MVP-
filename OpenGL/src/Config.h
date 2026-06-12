@@ -69,6 +69,7 @@ namespace PacketMagic {
     static constexpr uint32_t TCHU = 0x54434855;  // 'TCHU' - Track chunk
     static constexpr uint32_t RACE = 0x52414345;  // 'RACE' - Race data
     static constexpr uint32_t VSTA = 0x56535441;  // 'VSTA' - processed vehicle state
+    static constexpr uint32_t TRK2 = 0x54524B32;  // 'TRK2' - dual-edge track (left + right polylines)
 }
 
 // Track rendering constants
@@ -113,6 +114,23 @@ namespace ConsoleColors {
    static constexpr int CONSOLE_DEFAULT = 7;
 }
 
+
+// Binary dual-edge track file format (.trk2)
+// Layout: Trk2FileHeader | left_count * vec2 | right_count * vec2
+#pragma pack(push, 1)
+struct Trk2FileHeader {
+    char     magic[4];          // 'T','R','K','2'
+    uint32_t version;           // 2
+    double   origin_easting;
+    double   origin_northing;
+    int32_t  origin_zone;
+    char     origin_zone_char;
+    uint8_t  pad[3];
+    double   map_size;
+    uint32_t left_count;
+    uint32_t right_count;
+};
+#pragma pack(pop)
 
 // Grid rendering constants
 namespace GridConstants {

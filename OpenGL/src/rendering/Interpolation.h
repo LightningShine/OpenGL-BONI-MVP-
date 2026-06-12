@@ -39,3 +39,10 @@ void recenterTrack(std::vector<glm::vec2>& points, const TrackCenterInfo& center
 // to stay aligned with the track.
 extern glm::vec2 g_track_render_offset;
 glm::vec2 getTrackRenderOffset();
+
+// Dual-edge track utilities
+std::vector<glm::vec2> resamplePolyline(const std::vector<glm::vec2>& pts, int n);
+void alignPolylineDirection(std::vector<glm::vec2>& b, const std::vector<glm::vec2>& reference);
+std::vector<glm::vec2> generateTriangleStripFromEdges(
+    const std::vector<glm::vec2>& left,
+    const std::vector<glm::vec2>& right);

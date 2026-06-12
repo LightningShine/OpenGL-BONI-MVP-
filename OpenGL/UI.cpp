@@ -188,6 +188,57 @@ void UI::UpdateNetworkingIps()
 #endif
 }
 
+// Dispatch track data string to the correct loader (single-edge or dual-edge).
+// Handles origin setup, recentering, and GPU upload.
+static void applyTrackData(const std::string& data,
+    std::vector<glm::vec2>* points, std::mutex* mtx)
+{
+    std::vector<glm::vec2> left, right;
+    if (isDualEdgeFormat(data) && loadDualEdgeFromData(data, left, right))
+    {
+        TrackRenderer::rebuildTrackCacheFromEdges(left, right);
+        return;
+    }
+    if (!points || !mtx) return;
+    loadTrackFromData(data, *points, *mtx);
+    {
+        std::lock_guard<std::mutex> lk(*mtx);
+        TrackCenterInfo ci = calculateTrackCenter(*points);
+        if (ci.is_closed)
+        {
+            recenterTrack(*points, ci);
+            g_map_origin.m_origin_meters_easting  -= ci.offset.x * MapConstants::MAP_SIZE;
+            g_map_origin.m_origin_meters_northing -= ci.offset.y * MapConstants::MAP_SIZE;
+            try {
+                using namespace GeographicLib;
+                const bool northp = (g_map_origin.m_origin_zone_char >= 'N');
+                UTMUPS::Reverse(g_map_origin.m_origin_zone_int, northp,
+                    g_map_origin.m_origin_meters_easting, g_map_origin.m_origin_meters_northing,
+                    g_map_origin.m_origin_lat_dd, g_map_origin.m_origin_lon_dd);
+            } catch (...) {}
+        }
+    }
+    TrackRenderer::rebuildTrackCache(*points, *mtx);
+}
+
+// Load track from file path — handles .trk2 binary and legacy .txt automatically.
+static void applyTrackFile(const std::string& path,
+    std::vector<glm::vec2>* points, std::mutex* mtx)
+{
+    const bool isTrk2 = path.size() > 5 &&
+        path.compare(path.size() - 5, 5, ".trk2") == 0;
+    if (isTrk2) {
+        std::vector<glm::vec2> left, right;
+        if (loadTrk2File(path, left, right))
+            TrackRenderer::rebuildTrackCacheFromEdges(left, right);
+        return;
+    }
+    std::ifstream file(path);
+    if (!file.is_open()) return;
+    std::stringstream buf; buf << file.rdbuf();
+    applyTrackData(buf.str(), points, mtx);
+}
+
 void UI::RenderNetworkingModal()
 {
     if (!m_show_networking_modal)
@@ -364,7 +415,8 @@ void UI::RenderNetworkingModal()
                     if (!isServerRunning())
                     {
                         continueServerRunning();
-                        std::thread ServerThread = std::thread(serverWork);
+                        std::thread ServerThread = std::thread(serverWork,
+                            std::ref(*m_points), std::ref(*m_pointsMutex));
                         ServerThread.detach();
                         ChangeisServerRunning();
                     }
@@ -393,7 +445,8 @@ void UI::RenderNetworkingModal()
                         if (!isClientRunning())
                         {
                             continueClientRunning();
-                            std::thread ClientThread = std::thread(clientStart);
+                            std::thread ClientThread = std::thread(clientStart,
+                                std::ref(*m_points), std::ref(*m_pointsMutex));
                             ClientThread.detach();
                             toggleClientRunning();
                         }
@@ -941,14 +994,17 @@ void UI::BeginFrame()
     // Do this early (before WantTextInput guard) so it can't be accidentally skipped.
     if (!m_showSplash && TelemetryTrackBuilder::ConsumeAutoSaveRequest())
     {
+        const bool isDualEdge = (TelemetryTrackBuilder::GetPhase() == EdgePhase::Done);
         char saveFile[260] = { 0 };
-        strncpy_s(saveFile, "track_recorded.txt", _TRUNCATE);
+        strncpy_s(saveFile, isDualEdge ? "track_recorded.trk2" : "track_recorded.txt", _TRUNCATE);
         OPENFILENAMEA ofn = {};
         ofn.lStructSize = sizeof(ofn);
         ofn.hwndOwner = glfwGetWin32Window(m_window);
         ofn.lpstrFile = saveFile;
         ofn.nMaxFile = sizeof(saveFile);
-        ofn.lpstrFilter = "Track TXT\0*.txt\0All Files\0*.*\0";
+        ofn.lpstrFilter = isDualEdge
+            ? "BONI Track\0*.trk2\0All Files\0*.*\0"
+            : "Track TXT\0*.txt\0All Files\0*.*\0";
         ofn.nFilterIndex = 1;
         ofn.Flags = OFN_OVERWRITEPROMPT | OFN_NOCHANGEDIR;
 
@@ -1038,7 +1094,7 @@ void UI::BeginFrame()
             ofn.hwndOwner = glfwGetWin32Window(m_window);
             ofn.lpstrFile = szFile;
             ofn.nMaxFile = sizeof(szFile);
-            ofn.lpstrFilter = "All Files\0*.*\0GPX Files\0*.gpx\0";
+            ofn.lpstrFilter = "BONI Track\0*.trk2\0Track TXT\0*.txt\0All Files\0*.*\0";
             ofn.nFilterIndex = 1;
             ofn.lpstrFileTitle = NULL;
             ofn.nMaxFileTitle = 0;
@@ -1050,54 +1106,10 @@ void UI::BeginFrame()
 
             if (GetOpenFileNameA(&ofn))
             {
-                if (m_points && m_pointsMutex)
                 {
-                    std::ifstream file(ofn.lpstrFile);
-                    if (file.is_open())
-                    {
-                        std::stringstream buffer;
-                        buffer << file.rdbuf();
-                        loadTrackFromData(buffer.str(), *m_points, *m_pointsMutex);
-
-                        {
-                            std::lock_guard<std::mutex> lock(*m_pointsMutex);
-                            TrackCenterInfo center_info = calculateTrackCenter(*m_points);
-
-                            if (center_info.is_closed)
-                            {
-                                recenterTrack(*m_points, center_info);
-
-                                const double dx_m = static_cast<double>(center_info.offset.x) * static_cast<double>(MapConstants::MAP_SIZE);
-                                const double dy_m = static_cast<double>(center_info.offset.y) * static_cast<double>(MapConstants::MAP_SIZE);
-
-                                g_map_origin.m_origin_meters_easting += dx_m;
-                                g_map_origin.m_origin_meters_northing += dy_m;
-
-                                try {
-                                    using namespace GeographicLib;
-                                    const bool northp = (g_map_origin.m_origin_zone_char >= 'N');
-                                    UTMUPS::Reverse(
-                                        g_map_origin.m_origin_zone_int,
-                                        northp,
-                                        g_map_origin.m_origin_meters_easting,
-                                        g_map_origin.m_origin_meters_northing,
-                                        g_map_origin.m_origin_lat_dd,
-                                        g_map_origin.m_origin_lon_dd);
-                                }
-                                catch (const std::exception& e) {
-                                    std::cerr << "[TRACK] Failed to update origin GPS from UTM: " << e.what() << std::endl;
-                                }
-                            }
-                        }
-
-                        TrackRenderer::rebuildTrackCache(*m_points, *m_pointsMutex);
-                        m_showSplash = false;
-                        m_closeSplash = true;
-                    }
-                    else
-                    {
-                        std::cerr << "[UI] Failed to open file: " << ofn.lpstrFile << std::endl;
-                    }
+                    applyTrackFile(ofn.lpstrFile, m_points, m_pointsMutex);
+                    m_showSplash = false;
+                    m_closeSplash = true;
                 }
             }
         }
@@ -1190,56 +1202,119 @@ void UI::Render()
     RenderTopMenu();
     RenderBottomMenu();
 
-    // Live preview while building a track from telemetry.
-    // Throttle cache rebuild to avoid heavy CPU/GPU usage.
-    static auto s_last_preview_update = std::chrono::steady_clock::now();
-    if (TelemetryTrackBuilder::IsActive() && m_points && m_pointsMutex)
+    // ── Edge-recording HUD ──────────────────────────────────────────────────
     {
-        const auto now = std::chrono::steady_clock::now();
-        if (now - s_last_preview_update >= std::chrono::milliseconds(150))
+        const auto phase = TelemetryTrackBuilder::GetPhase();
+        if (phase == EdgePhase::Left || phase == EdgePhase::Right)
         {
-            s_last_preview_update = now;
-            std::vector<glm::vec2> pts = TelemetryTrackBuilder::GetRawPointsSnapshot();
-            if (pts.size() >= 2)
+            const ImGuiIO& io = ImGui::GetIO();
+            const float w = 320.f, h = 70.f;
+            ImGui::SetNextWindowPos(ImVec2((io.DisplaySize.x - w) * 0.5f, 16.f), ImGuiCond_Always);
+            ImGui::SetNextWindowSize(ImVec2(w, h), ImGuiCond_Always);
+            ImGui::SetNextWindowBgAlpha(0.82f);
+            ImGui::Begin("##EdgeHUD", nullptr,
+                ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs |
+                ImGuiWindowFlags_NoMove       | ImGuiWindowFlags_NoNav);
+
+            auto pts = TelemetryTrackBuilder::GetRawPointsSnapshot();
+            if (phase == EdgePhase::Left)
+                ImGui::TextColored(ImVec4(0.4f, 0.7f, 1.f, 1.f),
+                    "Recording LEFT edge  —  %zu pts", pts.size());
+            else
+                ImGui::TextColored(ImVec4(1.f, 0.5f, 0.3f, 1.f),
+                    "Recording RIGHT edge  —  %zu pts", pts.size());
+
+            ImGui::End();
+
+            // Separate clickable window for the action button (NoInputs is off here)
+            ImGui::SetNextWindowPos(ImVec2((io.DisplaySize.x - w) * 0.5f, 90.f), ImGuiCond_Always);
+            ImGui::SetNextWindowSize(ImVec2(w, 40.f), ImGuiCond_Always);
+            ImGui::SetNextWindowBgAlpha(0.0f);
+            ImGui::Begin("##EdgeBtn", nullptr,
+                ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoNav);
+
+            ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0xDA/255.f, 0xA5/255.f, 0x40/255.f, 1.00f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0xE8/255.f, 0xB8/255.f, 0x55/255.f, 1.00f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0xBB/255.f, 0x85/255.f, 0x20/255.f, 1.00f));
+            ImGui::PushStyleColor(ImGuiCol_Text,          ImVec4(1.f, 1.f, 1.f, 1.f));
+            ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 10.f);
+
+            if (phase == EdgePhase::Left)
             {
-                {
-                    std::lock_guard<std::mutex> lock(*m_pointsMutex);
-                    *m_points = std::move(pts);
-                }
-                TrackRenderer::rebuildTrackPreviewCache(*m_points, *m_pointsMutex);
+                if (ImGui::Button("Switch to Right Edge", ImVec2(w - 16.f, 32.f)))
+                    TelemetryTrackBuilder::SwitchToRightEdge();
             }
+            else
+            {
+                if (ImGui::Button("Finalize Track", ImVec2(w - 16.f, 32.f)))
+                    TelemetryTrackBuilder::FinalizeEdges();
+            }
+
+            ImGui::PopStyleVar(1);
+            ImGui::PopStyleColor(4);
+            ImGui::End();
         }
     }
-    else if (TelemetryTrackBuilder::IsActive())
+
+    // Live preview while recording a track edge.
+    static auto s_last_preview_update = std::chrono::steady_clock::now();
+    if (TelemetryTrackBuilder::IsActive())
     {
         const auto now = std::chrono::steady_clock::now();
         if (now - s_last_preview_update >= std::chrono::milliseconds(150))
         {
             s_last_preview_update = now;
-            std::vector<glm::vec2> pts = TelemetryTrackBuilder::GetRawPointsSnapshot();
-            if (pts.size() >= 2)
+            const auto phase = TelemetryTrackBuilder::GetPhase();
+
+            if (phase == EdgePhase::Right)
             {
-                static std::mutex s_preview_mutex;
-                TrackRenderer::rebuildTrackPreviewCache(pts, s_preview_mutex);
+                // Show the forming track mesh: left (stored) + right (current)
+                auto left  = TelemetryTrackBuilder::GetLeftEdgeSnapshot();
+                auto right = TelemetryTrackBuilder::GetRawPointsSnapshot();
+                if (left.size() >= 2 && right.size() >= 2)
+                {
+                    int n = (int)std::min(left.size(), right.size());
+                    left  = resamplePolyline(left,  n);
+                    right = resamplePolyline(right, n);
+                    alignPolylineDirection(right, left);
+                    TrackRenderer::rebuildDualEdgePreviewCache(left, right);
+                }
+            }
+            else
+            {
+                // Left edge: show single polyline preview
+                std::vector<glm::vec2> pts = TelemetryTrackBuilder::GetRawPointsSnapshot();
+                if (pts.size() >= 2)
+                {
+                    static std::mutex s_prev_mtx;
+                    TrackRenderer::rebuildTrackPreviewCache(pts, s_prev_mtx);
+                }
             }
         }
     }
 
-    // If track creation just finished, publish points to renderer buffer.
+    // Consume finalized track and push to renderer.
     static bool s_builder_finished_consumed = false;
     if (TelemetryTrackBuilder::IsFinalized())
     {
-        if (!s_builder_finished_consumed && m_points && m_pointsMutex)
+        if (!s_builder_finished_consumed)
         {
-            std::vector<glm::vec2> pts = TelemetryTrackBuilder::GetRawPointsSnapshot();
+            if (TelemetryTrackBuilder::GetPhase() == EdgePhase::Done)
             {
-                std::lock_guard<std::mutex> lock(*m_pointsMutex);
-                *m_points = std::move(pts);
+                // Dual-edge finalize
+                auto left  = TelemetryTrackBuilder::GetLeftEdgeSnapshot();
+                auto right = TelemetryTrackBuilder::GetRawPointsSnapshot();
+                TrackRenderer::rebuildTrackCacheFromEdges(left, right);
             }
-            TrackRenderer::rebuildTrackCache(*m_points, *m_pointsMutex);
+            else if (m_points && m_pointsMutex)
+            {
+                // Centre-line finalize (legacy)
+                std::vector<glm::vec2> pts = TelemetryTrackBuilder::GetRawPointsSnapshot();
+                { std::lock_guard<std::mutex> lk(*m_pointsMutex); *m_points = std::move(pts); }
+                TrackRenderer::rebuildTrackCache(*m_points, *m_pointsMutex);
+            }
             LoadRecentFiles();
             s_builder_finished_consumed = true;
-            std::cout << "[UI] Track creation finalized and rendered." << std::endl;
         }
     }
     else
@@ -1409,9 +1484,9 @@ void UI::RenderSplashWindow()
     if (ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_V))
     {
         const char* clipboard = glfwGetClipboardString(m_window);
-        if (clipboard && m_points && m_pointsMutex)
+        if (clipboard && *clipboard)
         {
-            loadTrackFromData(std::string(clipboard), *m_points, *m_pointsMutex);
+            applyTrackData(std::string(clipboard), m_points, m_pointsMutex);
             m_showSplash = false;
             m_closeSplash = true;
         }
@@ -1609,10 +1684,8 @@ void UI::RenderMainWindow()
 
 	if (ImGui::Button("Create Track", ImVec2(buttonW, buttonH)))
 	{
-		std::cout << "[UI] Create Track clicked\n";
-		TelemetryTrackBuilder::Settings s;
-		TelemetryTrackBuilder::Start(s);
-		std::cout << "[UI] Telemetry track creation mode enabled. Connect prototype and start driving." << std::endl;
+		TelemetryTrackBuilder::StartLeftEdge();
+		std::cout << "[UI] Dual-edge recording started — drive the LEFT edge.\n";
 		m_showSplash = false;
 		m_closeSplash = true;
 	}
@@ -1758,70 +1831,9 @@ void UI::RenderMainWindow()
             std::cout << "[UI] Opening: " << m_recentFiles[i].path << "\n";
             
             // Load file
-            std::ifstream file(m_recentFiles[i].path);
-            if (file.is_open() && m_points && m_pointsMutex)
-            {
-                std::stringstream buffer;
-                buffer << file.rdbuf();
-                file.close();
-                
-                loadTrackFromData(buffer.str(), *m_points, *m_pointsMutex);
-                std::cout << "[UI] Track loaded from: " << m_recentFiles[i].path << "\n";
-                
-                // Recenter track to (0, 0) if closed
-                {
-                    std::lock_guard<std::mutex> lock(*m_pointsMutex);
-                    TrackCenterInfo center_info = calculateTrackCenter(*m_points);
-                    
-                    if (center_info.is_closed)
-                    {
-                        std::cout << "[TRACK] Track is CLOSED - recentering to (0, 0)" << std::endl;
-                        recenterTrack(*m_points, center_info);
-                        
-                        // ✅ ПРАВИЛЬНОЕ ОБНОВЛЕНИЕ ORIGIN (UTM + GPS):
-                        // Точки смещены на offset = -center
-                        // Origin UTM должен сместиться в обратную сторону
-                        g_map_origin.m_origin_meters_easting -= center_info.offset.x * MapConstants::MAP_SIZE;
-                        g_map_origin.m_origin_meters_northing -= center_info.offset.y * MapConstants::MAP_SIZE;
-                        
-                        // Конвертируем новый UTM origin в GPS
-                        try {
-                            using namespace GeographicLib;
-                            UTMUPS::Reverse(
-                                g_map_origin.m_origin_zone_int, 
-                                true,  // northp
-                                g_map_origin.m_origin_meters_easting,
-                                g_map_origin.m_origin_meters_northing,
-                                g_map_origin.m_origin_lat_dd,
-                                g_map_origin.m_origin_lon_dd
-                            );
-                        }
-                        catch (const std::exception& e) {
-                            std::cerr << "[TRACK] GeographicLib Error: " << e.what() << std::endl;
-                        }
-                        
-                        std::cout << "[TRACK] Origin updated:" << std::endl;
-                        std::cout << "  UTM: easting=" << g_map_origin.m_origin_meters_easting 
-                                  << ", northing=" << g_map_origin.m_origin_meters_northing << std::endl;
-                        std::cout << "  GPS: lat=" << g_map_origin.m_origin_lat_dd 
-                                  << ", lon=" << g_map_origin.m_origin_lon_dd << std::endl;
-                    }
-                    else
-                    {
-                        std::cout << "[TRACK] Track is OPEN - keeping original position" << std::endl;
-                    }
-                }
-                
-                // Rebuild track cache for rendering
-                TrackRenderer::rebuildTrackCache(*m_points, *m_pointsMutex);
-
-                m_showSplash = false;
-                m_closeSplash = true;
-            }
-            else
-            {
-                std::cerr << "[UI] Failed to open file: " << m_recentFiles[i].path << "\n";
-            }
+            applyTrackFile(m_recentFiles[i].path, m_points, m_pointsMutex);
+            m_showSplash = false;
+            m_closeSplash = true;
         }
     }
     if (m_fontRegular) ImGui::PopFont();
@@ -1995,111 +2007,39 @@ void UI::RenderTopMenu()
                 ofn.hwndOwner = glfwGetWin32Window(m_window);
                 ofn.lpstrFile = szFile;
                 ofn.nMaxFile = sizeof(szFile);
-                ofn.lpstrFilter = "All Files\0*.*\0GPX Files\0*.gpx\0";
+                ofn.lpstrFilter = "BONI Track\0*.trk2\0Track TXT\0*.txt\0All Files\0*.*\0";
                 ofn.nFilterIndex = 1;
                 ofn.lpstrFileTitle = NULL;
                 ofn.nMaxFileTitle = 0;
-                
-                // Set initial directory to Saves folder
                 std::string savesPath = "src/saves";
                 ofn.lpstrInitialDir = savesPath.c_str();
-
                 ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
-                
+
                 if (GetOpenFileNameA(&ofn))
                 {
-                    std::cout << "[UI] Selected file: " << ofn.lpstrFile << std::endl;
-                    
-                    // Load the selected file
-                    if (m_points && m_pointsMutex)
-                    {
-                        std::ifstream file(ofn.lpstrFile);
-                        if (file.is_open())
-                        {
-                            std::stringstream buffer;
-                            buffer << file.rdbuf();
-                            loadTrackFromData(buffer.str(), *m_points, *m_pointsMutex);
-                            
-                            // Recenter track to (0, 0) if closed
-                            {
-                                std::lock_guard<std::mutex> lock(*m_pointsMutex);
-                                TrackCenterInfo center_info = calculateTrackCenter(*m_points);
-                                
-                                if (center_info.is_closed)
-                                {
-                                    std::cout << "[TRACK] Track is CLOSED - recentering to (0, 0)" << std::endl;
-                                    recenterTrack(*m_points, center_info);
-
-                                    // Keep map origin consistent with the recentered track.
-                                    // Track points are in normalized units; converting to meters requires MAP_SIZE.
-                                    // Update UTM origin in meters, then recompute lat/lon accurately.
-                                    {
-                                        const double dx_m = static_cast<double>(center_info.offset.x) * static_cast<double>(MapConstants::MAP_SIZE);
-                                        const double dy_m = static_cast<double>(center_info.offset.y) * static_cast<double>(MapConstants::MAP_SIZE);
-
-                                        g_map_origin.m_origin_meters_easting += dx_m;
-                                        g_map_origin.m_origin_meters_northing += dy_m;
-
-                                        try {
-                                            using namespace GeographicLib;
-                                            const bool northp = (g_map_origin.m_origin_zone_char >= 'N');
-                                            UTMUPS::Reverse(
-                                                g_map_origin.m_origin_zone_int,
-                                                northp,
-                                                g_map_origin.m_origin_meters_easting,
-                                                g_map_origin.m_origin_meters_northing,
-                                                g_map_origin.m_origin_lat_dd,
-                                                g_map_origin.m_origin_lon_dd);
-                                        }
-                                        catch (const std::exception& e) {
-                                            std::cerr << "[TRACK] Failed to update origin GPS from UTM: " << e.what() << std::endl;
-                                        }
-
-                                        std::cout << "[TRACK] Origin updated:" << std::endl;
-                                        std::cout << "  UTM: easting=" << g_map_origin.m_origin_meters_easting
-                                                  << ", northing=" << g_map_origin.m_origin_meters_northing << std::endl;
-                                        std::cout << "  GPS: lat=" << g_map_origin.m_origin_lat_dd
-                                                  << ", lon=" << g_map_origin.m_origin_lon_dd << std::endl;
-                                    }
-                                }
-                                else
-                                {
-                                    std::cout << "[TRACK] Track is OPEN - keeping original position" << std::endl;
-                                }
-                            }
-                            
-                            TrackRenderer::rebuildTrackCache(*m_points, *m_pointsMutex);
-                            
-                            m_showSplash = false;
-                            m_closeSplash = true;
-                        }
-                        else
-                        {
-                            std::cerr << "[UI] Failed to open file: " << ofn.lpstrFile << std::endl;
-                        }
-                    }
+                    applyTrackFile(ofn.lpstrFile, m_points, m_pointsMutex);
+                    m_showSplash = false;
+                    m_closeSplash = true;
                 }
             }
 
             ImGui::Separator();
 
             {
+                const auto phase = TelemetryTrackBuilder::GetPhase();
                 const bool active = TelemetryTrackBuilder::IsActive();
-                const char* label = active ? "Track Creation Mode: ON" : "Track Creation Mode: OFF";
+                const char* label = (phase == EdgePhase::Left)  ? "Track Recording: LEFT edge" :
+                                    (phase == EdgePhase::Right) ? "Track Recording: RIGHT edge" :
+                                    active                      ? "Track Recording: ON" : "Track Recording: OFF";
                 if (ImGui::MenuItem(label))
                 {
-                    if (!active)
-                    {
-                        TelemetryTrackBuilder::Settings s;
-                        TelemetryTrackBuilder::Start(s);
-                        std::cout << "[UI] Telemetry track creation mode enabled. Waiting for prototype telemetry..." << std::endl;
-                    }
-                    else
-                    {
-                        TelemetryTrackBuilder::Stop();
-                        std::cout << "[UI] Telemetry track creation mode disabled." << std::endl;
-                    }
+                    if (active) { TelemetryTrackBuilder::Stop(); }
+                    else        { TelemetryTrackBuilder::StartLeftEdge(); }
                 }
+                if (phase == EdgePhase::Left && ImGui::MenuItem("  → Switch to Right Edge"))
+                    TelemetryTrackBuilder::SwitchToRightEdge();
+                if (phase == EdgePhase::Right && ImGui::MenuItem("  ✓ Finalize Track"))
+                    TelemetryTrackBuilder::FinalizeEdges();
             }
             if (ImGui::MenuItem("Simulate Prototype Lap (Test)", nullptr, false, TelemetryTrackBuilder::IsActive()))
             {
@@ -2156,6 +2096,62 @@ void UI::RenderTopMenu()
                     }
                 }).detach();
             }
+
+            {
+                static std::atomic<bool> s_dual_sim_active{false};
+                const bool simOn = s_dual_sim_active.load();
+                if (ImGui::MenuItem("Test: Simulate Dual-Edge Track", nullptr, simOn))
+                {
+                    if (simOn) {
+                        TelemetryTrackBuilder::Stop();
+                        s_dual_sim_active.store(false);
+                    } else {
+                        // Пониженный порог чтобы Switch стал доступен быстро
+                        TelemetryTrackBuilder::Settings s;
+                        s.minPointsToClose = 50;
+                        TelemetryTrackBuilder::StartLeftEdge(s);
+                        s_dual_sim_active.store(true);
+
+                        std::thread([]() {
+                            const double baseLat = 37.4219999, baseLon = -122.0840575;
+                            double e0, n0; int zone; bool northp;
+                            GeographicLib::UTMUPS::Forward(baseLat, baseLon, zone, northp, e0, n0);
+
+                            TelemetryPacket p{};
+                            p.MagicMarker = PACKET_MAGIC_DATA;
+                            p.ID = 4242; p.fixtype = 4; p.speed = 6000;
+                            uint32_t t = 0;
+
+                            auto sendEllipse = [&](double rx, double ry, int steps) {
+                                for (int i = 0; i <= steps; ++i) {
+                                    if (!s_dual_sim_active.load()) return;
+                                    double a = (double)i / steps * SimulationConstants::TWO_PI;
+                                    double lat = 0, lon = 0;
+                                    GeographicLib::UTMUPS::Reverse(zone, northp,
+                                        e0 + std::cos(a) * rx, n0 + std::sin(a) * ry, lat, lon);
+                                    p.lat = (int32_t)(lat * 1e7);
+                                    p.lon = (int32_t)(lon * 1e7);
+                                    p.time = t; t += 8;
+                                    processIncomingTelemetry(p);
+                                    std::this_thread::sleep_for(std::chrono::milliseconds(8));
+                                }
+                            };
+
+                            sendEllipse(55.0, 40.0, 400);  // левая грань
+
+                            // Ждём пока пользователь нажмёт "Switch to Right Edge"
+                            while (s_dual_sim_active.load() &&
+                                   TelemetryTrackBuilder::GetPhase() == EdgePhase::Left)
+                                std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+                            sendEllipse(70.0, 55.0, 400);  // правая грань
+
+                            s_dual_sim_active.store(false);
+                        }).detach();
+                    }
+                }
+            }
+
             ImGui::Separator();
 
             if (ImGui::MenuItem("Save Results", "Ctrl+P", false, true)) {

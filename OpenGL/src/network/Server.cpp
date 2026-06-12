@@ -671,23 +671,12 @@ int serverWork(const std::vector<glm::vec2>& track_points, std::mutex& points_mu
 	}
 
 	std::cout << "[SERVER] Ready to broadcast telemetry from real/simulated vehicles" << std::endl;
-<<<<<<< HEAD
-	std::cout << "[SERVER] Telemetry will be sent via processIncomingTelemetry() -> BroadcastTelemetryToClients()" << std::endl;
-	std::cout << "[SERVER] Telemetry send rate: " << NetworkConstants::TELEMETRY_SEND_RATE_HZ << " Hz (every " 
-			  << NetworkConstants::TELEMETRY_SEND_INTERVAL_MS << "ms)" << std::endl;
-
-	while (!ServerNeedStop_b)
-	{
-		FrameUpdate(track_points, points_mutex);  // ✅ Pass track data for map sync
-		std::this_thread::sleep_for(std::chrono::milliseconds(NetworkConstants::TELEMETRY_SEND_INTERVAL_MS));
-=======
 	std::cout << "[SERVER] Raw telemetry remains available; simulation now broadcasts processed vehicle states" << std::endl;
 
 	while (!ServerNeedStop_b)
 	{
 		FrameUpdate();
 		std::this_thread::sleep_for(std::chrono::milliseconds(NetworkConstants::SERVER_POLL_INTERVAL_MS));
->>>>>>> b01485e8e2140bcc72ca97bce3f77ab1df53064d
 	}
 
 	ManagePort(false);

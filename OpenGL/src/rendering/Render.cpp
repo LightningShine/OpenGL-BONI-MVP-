@@ -805,13 +805,153 @@ namespace TrackRenderer
             s_vbo_start_quad = 0;
             s_start_line_initialized = false;
         }
-        
         if (s_start_line_shader != 0)
         {
             glDeleteProgram(s_start_line_shader);
             s_start_line_shader = 0;
         }
-        
-        std::cout << "[START/FINISH] Line and shader cleared" << std::endl;
+    }
+
+    // ── helpers ──────────────────────────────────────────────────────────────
+
+    static std::pair<std::vector<glm::vec2>, std::vector<glm::vec2>>
+    outsetEdges(const std::vector<glm::vec2>& left,
+                const std::vector<glm::vec2>& right, float amount)
+    {
+        const size_t n = left.size() < right.size() ? left.size() : right.size();
+        std::vector<glm::vec2> ol(n), orr(n);
+        for (size_t i = 0; i < n; ++i)
+        {
+            glm::vec2 d = right[i] - left[i];
+            float len = glm::length(d);
+            if (len < 1e-6f) { ol[i] = left[i]; orr[i] = right[i]; continue; }
+            glm::vec2 u = d / len;
+            ol[i]  = left[i]  - u * amount;
+            orr[i] = right[i] + u * amount;
+        }
+        return {ol, orr};
+    }
+
+    static void uploadEdgeGeometry(
+        const std::vector<glm::vec2>& border,
+        const std::vector<glm::vec2>& asphalt,
+        GLenum usage)
+    {
+        if (s_track_vao == 0)
+        {
+            glGenVertexArrays(1, &s_track_vao);
+            glGenBuffers(1, &s_vbo_border);
+            glGenBuffers(1, &s_vbo_asphalt);
+        }
+        glBindBuffer(GL_ARRAY_BUFFER, s_vbo_border);
+        glBufferData(GL_ARRAY_BUFFER, border.size() * sizeof(glm::vec2), border.data(), usage);
+        glBindBuffer(GL_ARRAY_BUFFER, s_vbo_asphalt);
+        glBufferData(GL_ARRAY_BUFFER, asphalt.size() * sizeof(glm::vec2), asphalt.data(), usage);
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+    }
+
+    // Initialise the start/finish line given the two edge endpoints.
+    // p1 = left edge point at start, p2 = right edge point at start.
+    static void setupStartFinishFromEdgePoints(const glm::vec2& p1, const glm::vec2& p2)
+    {
+        glm::vec2 across  = p2 - p1;
+        float lineWidth   = glm::length(across);
+        if (lineWidth < 1e-6f) return;
+
+        glm::vec2 perp    = across / lineWidth;                   // unit: p1→p2
+        glm::vec2 startPos = (p1 + p2) * 0.5f;
+        glm::vec2 dir(-perp.y, perp.x);                          // along track
+
+        float lineLength  = lineWidth * (5.2f / 8.6f);
+
+        clearStartFinishLine();
+        s_start_line_shader = compileStartLineShader();
+        if (!s_start_line_shader) return;
+
+        float verts[] = {
+            startPos.x - perp.x * lineWidth/2 - dir.x * lineLength/2,
+            startPos.y - perp.y * lineWidth/2 - dir.y * lineLength/2, 0.f, 0.f,
+            startPos.x + perp.x * lineWidth/2 - dir.x * lineLength/2,
+            startPos.y + perp.y * lineWidth/2 - dir.y * lineLength/2, 1.f, 0.f,
+            startPos.x + perp.x * lineWidth/2 + dir.x * lineLength/2,
+            startPos.y + perp.y * lineWidth/2 + dir.y * lineLength/2, 1.f, 1.f,
+            startPos.x - perp.x * lineWidth/2 + dir.x * lineLength/2,
+            startPos.y - perp.y * lineWidth/2 + dir.y * lineLength/2, 0.f, 1.f,
+        };
+
+        glGenVertexArrays(1, &s_start_line_vao);
+        glGenBuffers(1, &s_vbo_start_quad);
+        glBindVertexArray(s_start_line_vao);
+        glBindBuffer(GL_ARRAY_BUFFER, s_vbo_start_quad);
+        glBufferData(GL_ARRAY_BUFFER, sizeof(verts), verts, GL_STATIC_DRAW);
+        glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)0);
+        glEnableVertexAttribArray(0);
+        glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)(2 * sizeof(float)));
+        glEnableVertexAttribArray(1);
+        glBindVertexArray(0);
+        s_start_line_initialized = true;
+
+        // Gray line
+        s_debug_line.clear();
+        float lh = TrackConstants::TRACK_BORDER_WIDTH * 1.2f, lt = 0.006f;
+        s_debug_line.push_back(startPos - perp*(lh/2) - dir*(lt/2));
+        s_debug_line.push_back(startPos + perp*(lh/2) - dir*(lt/2));
+        s_debug_line.push_back(startPos - perp*(lh/2) + dir*(lt/2));
+        s_debug_line.push_back(startPos + perp*(lh/2) + dir*(lt/2));
+        for (int i = 0; i <= 8; ++i) {
+            float a = 3.14159f + i/8.f * 3.14159f;
+            glm::vec2 o(std::cos(a)*lt/2, std::sin(a)*lt/2);
+            glm::vec2 r(o.x*dir.x - o.y*perp.x, o.x*dir.y - o.y*perp.y);
+            s_debug_line.push_back(startPos - perp*(lh/2) + r);
+        }
+        for (int i = 0; i <= 8; ++i) {
+            float a = i/8.f * 3.14159f;
+            glm::vec2 o(std::cos(a)*lt/2, std::sin(a)*lt/2);
+            glm::vec2 r(o.x*dir.x - o.y*perp.x, o.x*dir.y - o.y*perp.y);
+            s_debug_line.push_back(startPos + perp*(lh/2) + r);
+        }
+
+        if (g_race_manager)
+            g_race_manager->SetStartFinishLine(p1, p2);
+    }
+
+    // ── New dual-edge functions ───────────────────────────────────────────────
+
+    void rebuildTrackCacheFromEdges(
+        const std::vector<glm::vec2>& left,
+        const std::vector<glm::vec2>& right)
+    {
+        if (left.size() < 2 || right.size() < 2) return;
+
+        auto [bL, bR] = outsetEdges(left, right, 0.015f);
+        s_cached_border_layer  = generateTriangleStripFromEdges(bL, bR);
+        s_cached_asphalt_layer = generateTriangleStripFromEdges(left, right);
+
+        // Centre spline for vehicle progress tracking
+        const size_t n = left.size() < right.size() ? left.size() : right.size();
+        std::vector<glm::vec2> centres(n);
+        for (size_t i = 0; i < n; ++i) centres[i] = (left[i] + right[i]) * 0.5f;
+        g_smooth_track_points = interpolatePointsWithTangents(centres, 6);
+
+        setupStartFinishFromEdgePoints(left[0], right[0]);
+        uploadEdgeGeometry(s_cached_border_layer, s_cached_asphalt_layer, GL_STATIC_DRAW);
+
+        s_track_cache_valid = true;
+        g_is_map_loaded     = true;
+        std::cout << "[CACHE] Track (dual-edge) uploaded to GPU\n";
+    }
+
+    void rebuildDualEdgePreviewCache(
+        const std::vector<glm::vec2>& left,
+        const std::vector<glm::vec2>& right)
+    {
+        if (left.size() < 2 || right.size() < 2) return;
+
+        s_cached_asphalt_layer = generateTriangleStripFromEdges(left, right);
+        auto [bL, bR] = outsetEdges(left, right, 0.010f);
+        s_cached_border_layer  = generateTriangleStripFromEdges(bL, bR);
+
+        uploadEdgeGeometry(s_cached_border_layer, s_cached_asphalt_layer, GL_DYNAMIC_DRAW);
+        s_track_cache_valid = true;
     }
 }

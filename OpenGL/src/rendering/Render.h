@@ -34,8 +34,16 @@ namespace TrackRenderer
     
     void clearStartFinishLine();
 
-    // Lightweight preview (no rounding/smoothing) for in-progress track recording.
-    // Builds a thin strip directly from raw polyline points.
-    // Must be called from main thread.
+    // Lightweight preview for single-edge recording.
     void rebuildTrackPreviewCache(const std::vector<glm::vec2>& points, std::mutex& points_mutex);
+
+    // Build final GPU cache from two recorded edge polylines.
+    void rebuildTrackCacheFromEdges(
+        const std::vector<glm::vec2>& left,
+        const std::vector<glm::vec2>& right);
+
+    // Live preview during right-edge recording: shows the forming track mesh.
+    void rebuildDualEdgePreviewCache(
+        const std::vector<glm::vec2>& left,
+        const std::vector<glm::vec2>& right);
 }

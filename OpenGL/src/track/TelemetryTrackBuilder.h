@@ -11,6 +11,8 @@ struct TelemetryPacket;
 struct SplinePoint;
 class MapOrigin;
 
+enum class EdgePhase { Idle, Left, Right, Done };
+
 namespace TelemetryTrackBuilder
 {
 	struct Settings
@@ -22,21 +24,31 @@ namespace TelemetryTrackBuilder
 		int splinePointsPerSegment = 6;
 	};
 
-	void Start(const Settings& settings);
+	// ── Single-pass (centre-line) mode ─────────────────────────────────────
+	void Start(const Settings& settings = Settings{});
 	void Stop();
-    void Stop(bool keepPoints);
+	void Stop(bool keepPoints);
 	bool IsActive();
 	bool IsFinalized();
 	bool ConsumeAutoSaveRequest();
-
 	void OnTelemetryPacket(const TelemetryPacket& packet);
-
-	// Finalize as open track (does not require closure) and save to .txt.
-	// userNameOrPath: if empty, a default name is used. If has no extension, .txt is appended.
 	bool FinalizeOpenAndSaveTxt(const std::string& userNameOrPath);
 	bool SaveFinalizedAsTxt(const std::string& userNameOrPath);
 
-	std::vector<glm::vec2> GetRawPointsSnapshot();
+	// ── Dual-edge mode ──────────────────────────────────────────────────────
+	void StartLeftEdge(const Settings& settings = Settings{});
+	bool SwitchToRightEdge();   // false if left edge has too few points
+	bool FinalizeEdges();       // false if right edge has too few points
+
+	EdgePhase GetPhase();
+	std::vector<glm::vec2> GetLeftEdgeSnapshot();  // stored left edge
+	// GetRawPointsSnapshot() returns the active recording (left during Left, right during Right)
+
+	// Feed synthetic edges directly (no GPS needed — for testing)
+	bool InjectSyntheticEdges(std::vector<glm::vec2> left, std::vector<glm::vec2> right);
+
+	// ── Snapshots ───────────────────────────────────────────────────────────
+	std::vector<glm::vec2>  GetRawPointsSnapshot();
 	std::vector<SplinePoint> GetSmoothPointsSnapshot();
 	glm::vec2 GetStartFinishP1();
 	glm::vec2 GetStartFinishP2();

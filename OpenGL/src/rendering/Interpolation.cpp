@@ -355,17 +355,54 @@ TrackCenterInfo calculateTrackCenter(const std::vector<glm::vec2>& points)
 void recenterTrack(std::vector<glm::vec2>& points, const TrackCenterInfo& center_info)
 {
     if (points.empty()) return;
-    
-    std::cout << "[TRACK CENTER] Recentering " << points.size() << " points..." << std::endl;
-    
-    // Apply offset to all points
-    for (auto& point : points) {
+    for (auto& point : points)
         point += center_info.offset;
-    }
-
-    // Keep a global copy of the shift applied to the track so other systems (vehicles)
-    // can render in the same shifted coordinate space.
     g_track_render_offset = center_info.offset;
-    
-    std::cout << "[TRACK CENTER] Track recentered successfully!" << std::endl;
+}
+
+std::vector<glm::vec2> resamplePolyline(const std::vector<glm::vec2>& pts, int n)
+{
+    if ((int)pts.size() < 2 || n < 2) return pts;
+
+    std::vector<float> arc(pts.size(), 0.0f);
+    for (size_t i = 1; i < pts.size(); ++i)
+        arc[i] = arc[i - 1] + glm::distance(pts[i], pts[i - 1]);
+    const float total = arc.back();
+    if (total < 1e-6f) return pts;
+
+    std::vector<glm::vec2> out;
+    out.reserve(n);
+    size_t seg = 0;
+    for (int i = 0; i < n; ++i)
+    {
+        float t = (float)i / (n - 1) * total;
+        while (seg + 1 < pts.size() - 1 && arc[seg + 1] < t)
+            ++seg;
+        float dt = arc[seg + 1] - arc[seg];
+        float alpha = (dt < 1e-6f) ? 0.0f : (t - arc[seg]) / dt;
+        out.push_back(glm::mix(pts[seg], pts[seg + 1], alpha));
+    }
+    return out;
+}
+
+void alignPolylineDirection(std::vector<glm::vec2>& b, const std::vector<glm::vec2>& ref)
+{
+    if (b.empty() || ref.empty()) return;
+    if (glm::distance(b.front(), ref.front()) > glm::distance(b.front(), ref.back()))
+        std::reverse(b.begin(), b.end());
+}
+
+std::vector<glm::vec2> generateTriangleStripFromEdges(
+    const std::vector<glm::vec2>& left,
+    const std::vector<glm::vec2>& right)
+{
+    const size_t n = std::min(left.size(), right.size());
+    std::vector<glm::vec2> strip;
+    strip.reserve(n * 2);
+    for (size_t i = 0; i < n; ++i)
+    {
+        strip.push_back(left[i]);
+        strip.push_back(right[i]);
+    }
+    return strip;
 }
