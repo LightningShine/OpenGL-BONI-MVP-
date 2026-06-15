@@ -54,6 +54,8 @@ public:
     // Handles .trk2 (binary dual-edge) and .txt (legacy) automatically.
     void HandleDroppedFile(const std::string& path);
 
+    bool IsProMode() const { return m_proMode || m_swipeAnim > 0.f; }
+
     // Race Status Bar rendering
     void RenderRaceStatusBar(ModeManager* modeManager);
 
@@ -87,6 +89,7 @@ private:
     ImFont* m_fontOswald;       // Oswald - leaderboard data rows
     ImFont* m_fontOswaldBold;   // Oswald Bold - leaderboard data rows
     ImFont* m_fontJetBrainsMono; // JetBrains Mono - leaderboard POS/DRIVER/GAP
+    ImFont* m_fontRussoSmall;   // 13px Russo One - PRO view labels/numbers
     
     // Textures (using void* instead of ImTextureID to avoid forward declaration issues)
     void* m_backgroundTexture;
@@ -99,6 +102,11 @@ private:
     void* m_compassTexture;
     void* m_protoBatteryIconTexture;
     void* m_protoPhotoTexture;
+    void* m_logoTexture;       // Icon.png — helmet icon used in the navbar
+
+    // Pro mode swipe
+    bool  m_proMode;
+    float m_swipeAnim;         // 0.0 = light fully visible, 1.0 = pro fully visible
     
     // Recent files
     struct RecentFile
@@ -143,6 +151,7 @@ private:
     // Methods
     void RenderSplashWindow();
     void RenderMainWindow();
+    void RenderProView();
     
     // Helpers
     bool LoadTextureFromFile(const char* filename, void** out_texture, int* out_width, int* out_height);

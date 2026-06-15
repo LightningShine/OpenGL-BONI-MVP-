@@ -76,6 +76,10 @@ public:
     // LAP DATA ACCESS (for UI display)
     // ========================================================================
     const std::map<int, LapData>* GetVehicleLaps(int32_t vehicleID) const;
+    // Thread-safe snapshot: returns a copy of the lap map taken under the
+    // vehicles mutex. Use this from the UI thread instead of GetVehicleLaps(),
+    // whose returned pointer outlives the lock and races the network thread.
+    std::map<int, LapData> GetVehicleLapsCopy(int32_t vehicleID) const;
     float GetVehicleCurrentLapTime(int32_t vehicleID) const;
     int GetVehicleCompletedLaps(int32_t vehicleID) const;
     float GetVehicleBestLapTime(int32_t vehicleID) const;

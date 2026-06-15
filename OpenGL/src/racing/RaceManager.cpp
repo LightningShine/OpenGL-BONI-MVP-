@@ -637,6 +637,16 @@ const std::map<int, LapData>* RaceManager::GetVehicleLaps(int32_t vehicleID) con
     return nullptr;
 }
 
+std::map<int, LapData> RaceManager::GetVehicleLapsCopy(int32_t vehicleID) const
+{
+    std::lock_guard<std::mutex> lock(g_vehicles_mutex);
+    auto it = g_vehicles.find(vehicleID);
+    if (it != g_vehicles.end())
+        return it->second.m_laps;   // copy under lock
+
+    return {};
+}
+
 float RaceManager::GetVehicleCurrentLapTime(int32_t vehicleID) const
 {
     std::lock_guard<std::mutex> lock(g_vehicles_mutex);

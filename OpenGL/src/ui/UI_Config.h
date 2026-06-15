@@ -17,7 +17,7 @@ static constexpr float BASE_HEIGHT = 900.0f;
 // ============================================================================
 // APPLICATION INFO
 // ============================================================================
-static constexpr const char* APP_VERSION = "v0.9.0";
+static constexpr const char* APP_VERSION = "v1.0.0";
 static constexpr const char* APP_NAME = "RAJAGP";
 
 // ============================================================================

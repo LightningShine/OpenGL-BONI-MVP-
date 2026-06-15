@@ -28,6 +28,7 @@
 #include "libraries/include/imgui/backends/imgui_impl_opengl3.h"
 
 #include "src/network/Client.h"
+#include "src/ui/pro/ProView.h"
 #include "src/network/Server.h"
 #include "src/network/ESP32_Code.h"
 #include "src/network/SimulationServer.h"
@@ -652,6 +653,7 @@ UI::UI()
 , m_fontOswald(nullptr)
 , m_fontOswaldBold(nullptr)
 , m_fontJetBrainsMono(nullptr)
+, m_fontRussoSmall(nullptr)
 , m_backgroundTexture(nullptr)
     , m_iconFile(nullptr)
     , m_iconContact(nullptr)
@@ -662,6 +664,9 @@ UI::UI()
     , m_compassTexture(nullptr)
  , m_protoBatteryIconTexture(nullptr)
     , m_protoPhotoTexture(nullptr)
+    , m_logoTexture(nullptr)
+    , m_proMode(false)
+    , m_swipeAnim(0.f)
     , m_points(nullptr)
     , m_pointsMutex(nullptr)
     , m_sessionElapsedMs(0)
@@ -745,6 +750,7 @@ void UI::LoadResources()
     if (!LoadTextureFromFile("styles/icons/PNG/heart.png", &m_iconHeart, nullptr, nullptr)) std::cerr << "Failed to load heart.png\n";
     if (!LoadTextureFromFile("styles/icons/PNG/circle-x.png", &m_iconClose, nullptr, nullptr)) std::cerr << "Failed to load circle-x.png\n";
     if (!LoadTextureFromFile("styles/icons/PNG/DragAndDrop.png", &m_iconDragDrop, nullptr, nullptr)) std::cerr << "Failed to load DragAndDrop.png\n";
+    if (!LoadTextureFromFile("styles/icons/PNG/Icon.png",       &m_logoTexture,   nullptr, nullptr)) std::cerr << "Failed to load Icon.png\n";
     
     // Load Compass texture
     if (!LoadTextureFromFile("styles/images/Compas scaled.png", &m_compassTexture, nullptr, nullptr)) 
@@ -887,6 +893,7 @@ bool UI::Initialize(GLFWwindow* window)
     m_fontOswald     = loadFont(UIConfig::FONT_PATH_OSWALD, font_size_title);
     m_fontOswaldBold = loadFont(UIConfig::FONT_PATH_OSWALD_BOLD, font_size_title);
     m_fontJetBrainsMono = loadFont(UIConfig::FONT_PATH_JETBRAINS_MONO, font_size_title);
+    m_fontRussoSmall = loadFont(UIConfig::FONT_PATH_RUSSO_ONE, 13.0f / UIConfig::BASE_HEIGHT * window_height);
 
     // Setup ImGui style - Blender-like
     ImGuiStyle& style = ImGui::GetStyle();
@@ -1208,6 +1215,18 @@ void UI::Render()
     RenderTopMenu();
     RenderBottomMenu();
 
+    // ── Pro view swipe animation ─────────────────────────────────────────────
+    {
+        const float dt     = ImGui::GetIO().DeltaTime;
+        const float speed  = 10.f;
+        const float target = m_proMode ? 1.f : 0.f;
+        m_swipeAnim += (target - m_swipeAnim) * (1.f - expf(-speed * dt));
+        if (m_swipeAnim < 0.001f) m_swipeAnim = 0.f;
+        if (m_swipeAnim > 0.999f) m_swipeAnim = 1.f;
+        if (m_swipeAnim > 0.f)
+            RenderProView();
+    }
+
     // ── Edge-recording HUD ──────────────────────────────────────────────────
     {
         const auto phase = TelemetryTrackBuilder::GetPhase();
@@ -1335,9 +1354,8 @@ void UI::Render()
         s_builder_finished_consumed = false;
     }
 
-    // Lap timer overlay (race info)
-    // Use focused vehicle if set, otherwise track leader from standings.
-    if (m_ui_elements && g_race_manager)
+    // Lap timer overlay (race info) — hidden in PRO view
+    if (m_ui_elements && g_race_manager && !m_proMode)
     {
         int trackedVehicleId = g_focused_vehicle_id;
         if (trackedVehicleId == -1)
@@ -1374,7 +1392,7 @@ void UI::Render()
 
 void UI::RenderRaceStatusBar(ModeManager* modeManager)
 {
-    if (!modeManager || m_showSplash)
+    if (!modeManager || m_showSplash || m_proMode)
         return;
 
     ImGuiIO& io = ImGui::GetIO();
@@ -1915,6 +1933,154 @@ void UI::RenderMainWindow()
 
 // COMPLETE FIXED UI Menu functions - Blender style
 
+void UI::RenderProView()
+{
+    ProContext ctx{
+        m_fontRegular,
+        m_fontUBold,
+        m_fontTitle,
+        m_fontRobotoMono,
+        m_fontRussoSmall,
+        m_logoTexture
+    };
+    Pro::Render(ctx, m_swipeAnim);
+}
+
+// ── Legacy RenderProView body removed — logic lives in src/ui/pro/
+#if 0  // kept for reference only, never compiled
+static void _legacy_pro_view()
+{
+    ImGuiViewport* viewport = ImGui::GetMainViewport();
+    const ImVec2 sz = viewport->Size;
+    const float topH    = UIConfig::TOP_MENU_HEIGHT    * sz.y;
+    const float bottomH = UIConfig::BOTTOM_MENU_HEIGHT * sz.y;
+    const float contentH = sz.y - topH - bottomH;
+
+    // Slides in from the LEFT: anim=0 → panel is off-screen left (-sz.x), anim=1 → fully on screen (0)
+    const float panelX = -sz.x * (1.f - m_swipeAnim);
+
+    ImGui::SetNextWindowPos(ImVec2(panelX, topH));
+    ImGui::SetNextWindowSize(ImVec2(sz.x, contentH));
+    ImGui::SetNextWindowBgAlpha(1.f);
+
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,    ImVec2(28.f, 22.f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding,   0.f);
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,      ImVec2(12.f, 10.f));
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(14, 14, 20, 255));
+
+    ImGui::Begin("##ProView", nullptr,
+        ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize  |
+        ImGuiWindowFlags_NoMove     | ImGuiWindowFlags_NoScrollbar |
+        ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBringToFrontOnFocus |
+        ImGuiWindowFlags_NoScrollWithMouse);
+
+    // ── Title row ────────────────────────────────────────────────────────────
+    if (m_logoTexture) {
+        const float iconSz = 28.f;
+        ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 2.f);
+        ImGui::Image((ImTextureID)(intptr_t)m_logoTexture, ImVec2(iconSz, iconSz));
+        ImGui::SameLine(0, 10.f);
+    }
+
+    ImGui::PushFont(m_fontTitle ? m_fontTitle : m_fontUI);
+    ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(0xDA, 0xA5, 0x40, 255));
+    ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 2.f);
+    ImGui::TextUnformatted("PRO");
+    ImGui::PopStyleColor();
+    ImGui::PopFont();
+
+    ImGui::SameLine(0, 12.f);
+    ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(130, 130, 145, 255));
+    ImGui::SetCursorPosY(ImGui::GetCursorPosY() + (m_fontTitle ? m_fontTitle->FontSize * 0.35f : 6.f));
+    ImGui::TextUnformatted("Advanced analytics dashboard");
+    ImGui::PopStyleColor();
+
+    ImGui::Spacing();
+    // Gold separator line
+    {
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        ImVec2 p = ImGui::GetCursorScreenPos();
+        dl->AddLine(ImVec2(p.x, p.y), ImVec2(p.x + sz.x - 56.f, p.y),
+                    IM_COL32(0xDA, 0xA5, 0x40, 80), 1.f);
+        ImGui::Dummy(ImVec2(0, 6.f));
+    }
+
+    // ── Feature cards ────────────────────────────────────────────────────────
+    struct Card { const char* label; const char* desc; };
+    static constexpr Card cards[] = {
+        { "Trajectory",      "Racing line vs ideal line, braking & throttle zones." },
+        { "Sectors",         "Mini-sector timing, per-corner time-loss heatmap."     },
+        { "Driver Errors",   "Auto-detect lock-ups, oversteer, missed apexes."       },
+        { "Replay",          "Full lap replay with telemetry overlay & comparison."  },
+        { "Live Telemetry",  "G-force, speed trace, steering angle vs. position."    },
+        { "Leaderboard+",   "Per-sector ranking, consistency score, trend charts."  },
+    };
+    constexpr int COLS = 3;
+    constexpr int N    = 6;
+
+    const float gap  = 12.f;
+    const float padX = 28.f * 2.f;
+    const float cardW = (sz.x - padX - gap * (COLS - 1)) / COLS;
+    const float cardH = (contentH - 120.f) / 2.f;
+
+    for (int i = 0; i < N; ++i) {
+        if (i % COLS != 0) ImGui::SameLine(0, gap);
+        ImGui::PushID(i);
+
+        ImGui::PushStyleColor(ImGuiCol_ChildBg,      IM_COL32(24, 24, 34, 255));
+        ImGui::PushStyleColor(ImGuiCol_Border,       IM_COL32(0xDA, 0xA5, 0x40, 35));
+        ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 8.f);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(16.f, 14.f));
+
+        ImGui::BeginChild("##card", ImVec2(cardW, cardH), true,
+            ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+
+        // Card header — gold dot + label
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        ImVec2 dotPos = ImGui::GetCursorScreenPos();
+        dotPos.x += 3.f; dotPos.y += 9.f;
+        dl->AddCircleFilled(dotPos, 4.f, IM_COL32(0xDA, 0xA5, 0x40, 255));
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + 14.f);
+
+        ImGui::PushFont(m_fontUBold ? m_fontUBold : m_fontUI);
+        ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(230, 230, 235, 255));
+        ImGui::TextUnformatted(cards[i].label);
+        ImGui::PopStyleColor();
+        ImGui::PopFont();
+
+        ImGui::Spacing();
+
+        // Description
+        ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(140, 140, 155, 255));
+        ImGui::PushTextWrapPos(cardW - 16.f);
+        ImGui::TextUnformatted(cards[i].desc);
+        ImGui::PopTextWrapPos();
+        ImGui::PopStyleColor();
+
+        // "Coming soon" badge at bottom-right of card
+        const float badgeY = cardH - 28.f;
+        ImGui::SetCursorPosY(badgeY);
+        ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(0xDA, 0xA5, 0x40, 120));
+        float tw = ImGui::CalcTextSize("Coming soon").x;
+        ImGui::SetCursorPosX(cardW - tw - 16.f);
+        ImGui::TextUnformatted("Coming soon");
+        ImGui::PopStyleColor();
+
+        ImGui::EndChild();
+        ImGui::PopStyleVar(2);
+        ImGui::PopStyleColor(2);
+        ImGui::PopID();
+
+        if (i == COLS - 1) ImGui::Spacing(); // row gap
+    }
+
+    ImGui::End();
+    ImGui::PopStyleColor();
+    ImGui::PopStyleVar(4);
+}
+#endif  // legacy PRO view — see src/ui/pro/ for current implementation
+
 void UI::RenderTopMenu()
 {
     ImGuiViewport* viewport = ImGui::GetMainViewport();
@@ -1969,8 +2135,9 @@ void UI::RenderTopMenu()
     {
         ImGui::PushFont(m_fontRegular); // Ubuntu Regular
         
-        // === ОТСТУП ПЕРВОГО ЭЛЕМЕНТА МЕНЮ ОТ ЛЕВОГО КРАЯ ===
-        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + UIConfig::MENU_LEFT_PADDING * display_size.x);
+        // Logo + PRO badge live in the Windows title bar (glfwSetWindowIcon /
+        // glfwSetWindowTitle) — the navbar only gets the left padding.
+        ImGui::SetCursorPosX(UIConfig::MENU_LEFT_PADDING * display_size.x);
         
         // === DROPDOWN MENU ITEM STYLING (применяем настройки для пунктов меню) ===
         // Временно изменяем глобальные стили для dropdown меню
@@ -2283,6 +2450,11 @@ void UI::RenderTopMenu()
            ImGui::MenuItem("Prototype panel", nullptr, &m_allowPrototypeToast);
             ImGui::MenuItem("Vehicle names", nullptr, &g_show_vehicle_names);
             if (ImGui::MenuItem("Toggle Fullscreen", "F11", false, false)) {}
+            if (m_proMode) {
+                ImGui::Separator();
+                if (ImGui::MenuItem("Lock PRO Layout", nullptr, Pro::g_pro_layout_locked))
+                    Pro::g_pro_layout_locked = !Pro::g_pro_layout_locked;
+            }
             ImGui::EndMenu();
         }
 
@@ -2374,7 +2546,44 @@ void UI::RenderTopMenu()
         }
         
         ImGui::PopStyleVar(3); // Pop DROPDOWN_ITEM styles (ItemSpacing, ItemInnerSpacing, FramePadding)
-        
+
+        // === PRO / LITE TOGGLE BUTTON (right side of navbar) ===
+        {
+            // Explicit button size: the default (font + 2*MENU_FRAME_PADDING_Y)
+            // is taller than the 30px bar and gets clipped at the bottom edge.
+            const float barH    = ImGui::GetWindowHeight();
+            const float btnH    = barH - 8.f;
+            const float btnW    = 52.f / UIConfig::BASE_WIDTH * display_size.x < 46.f
+                                ? 46.f : 52.f / UIConfig::BASE_WIDTH * display_size.x;
+            const float marginR = UIConfig::MENU_LEFT_PADDING * display_size.x;
+            ImGui::SetCursorPosX(ImGui::GetWindowWidth() - btnW - marginR);
+            ImGui::SetCursorPosY((barH - btnH) * 0.5f);
+
+            ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.f);
+            if (m_proMode) {
+                ImGui::PushStyleColor(ImGuiCol_Button,        IM_COL32(55,  55,  60, 220));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(75,  75,  80, 255));
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive,  IM_COL32(40,  40,  45, 255));
+                ImGui::PushStyleColor(ImGuiCol_Text,          IM_COL32(210, 210, 220, 255));
+                if (ImGui::Button("Lite", ImVec2(btnW, btnH))) {
+                    m_proMode = false;
+                    glfwSetWindowTitle(m_window, UIConfig::APP_NAME);
+                }
+                ImGui::PopStyleColor(4);
+            } else {
+                ImGui::PushStyleColor(ImGuiCol_Button,        IM_COL32(0xDA, 0xA5, 0x40, 190));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(0xDA, 0xA5, 0x40, 255));
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive,  IM_COL32(0xB8, 0x86, 0x20, 255));
+                ImGui::PushStyleColor(ImGuiCol_Text,          IM_COL32(255, 255, 255, 255));
+                if (ImGui::Button("PRO", ImVec2(btnW, btnH))) {
+                    m_proMode = true;
+                    glfwSetWindowTitle(m_window, "RAJAGP PRO");
+                }
+                ImGui::PopStyleColor(4);
+            }
+            ImGui::PopStyleVar(); // FrameRounding
+        }
+
         // Восстанавливаем оригинальные стили
         style.WindowPadding = old_window_padding;
         style.WindowMinSize = old_window_min_size;

@@ -1011,8 +1011,11 @@ int main()
 		camera_position += camera_velocity;  
 		camera_velocity *= friction;
 		
-		glClearColor(26.0f / 255.0f, 26.0f / 255.0f, 26.0f / 255.0f, 1.0f); // Set the clear color for the window (background color)
-		glClear(GL_COLOR_BUFFER_BIT); // Clear the color buffer with the specified clear color
+		if (ui.IsProMode())
+			glClearColor(13.0f / 255.0f, 13.0f / 255.0f, 13.0f / 255.0f, 1.0f); // PRO: dark canvas
+		else
+			glClearColor(26.0f / 255.0f, 26.0f / 255.0f, 26.0f / 255.0f, 1.0f);
+		glClear(GL_COLOR_BUFFER_BIT);
 
 
 		{
@@ -1078,24 +1081,19 @@ int main()
 
 		glBindVertexArray(vao);
 		
-	// Render grid (always, even without track)
-	renderGrid(shader_program, grid_vao, grid_vbo, camera_position, camera_zoom, camera_rotation, Width, Height, 
-	           (float)horizontalBound, (float)verticalBound);
-		
-	
-	// Track rendering from GPU cache
-	glUseProgram(shader_program);
-	glUniformMatrix4fv(projLoc, 1, GL_FALSE, glm::value_ptr(viewProjection_world));
-	TrackRenderer::renderCachedTrack(shader_program);
-	
-	// Render Start/Finish Line (OpenGL checkered pattern)
-	// Optimized: Geometry generated ONCE per track load, renders from GPU cache
-	TrackRenderer::renderStartFinishLine(shader_program, viewProjection_world);
-	
-	// Render gray line ON TOP of checkered flag (correct render order)
-	glUseProgram(shader_program);
-	glUniformMatrix4fv(projLoc, 1, GL_FALSE, glm::value_ptr(viewProjection_world));
-	TrackRenderer::renderStartFinishGrayLine(shader_program);
+	if (!ui.IsProMode()) {
+		// Grid and track only visible in standard (light) view
+		renderGrid(shader_program, grid_vao, grid_vbo, camera_position, camera_zoom, camera_rotation, Width, Height,
+		           (float)horizontalBound, (float)verticalBound);
+
+		glUseProgram(shader_program);
+		glUniformMatrix4fv(projLoc, 1, GL_FALSE, glm::value_ptr(viewProjection_world));
+		TrackRenderer::renderCachedTrack(shader_program);
+		TrackRenderer::renderStartFinishLine(shader_program, viewProjection_world);
+		glUseProgram(shader_program);
+		glUniformMatrix4fv(projLoc, 1, GL_FALSE, glm::value_ptr(viewProjection_world));
+		TrackRenderer::renderStartFinishGrayLine(shader_program);
+	}
 
 
 
@@ -1103,8 +1101,8 @@ int main()
 
 
 
-	if (g_is_map_loaded) { 
-		renderAllVehicles(shader_program, vao, vbo, viewProjection_world, camera_position, camera_zoom); 
+	if (g_is_map_loaded && !ui.IsProMode()) {
+		renderAllVehicles(shader_program, vao, vbo, viewProjection_world, camera_position, camera_zoom);
 	}
 
 
@@ -1119,57 +1117,35 @@ int main()
 			ui.RenderRaceStatusBar(g_mode_manager);
 		}
 
-		// Render compass (show after splash, rotates based on camera yaw)
-		if (ui.ShouldCloseSplash() && ui.getElements())
+		// Render compass and laptimer — hidden when PRO view is active
+		if (ui.ShouldCloseSplash() && ui.getElements() && !ui.IsProMode())
 		{
-			// Render compass
 			ui.getElements()->drawCompass(camera_rotation, g_map_origin);
-			
-			// Render compass (show after splash, rotates based on camera yaw)
-			if (ui.ShouldCloseSplash() && ui.getElements())
+
+			if (g_race_manager)
 			{
-				// Render compass
-				ui.getElements()->drawCompass(camera_rotation, g_map_origin);
-
-				// ✅ Render laptimer с данными выбранной/лидирующей машины
-				if (g_race_manager)
+				int trackedVehicleId = g_focused_vehicle_id;
+				if (trackedVehicleId == -1)
 				{
-					int trackedVehicleId = g_focused_vehicle_id;
+					auto standings = g_race_manager->GetStandings();
+					if (!standings.empty())
+						trackedVehicleId = standings[0].vehicleID;
+				}
 
-					// Если не выбрана конкретная машина, отслеживаем лидера
-					if (trackedVehicleId == -1)
-					{
-						auto standings = g_race_manager->GetStandings();
-						if (!standings.empty())
-							trackedVehicleId = standings[0].vehicleID;
-					}
-
-
-					// Get data for lap timer display
-					if (trackedVehicleId != -1)
-					{
-						float currentLapTime = g_race_manager->GetVehicleCurrentLapTime(trackedVehicleId);
-						float previousLapTime = g_race_manager->GetVehiclePreviousLapTime(trackedVehicleId);
-						float bestLapTime = g_race_manager->GetVehicleBestLapTime(trackedVehicleId);
-						float deltaTime = g_race_manager->GetVehicleLapDelta(trackedVehicleId); // Use TimeDiff function
-
-						// Display Lap Timer
-						ui.getElements()->drawLapTimer(currentLapTime, previousLapTime, bestLapTime, deltaTime);
-					}
-					else
-					{
-						// No vehicles - show empty lap timer
-						ui.getElements()->drawLapTimer(0.0f, -1.0f, -1.0f, 0.0f);
-					}
-					
-					// ✅ Render leaderboard
-					ui.getElements()->drawLeaderboard();
+				if (trackedVehicleId != -1)
+				{
+					float currentLapTime  = g_race_manager->GetVehicleCurrentLapTime(trackedVehicleId);
+					float previousLapTime = g_race_manager->GetVehiclePreviousLapTime(trackedVehicleId);
+					float bestLapTime     = g_race_manager->GetVehicleBestLapTime(trackedVehicleId);
+					float deltaTime       = g_race_manager->GetVehicleLapDelta(trackedVehicleId);
+					ui.getElements()->drawLapTimer(currentLapTime, previousLapTime, bestLapTime, deltaTime);
 				}
 				else
 				{
-					// RaceManager не инициализирован - показываем пустой lap timer comets
 					ui.getElements()->drawLapTimer(0.0f, -1.0f, -1.0f, 0.0f);
 				}
+
+				ui.getElements()->drawLeaderboard();
 			}
 		}
 		
