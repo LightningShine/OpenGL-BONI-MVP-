@@ -49,14 +49,16 @@ void RenderLapInfoWindow(const ProContext& ctx, int32_t vehicleId,
 
     if (!ImGui::Begin("##LapInfo", nullptr,
         PanelFlags() | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse |
-        ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoSavedSettings)) {
+        ImGuiWindowFlags_NoBringToFrontOnFocus)) {
         ImGui::End(); return;
     }
 
     float w = ImGui::GetWindowWidth();
-    DrawPanelHeader(ctx, "LAP INFO");
+    float z = PanelZoom("LapInfo");
+    DrawPanelHeader(ctx, "LAP INFO", false, nullptr, z);
+    ImGui::SetWindowFontScale(z);
 
-    if (!g_race_manager) { ImGui::End(); return; }
+    if (!g_race_manager) { ImGui::SetWindowFontScale(1.f); ImGui::End(); return; }
 
     int   curLap   = g_race_manager->GetVehicleCurrentLapNumber(vehicleId);
     float prevTime = g_race_manager->GetVehiclePreviousLapTime(vehicleId);
@@ -99,11 +101,13 @@ void RenderSessionInfoWindow(const ProContext& ctx, int32_t vehicleId,
 
     if (!ImGui::Begin("##SessionInfo", nullptr,
         PanelFlags() | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse |
-        ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoSavedSettings)) {
+        ImGuiWindowFlags_NoBringToFrontOnFocus)) {
         ImGui::End(); return;
     }
 
-    DrawPanelHeader(ctx, "SESSION INFO");
+    float z = PanelZoom("SessionInfo");
+    DrawPanelHeader(ctx, "SESSION INFO", false, nullptr, z);
+    ImGui::SetWindowFontScale(z);
 
     std::string driverName = "---";
     {

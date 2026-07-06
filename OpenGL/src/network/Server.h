@@ -58,6 +58,33 @@ struct TelemetryPacket
 #define PACKET_MAGIC_TCHU 0x54434855u // 'TCHU'
 #define PACKET_MAGIC_RACE 0x52414345u // 'RACE'
 #define PACKET_MAGIC_VSTA 0x56535441u // 'VSTA'
+#define PACKET_MAGIC_RAJA 0x52414A41u // 'RAJA' radio telemetry (SX1280 device)
+
+// ============================================================================
+// RAJA RADIO WIRE PACKET
+//
+// Over-the-air layout sent by the SX1280 telemetry device. This is the on-wire
+// format only; the serial reader validates the CRC and translates it into the
+// internal TelemetryPacket, so the rest of the app is unaffected.
+// Field order/sizes MUST match the device firmware exactly (37 bytes, packed).
+// ============================================================================
+#pragma pack(push, 1)
+struct RajaTelemetryPacket {
+	uint32_t magic;         // PACKET_MAGIC_RAJA 0x52414A41 'RAJA'  [+0]
+	uint32_t device_id;     // serial number                       [+4]
+	uint8_t  seq;           // sequence counter                    [+8]
+	uint32_t gps_utc_ms;    // UTC ms since midnight                [+9]
+	int32_t  lat;           // degrees * 1e7                        [+13]
+	int32_t  lon;           // degrees * 1e7                        [+17]
+	uint32_t speed;         // km/h * 100                           [+21]
+	uint32_t acceleration;  // m/s^2 * 100                          [+25]
+	uint16_t gForceX;       // g-force X * 100                      [+29]
+	uint16_t gForceY;       // g-force Y * 100                      [+31]
+	int16_t  fix_type;      // 0=none, 4=RTK_FIXED, etc.            [+33]
+	uint16_t crc;           // CRC-16/CCITT-FALSE over first 35 B   [+35]
+};
+#pragma pack(pop)
+static_assert(sizeof(RajaTelemetryPacket) == 37, "RAJA wire packet size mismatch!");
 
 #pragma pack(push, 1)
 struct AuthPacket {

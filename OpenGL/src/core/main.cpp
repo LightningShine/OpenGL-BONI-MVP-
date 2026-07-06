@@ -438,7 +438,7 @@ void drop_callback(GLFWwindow* window, int count, const char** paths)
 //Shaders
 
 const char* vertexShaderSource = R"(
-    #version 460 core
+    #version 330 core
     layout (location = 0) in vec2 aPos;
     layout (location = 1) in vec2 aTexCoord;  // UV coordinates for checkered pattern
     
@@ -454,7 +454,7 @@ const char* vertexShaderSource = R"(
 )";
 
 const char* fragmentShaderSource = R"(
-    #version 460 core
+    #version 330 core
     out vec4 FragColor;
     
     uniform vec3 uColor;
@@ -620,13 +620,36 @@ int main()
 
 
 	std::cout << "[MAIN] Starting application..." << std::endl;
-	
+
+#ifdef _WIN32
+	// === OpenGL renderer fallback (Mesa3D) ===
+	// On machines without a GL 3.3 driver (clean VMs, RDP, very old GPUs) the
+	// native opengl32 can't create a 3.3 context. We try the native driver first;
+	// if it fails the window==NULL branch below relaunches us with BONI_USE_MESA=1,
+	// which preloads the bundled Mesa software/D3D12 renderer here BEFORE GLFW
+	// touches opengl32 (so opengl32.dll resolves to Mesa's copy by base name).
+	if (GetEnvironmentVariableA("BONI_USE_MESA", nullptr, 0) > 0)
+	{
+		wchar_t dir[MAX_PATH];
+		GetModuleFileNameW(NULL, dir, MAX_PATH);
+		if (wchar_t* slash = wcsrchr(dir, L'\\')) *slash = L'\0';  // dir = exe folder
+		wchar_t mesaDir[MAX_PATH], mesaDll[MAX_PATH];
+		swprintf(mesaDir, MAX_PATH, L"%s\\mesa", dir);
+		swprintf(mesaDll, MAX_PATH, L"%s\\opengl32.dll", mesaDir);
+		SetDllDirectoryW(mesaDir);  // let Mesa resolve its own deps (libgallium_wgl, dxil)
+		if (LoadLibraryExW(mesaDll, NULL, LOAD_WITH_ALTERED_SEARCH_PATH))
+			std::cout << "[MAIN] Using bundled Mesa OpenGL renderer" << std::endl;
+		else
+			std::cerr << "[MAIN] Warning: failed to load Mesa opengl32.dll (err "
+			          << GetLastError() << ")" << std::endl;
+	}
+#endif
 
 	glfwInit();
 	std::cout << "[MAIN] GLFW initialized" << std::endl;
 	
-	glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);  // Determine OpenGL major version OpenGL 4.X
-	glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 6);	// Determine OpenGL minor version OpenGL X.6
+	glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);  // OpenGL 3.3 — widest hardware + Mesa software support
+	glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);	// OpenGL 3.3
 	glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 	// Use the core-profile
 	// get access to a et access to a smaller subset 
@@ -673,6 +696,28 @@ int main()
 	if (window == NULL)
 	{
 		cout << "[ERROR] Failed to create GLFW window" << endl;
+#ifdef _WIN32
+		// Native OpenGL couldn't give us a 3.3 context. Relaunch ONCE using the
+		// bundled Mesa renderer (BONI_USE_MESA preloads it before GLFW starts).
+		if (GetEnvironmentVariableA("BONI_USE_MESA", nullptr, 0) == 0)
+		{
+			std::cout << "[MAIN] Native OpenGL unavailable, retrying with Mesa..." << std::endl;
+			glfwTerminate();
+			SetEnvironmentVariableW(L"BONI_USE_MESA", L"1");
+			wchar_t exePath[MAX_PATH];
+			GetModuleFileNameW(NULL, exePath, MAX_PATH);
+			STARTUPINFOW si{}; si.cb = sizeof(si);
+			PROCESS_INFORMATION pi{};
+			if (CreateProcessW(exePath, NULL, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi))
+			{
+				WaitForSingleObject(pi.hProcess, INFINITE);
+				DWORD code = 0; GetExitCodeProcess(pi.hProcess, &code);
+				CloseHandle(pi.hProcess); CloseHandle(pi.hThread);
+				return (int)code;
+			}
+			std::cerr << "[MAIN] Failed to relaunch with Mesa" << std::endl;
+		}
+#endif
 		glfwTerminate();
 		return -1;
 	}
@@ -740,7 +785,12 @@ int main()
 	}
 	// Commit
 	std::cout << "[MAIN] GLAD loaded successfully" << std::endl;
-	
+
+	if (const GLubyte* r = glGetString(GL_RENDERER))
+		std::cout << "[MAIN] GL_RENDERER: " << (const char*)r << std::endl;
+	if (const GLubyte* v = glGetString(GL_VERSION))
+		std::cout << "[MAIN] GL_VERSION:  " << (const char*)v << std::endl;
+
 	glEnable(GL_MULTISAMPLE);
 	std::cout << "[MAIN] Multisampling enabled" << std::endl;
 

@@ -49,6 +49,19 @@ static std::vector<ComPortInfo> g_ports;
 static std::mutex g_selected_port_mutex;
 static std::string g_selected_port;
 
+// CRC-16/CCITT-FALSE (init 0xFFFF, poly 0x1021) — must match device firmware.
+static uint16_t raja_crc16(const uint8_t* data, size_t len)
+{
+    uint16_t crc = 0xFFFF;
+    for (size_t i = 0; i < len; i++) {
+        crc ^= static_cast<uint16_t>(data[i]) << 8;
+        for (int j = 0; j < 8; j++)
+            crc = (crc & 0x8000) ? static_cast<uint16_t>((crc << 1) ^ 0x1021)
+                                 : static_cast<uint16_t>(crc << 1);
+    }
+    return crc;
+}
+
 static void closeSerialNoThrow()
 {
     std::lock_guard<std::mutex> lock(g_serial_mutex);
@@ -312,9 +325,9 @@ static void realDataThreadWorker(const std::string& com_port)
     TelemetryPacket last_packet{};
     bool has_last_packet = false;
 
-    // Arduino/ESP sends struct in little-endian order.
-    // MagicMarker PacketMagic::DATA (0x44415441 'DATA') appears on the wire as bytes: 41 54 41 44
-    constexpr uint8_t kMagicLE[4] = { 0x41, 0x54, 0x41, 0x44 };
+    // SX1280 device sends RajaTelemetryPacket in little-endian order.
+    // magic PACKET_MAGIC_RAJA (0x52414A41 'RAJA') appears on the wire as bytes: 41 4A 41 52
+    constexpr uint8_t kMagicLE[4] = { 0x41, 0x4A, 0x41, 0x52 };
     uint8_t window[4] = { 0, 0, 0, 0 };
     int windowCount = 0;
 
@@ -352,13 +365,12 @@ static void realDataThreadWorker(const std::string& com_port)
             {
                 telemetry_headers_seen++;
 
-                TelemetryPacket packet{};
-                packet.MagicMarker = PACKET_MAGIC_DATA;
-
-                // Read the payload after the already matched MagicMarker.
-                // TelemetryPacket is packed; layout must match the device sender.
-                const size_t payloadSize = sizeof(TelemetryPacket) - sizeof(uint32_t);
-                uint8_t* dst = reinterpret_cast<uint8_t*>(&packet) + sizeof(uint32_t);
+                // Read the wire packet after the already matched magic marker.
+                // RajaTelemetryPacket is packed; layout must match the device sender.
+                RajaTelemetryPacket wire{};
+                wire.magic = PACKET_MAGIC_RAJA;
+                const size_t payloadSize = sizeof(RajaTelemetryPacket) - sizeof(uint32_t);
+                uint8_t* dst = reinterpret_cast<uint8_t*>(&wire) + sizeof(uint32_t);
                 size_t totalRead = 0;
                 while (totalRead < payloadSize && !g_capture_stop_requested.load())
                 {
@@ -369,8 +381,25 @@ static void realDataThreadWorker(const std::string& com_port)
                         std::this_thread::sleep_for(std::chrono::milliseconds(1));
                 }
 
-                if (totalRead == payloadSize)
+                // Validate CRC-16 over everything except the trailing crc field.
+                const bool crc_ok = (totalRead == payloadSize) &&
+                    (raja_crc16(reinterpret_cast<const uint8_t*>(&wire), sizeof(wire) - 2) == wire.crc);
+
+                if (crc_ok)
                 {
+                    // Translate the wire packet into the app's internal TelemetryPacket.
+                    TelemetryPacket packet{};
+                    packet.MagicMarker  = PACKET_MAGIC_DATA;
+                    packet.lat          = wire.lat;
+                    packet.lon          = wire.lon;
+                    packet.time         = wire.gps_utc_ms;
+                    packet.speed        = wire.speed;
+                    packet.acceleration = wire.acceleration;
+                    packet.gForceX      = wire.gForceX;
+                    packet.gForceY      = wire.gForceY;
+                    packet.fixtype      = wire.fix_type;
+                    packet.ID           = static_cast<int32_t>(wire.device_id);
+
                     telemetry_packets_ok++;
                    last_packet = packet;
                     has_last_packet = true;
@@ -394,7 +423,9 @@ static void realDataThreadWorker(const std::string& com_port)
                     telemetry_packets_bad++;
                     if ((telemetry_packets_bad % 10) == 1)
                     {
-                        std::cerr << "[SERIAL] Telemetry payload read failed. expected=" << payloadSize
+                        std::cerr << "[SERIAL] RAJA packet rejected ("
+                                  << (totalRead == payloadSize ? "CRC mismatch" : "short read")
+                                  << "). expected=" << payloadSize
                                   << " got=" << totalRead
                                   << " | ok=" << telemetry_packets_ok
                                   << " bad=" << telemetry_packets_bad

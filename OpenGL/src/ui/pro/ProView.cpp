@@ -14,6 +14,10 @@
 #include <imgui.h>
 #include <mutex>
 #include <cstdio>
+#include <cstdlib>
+#include <string>
+#include <unordered_map>
+#include <fstream>
 
 extern RaceManager* g_race_manager;
 extern std::map<int32_t, Vehicle> g_vehicles;
@@ -23,6 +27,53 @@ extern int g_focused_vehicle_id;
 namespace Pro {
 
 bool g_pro_layout_locked = false;
+
+// ── Per-panel text zoom (persisted to pro_scales.ini) ───────────────────────
+static std::unordered_map<std::string, float> g_panelScale;
+static bool g_scalesLoaded = false;
+static const char* kScaleFile = "pro_scales.ini";
+
+static void loadScales() {
+    if (g_scalesLoaded) return;
+    g_scalesLoaded = true;
+    std::ifstream f(kScaleFile);
+    if (!f) return;
+    std::string line;
+    while (std::getline(f, line)) {
+        size_t eq = line.find('=');
+        if (eq == std::string::npos) continue;
+        float v = (float)atof(line.c_str() + eq + 1);
+        if (v > 0.3f && v < 5.f) g_panelScale[line.substr(0, eq)] = v;
+    }
+}
+
+static void saveScales() {
+    std::ofstream f(kScaleFile, std::ios::trunc);
+    if (!f) return;
+    for (auto& [k, v] : g_panelScale) f << k << "=" << v << "\n";
+}
+
+float PanelZoom(const char* key) {
+    loadScales();
+    auto it = g_panelScale.find(key);
+    float sc = (it != g_panelScale.end()) ? it->second : 1.f;
+
+    ImGuiIO& io = ImGui::GetIO();
+    bool changed = false;
+    if (ImGui::IsWindowHovered() && io.KeyCtrl && io.MouseWheel != 0.f) {
+        sc += io.MouseWheel * 0.08f; changed = true;
+    }
+    if (ImGui::IsWindowFocused() && io.KeyCtrl) {
+        if (ImGui::IsKeyPressed(ImGuiKey_Equal, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadAdd, false))      { sc += 0.1f; changed = true; }
+        if (ImGui::IsKeyPressed(ImGuiKey_Minus, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadSubtract, false)) { sc -= 0.1f; changed = true; }
+    }
+    if (changed) {
+        if (sc < 0.6f) sc = 0.6f; if (sc > 2.5f) sc = 2.5f;
+        g_panelScale[key] = sc;
+        saveScales();
+    }
+    return sc;
+}
 
 static int32_t getDisplayVehicleId() {
     if (g_focused_vehicle_id != -1) return g_focused_vehicle_id;

@@ -933,7 +933,7 @@ bool UI::Initialize(GLFWwindow* window)
         return false;
     }
     
-    if (!ImGui_ImplOpenGL3_Init("#version 460"))
+    if (!ImGui_ImplOpenGL3_Init("#version 330"))
     {
         std::cerr << "[UI] Error: Failed to init OpenGL3 backend\n";
         return false;
@@ -2230,8 +2230,8 @@ void UI::RenderTopMenu()
                     p.fixtype = 4;
                     p.speed = 6000;
                     p.acceleration = 0;
-                    p.gForceX = 0;
-                    p.gForceY = 0;
+                    p.gForceX = 1,5;
+                    p.gForceY = 2;
 
                     const double baseLat = 37.4219999;
                     const double baseLon = -122.0840575;

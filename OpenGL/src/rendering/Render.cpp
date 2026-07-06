@@ -46,7 +46,7 @@ namespace TrackRenderer
     
     // Dedicated shaders for start/finish line (compiled once)
     static const char* s_start_line_vertex_shader = R"(
-        #version 460 core
+        #version 330 core
         layout (location = 0) in vec2 aPos;
         layout (location = 1) in vec2 aTexCoord;
 
@@ -62,7 +62,7 @@ namespace TrackRenderer
     )";
     
     static const char* s_start_line_fragment_shader = R"(
-        #version 460 core
+        #version 330 core
         out vec4 FragColor;
         in vec2 vUV;
         

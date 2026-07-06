@@ -54,6 +54,12 @@ static constexpr float HDR_H = 26.f;  // panel header height
 // Layout lock — toggled from View menu; persists per session
 extern bool g_pro_layout_locked;
 
+// Per-panel text zoom. Call once just after a panel's Begin() — handles
+// Ctrl+wheel / Ctrl +/- on the focused/hovered window, persists the level to
+// disk, and returns the scale factor the panel should multiply its fonts and
+// paddings by. `key` must be a stable per-panel id (e.g. "LapList").
+float PanelZoom(const char* key);
+
 // Flags for all floating panels — NoMove/NoResize added when layout is locked
 inline ImGuiWindowFlags PanelFlags() {
     return ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse |
@@ -65,7 +71,8 @@ inline ImGuiWindowFlags PanelFlags() {
 // (does not affect ImGui cursor). Then advances cursor via Dummy.
 // labelFont overrides the default russo font for the header label (e.g. pass ctx.bold)
 inline void DrawPanelHeader(const ProContext& ctx, const char* label,
-                             bool showGear = false, ImFont* labelFont = nullptr) {
+                             bool showGear = false, ImFont* labelFont = nullptr,
+                             float scale = 1.f) {
     float       w  = ImGui::GetWindowWidth();
     ImDrawList* dl = ImGui::GetWindowDrawList();
     ImVec2      p  = ImGui::GetCursorScreenPos();
@@ -73,8 +80,11 @@ inline void DrawPanelHeader(const ProContext& ctx, const char* label,
     dl->AddRectFilled(p, {p.x + w, p.y + HDR_H}, COL_HDR_BG);
     dl->AddLine({p.x, p.y + HDR_H}, {p.x + w, p.y + HDR_H}, COL_GOLD_DIM, 1.f);
 
+    // Header bar height stays HDR_H (panel layout depends on it); only the label
+    // font scales with the panel zoom, clamped so it still fits the bar.
     ImFont* lf  = labelFont ? labelFont : ctx.russo;
-    float   fSz = lf ? lf->FontSize : ImGui::GetFontSize();
+    float   fSz = (lf ? lf->FontSize : ImGui::GetFontSize()) * scale;
+    if (fSz > HDR_H - 6.f) fSz = HDR_H - 6.f;
     float   ty  = p.y + (HDR_H - fSz) * 0.5f;
     dl->AddText(lf, fSz, {p.x + 8.f, ty}, IM_COL32(210, 210, 210, 255), label);
 

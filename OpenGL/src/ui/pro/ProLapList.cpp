@@ -29,8 +29,12 @@ static constexpr ImU32 LL_BEST_TIME = IM_COL32(0xFF, 0xFF, 0xFF, 255);
 // ── Layout ────────────────────────────────────────────────────────────────────
 static constexpr float ACCENT_W = 3.f;
 static constexpr float PAD_L    = 10.f;
-static constexpr float LAP_W    = 22.f;
-static constexpr float PAD_R    = 6.f;
+static constexpr float LAP_W    = 22.f;   // lap-number column width (right-aligned)
+static constexpr float COL_GAP  = 24.f;   // spacing between LAP and TIME columns
+static constexpr float PAD_R    = 12.f;
+// Design width: columns are pinned to this so shrinking the window past it clips
+// content on the right instead of reflowing/squeezing the columns inward.
+static constexpr float REF_W    = 200.f;
 
 void RenderLapListWindow(const ProContext& ctx, int32_t vehicleId,
                           ImVec2 vpSz, float topH) {
@@ -40,40 +44,46 @@ void RenderLapListWindow(const ProContext& ctx, int32_t vehicleId,
 
     if (!ImGui::Begin("##LapList", nullptr,
         PanelFlags() | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse |
-        ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoSavedSettings)) {
+        ImGuiWindowFlags_NoBringToFrontOnFocus)) {
         ImGui::End(); return;
     }
 
     float w = ImGui::GetWindowWidth();
+    float z = PanelZoom("LapList");
 
     // Panel title — Ubuntu Bold
-    DrawPanelHeader(ctx, "LAP LIST", false, ctx.bold);
+    DrawPanelHeader(ctx, "LAP LIST", false, ctx.bold, z);
 
-    float regSz   = ctx.regular ? ctx.regular->FontSize : ImGui::GetFontSize();
-    float russoSz = ctx.russo   ? ctx.russo->FontSize   : ImGui::GetFontSize();
-    float ROW_H   = regSz + 7.f;
+    float regSz   = (ctx.regular ? ctx.regular->FontSize : ImGui::GetFontSize()) * z;
+    float russoSz = (ctx.russo   ? ctx.russo->FontSize   : ImGui::GetFontSize()) * z;
+    float ROW_H   = regSz + 7.f * z;
 
-    float TIME_X = PAD_L + LAP_W + 6.f;
-    float GAP_R  = w - PAD_R;
+    // Zoom-scaled layout metrics.
+    float padL = PAD_L * z, lapW = LAP_W * z, colGap = COL_GAP * z;
+    float padR = PAD_R * z, refW = REF_W * z, accentW = ACCENT_W * z;
+
+    // Pin columns to the design width: when the window is wider, GAP follows the
+    // right edge; when narrower, columns hold their position and clip on the right.
+    float layoutW = (w > refW) ? w : refW;
+    float TIME_X  = padL + lapW + colGap;
+    float GAP_R   = layoutW - padR;
 
     // ── Column headers — drawn to PARENT window draw list (before BeginChild) ─
     {
         ImDrawList* dl = ImGui::GetWindowDrawList();
         ImVec2 p  = ImGui::GetCursorScreenPos();
-        float  ty = p.y + 3.f;
+        float  ty = p.y + 3.f * z;
 
-        float lapW = ctx.russo
-            ? ctx.russo->CalcTextSizeA(russoSz, FLT_MAX, 0.f, "LAP").x
-            : ImGui::CalcTextSize("LAP").x;
-        dl->AddText(ctx.russo, russoSz, {p.x + PAD_L + LAP_W - lapW, ty}, LL_HDR_COL, "LAP");
-        dl->AddText(ctx.russo, russoSz, {p.x + TIME_X, ty},             LL_HDR_COL, "TIME");
+        // LAP header — left-aligned at the padding edge so it is never clipped.
+        dl->AddText(ctx.russo, russoSz, {p.x + padL, ty},   LL_HDR_COL, "LAP");
+        dl->AddText(ctx.russo, russoSz, {p.x + TIME_X, ty}, LL_HDR_COL, "TIME");
 
         float gapW = ctx.russo
             ? ctx.russo->CalcTextSizeA(russoSz, FLT_MAX, 0.f, "GAP").x
             : ImGui::CalcTextSize("GAP").x;
         dl->AddText(ctx.russo, russoSz, {p.x + GAP_R - gapW, ty}, LL_HDR_COL, "GAP");
 
-        ImGui::Dummy({w, russoSz + 5.f});
+        ImGui::Dummy({w, russoSz + 5.f * z});
     }
     DrawSep();
 
@@ -113,7 +123,7 @@ void RenderLapListWindow(const ProContext& ctx, int32_t vehicleId,
             dl->AddRectFilled(p, {p.x + w, p.y + ROW_H}, LL_BG_HOVER);
 
         if (active)
-            dl->AddRectFilled(p, {p.x + ACCENT_W, p.y + ROW_H}, LL_ACCENT);
+            dl->AddRectFilled(p, {p.x + accentW, p.y + ROW_H}, LL_ACCENT);
 
         float cy = p.y + (ROW_H - russoSz) * 0.5f;
         float ty = p.y + (ROW_H - regSz)   * 0.5f;
@@ -123,7 +133,7 @@ void RenderLapListWindow(const ProContext& ctx, int32_t vehicleId,
         float numW = ctx.russo
             ? ctx.russo->CalcTextSizeA(russoSz, FLT_MAX, 0.f, nb).x
             : ImGui::CalcTextSize(nb).x;
-        dl->AddText(ctx.russo, russoSz, {p.x + PAD_L + LAP_W - numW, cy},
+        dl->AddText(ctx.russo, russoSz, {p.x + padL + lapW - numW, cy},
                     active ? LL_ACCENT : LL_LAP_NUM, nb);
 
         // Time — Ubuntu Regular
@@ -156,7 +166,7 @@ void RenderLapListWindow(const ProContext& ctx, int32_t vehicleId,
 
         float nw = ctx.russo
             ? ctx.russo->CalcTextSizeA(russoSz, FLT_MAX, 0.f, "1").x : 10.f;
-        dl->AddText(ctx.russo,   russoSz, {p.x + PAD_L + LAP_W - nw, cy}, LL_LAP_NUM, "1");
+        dl->AddText(ctx.russo,   russoSz, {p.x + padL + lapW - nw, cy}, LL_LAP_NUM, "1");
         dl->AddText(ctx.regular, regSz,   {p.x + TIME_X, ty},              LL_DIM,      "NO TIME");
 
         float ow = ctx.regular

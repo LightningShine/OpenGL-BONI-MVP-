@@ -17,12 +17,14 @@ void RenderChannelsWindow(const ProContext& ctx, int32_t vehicleId,
 
     if (!ImGui::Begin("##Channels", nullptr,
         PanelFlags() | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse |
-        ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoSavedSettings)) {
+        ImGuiWindowFlags_NoBringToFrontOnFocus)) {
         ImGui::End(); return;
     }
 
     float w = ImGui::GetWindowWidth();
-    DrawPanelHeader(ctx, "CHANELS");
+    float z = PanelZoom("Channels");
+    DrawPanelHeader(ctx, "CHANELS", false, nullptr, z);
+    ImGui::SetWindowFontScale(z);
 
     // Live GPS data
     double speed = 0, gx = 0, gy = 0, accel = 0, progress = 0;
@@ -94,6 +96,7 @@ void RenderChannelsWindow(const ProContext& ctx, int32_t vehicleId,
 
     float scrollH = ImGui::GetContentRegionAvail().y;
     ImGui::BeginChild("##chanScroll", {w, scrollH}, false);
+    ImGui::SetWindowFontScale(z);
 
     ImDrawList* dl  = ImGui::GetWindowDrawList();
     ImVec2      wp  = ImGui::GetWindowPos();

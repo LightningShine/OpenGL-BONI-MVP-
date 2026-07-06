@@ -18,13 +18,14 @@ void RenderGForceWindow(const ProContext& ctx, int32_t vehicleId,
 
     if (!ImGui::Begin("##GForce", nullptr,
         PanelFlags() | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse |
-        ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoSavedSettings)) {
+        ImGuiWindowFlags_NoBringToFrontOnFocus)) {
         ImGui::End(); return;
     }
 
     float w = ImGui::GetWindowWidth();
     float h = ImGui::GetWindowHeight();
-    DrawPanelHeader(ctx, "G-FORCE");
+    float z = PanelZoom("GForce");
+    DrawPanelHeader(ctx, "G-FORCE", false, nullptr, z);
 
     // Live data
     double gx = 0, gy = 0;
@@ -49,7 +50,7 @@ void RenderGForceWindow(const ProContext& ctx, int32_t vehicleId,
     float r  = sz * 0.40f;
 
     // 4G range labels (top corners via draw list)
-    float fSz = ctx.russo ? ctx.russo->FontSize : ImGui::GetFontSize();
+    float fSz = (ctx.russo ? ctx.russo->FontSize : ImGui::GetFontSize()) * z;
     char maxBuf[24];
     snprintf(maxBuf, sizeof(maxBuf), "4G (%.1f)", fabsf((float)gy));
     dl->AddText(ctx.russo, fSz, {base.x + 4.f, base.y + 4.f},
