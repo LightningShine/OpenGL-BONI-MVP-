@@ -58,18 +58,21 @@ namespace NetworkConstants {
     static constexpr int AUTH_POLL_INTERVAL_MS = 10;
 }
 
+// Values come from rajagp_core (shared with the track server) — single source
+// of truth. This namespace stays for compatibility with existing call sites.
+#include <rajagp/Protocol.h>
 namespace PacketMagic {
-    static constexpr uint32_t AUTH = 0x41555448;        // 'AUTH'
-    static constexpr uint32_t RESP = 0x52455350;        // 'RESP'
-    static constexpr uint32_t DATA = 0x44415441;        // 'DATA'
-    static constexpr uint32_t MAP_REQUEST = 0x4D415052; // 'MAPR'
-    static constexpr uint32_t MAP_DATA = 0x4D415044;    // 'MAPD'
-    static constexpr uint32_t MAP_POINTS = 0x4D415050;  // 'MAPP'
-    static constexpr uint32_t TRCK = 0x5452434B;  // 'TRCK' - Track data header
-    static constexpr uint32_t TCHU = 0x54434855;  // 'TCHU' - Track chunk
-    static constexpr uint32_t RACE = 0x52414345;  // 'RACE' - Race data
-    static constexpr uint32_t VSTA = 0x56535441;  // 'VSTA' - processed vehicle state
-    static constexpr uint32_t TRK2 = 0x54524B32;  // 'TRK2' - dual-edge track (left + right polylines)
+    static constexpr uint32_t AUTH        = rajagp::PacketMagic::AUTH;        // 'AUTH'
+    static constexpr uint32_t RESP        = rajagp::PacketMagic::RESP;        // 'RESP'
+    static constexpr uint32_t DATA        = rajagp::PacketMagic::DATA;        // 'DATA'
+    static constexpr uint32_t MAP_REQUEST = rajagp::PacketMagic::MAP_REQUEST; // 'MAPR'
+    static constexpr uint32_t MAP_DATA    = rajagp::PacketMagic::MAP_DATA;    // 'MAPD'
+    static constexpr uint32_t MAP_POINTS  = rajagp::PacketMagic::MAP_POINTS;  // 'MAPP'
+    static constexpr uint32_t TRCK        = rajagp::PacketMagic::TRCK; // 'TRCK' - Track data header
+    static constexpr uint32_t TCHU        = rajagp::PacketMagic::TCHU; // 'TCHU' - Track chunk
+    static constexpr uint32_t RACE        = rajagp::PacketMagic::RACE; // 'RACE' - Race data
+    static constexpr uint32_t VSTA        = rajagp::PacketMagic::VSTA; // 'VSTA' - processed vehicle state
+    static constexpr uint32_t TRK2        = rajagp::PacketMagic::TRK2; // 'TRK2' - dual-edge track (left + right polylines)
 }
 
 // Track rendering constants

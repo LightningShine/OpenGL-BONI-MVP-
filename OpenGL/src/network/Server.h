@@ -29,62 +29,29 @@ typedef void* ISteamNetworkingSockets;
 #include <glm/glm.hpp>     // ✅ For glm::vec2
 
 
-#pragma pack(push, 1)
-struct TelemetryPacket 
-{
-	uint32_t MagicMarker;	// 'DATA' 0x44415441
-	int32_t lat;			// latitude degree * 1e7
-	int32_t lon;			// longitude degree * 1e7
-	uint32_t time;			// time in milliseconds
-	uint32_t speed;			// speed in km/h * 100
-	uint32_t acceleration;	// acceleration * 100
-	uint16_t gForceX;		// g-force X * 100
-	uint16_t gForceY;		// g-force Y * 100
-	int16_t fixtype;		// 0=none, 4=RTK_FIXED, etc.
-	int32_t ID;			    // vehicle ID
-};
-#pragma pack(pop)
-
 // ============================================================================
-// PACKET MAGIC MARKERS (centralized)
+// SHARED PROTOCOL — rajagp_core ("RAJAGP Server" repo, checked out as sibling).
 //
-// NOTE: These are macros intentionally, to avoid multiple-definition/redefinition
-// issues across translation units in this project configuration.
+// TelemetryPacket, RajaTelemetryPacket (37-byte SX1280 wire format), magic
+// markers and the CRC live in rajagp_core now, so this client and the track
+// server can never drift apart. The aliases below keep every existing use
+// site compiling unchanged.
 // ============================================================================
-#define PACKET_MAGIC_DATA 0x44415441u // 'DATA' TelemetryPacket
-#define PACKET_MAGIC_AUTH 0x41555448u // 'AUTH'
-#define PACKET_MAGIC_RESP 0x52455350u // 'RESP'
-#define PACKET_MAGIC_TRCK 0x5452434Bu // 'TRCK'
-#define PACKET_MAGIC_TCHU 0x54434855u // 'TCHU'
-#define PACKET_MAGIC_RACE 0x52414345u // 'RACE'
-#define PACKET_MAGIC_VSTA 0x56535441u // 'VSTA'
-#define PACKET_MAGIC_RAJA 0x52414A41u // 'RAJA' radio telemetry (SX1280 device)
+#include <rajagp/Protocol.h>
 
-// ============================================================================
-// RAJA RADIO WIRE PACKET
-//
-// Over-the-air layout sent by the SX1280 telemetry device. This is the on-wire
-// format only; the serial reader validates the CRC and translates it into the
-// internal TelemetryPacket, so the rest of the app is unaffected.
-// Field order/sizes MUST match the device firmware exactly (37 bytes, packed).
-// ============================================================================
-#pragma pack(push, 1)
-struct RajaTelemetryPacket {
-	uint32_t magic;         // PACKET_MAGIC_RAJA 0x52414A41 'RAJA'  [+0]
-	uint32_t device_id;     // serial number                       [+4]
-	uint8_t  seq;           // sequence counter                    [+8]
-	uint32_t gps_utc_ms;    // UTC ms since midnight                [+9]
-	int32_t  lat;           // degrees * 1e7                        [+13]
-	int32_t  lon;           // degrees * 1e7                        [+17]
-	uint32_t speed;         // km/h * 100                           [+21]
-	uint32_t acceleration;  // m/s^2 * 100                          [+25]
-	uint16_t gForceX;       // g-force X * 100                      [+29]
-	uint16_t gForceY;       // g-force Y * 100                      [+31]
-	int16_t  fix_type;      // 0=none, 4=RTK_FIXED, etc.            [+33]
-	uint16_t crc;           // CRC-16/CCITT-FALSE over first 35 B   [+35]
-};
-#pragma pack(pop)
-static_assert(sizeof(RajaTelemetryPacket) == 37, "RAJA wire packet size mismatch!");
+using TelemetryPacket     = rajagp::TelemetryPacket;
+using RajaTelemetryPacket = rajagp::RajaTelemetryPacket;
+
+// Legacy macro names — kept as aliases of the shared constants so the values
+// have exactly one source of truth (rajagp::PacketMagic).
+#define PACKET_MAGIC_DATA (rajagp::PacketMagic::DATA) // 'DATA' TelemetryPacket
+#define PACKET_MAGIC_AUTH (rajagp::PacketMagic::AUTH) // 'AUTH'
+#define PACKET_MAGIC_RESP (rajagp::PacketMagic::RESP) // 'RESP'
+#define PACKET_MAGIC_TRCK (rajagp::PacketMagic::TRCK) // 'TRCK'
+#define PACKET_MAGIC_TCHU (rajagp::PacketMagic::TCHU) // 'TCHU'
+#define PACKET_MAGIC_RACE (rajagp::PacketMagic::RACE) // 'RACE'
+#define PACKET_MAGIC_VSTA (rajagp::PacketMagic::VSTA) // 'VSTA'
+#define PACKET_MAGIC_RAJA (rajagp::PacketMagic::RAJA) // 'RAJA' radio telemetry (SX1280)
 
 #pragma pack(push, 1)
 struct AuthPacket {

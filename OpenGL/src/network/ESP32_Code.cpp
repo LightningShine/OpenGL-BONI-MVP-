@@ -49,18 +49,9 @@ static std::vector<ComPortInfo> g_ports;
 static std::mutex g_selected_port_mutex;
 static std::string g_selected_port;
 
-// CRC-16/CCITT-FALSE (init 0xFFFF, poly 0x1021) — must match device firmware.
-static uint16_t raja_crc16(const uint8_t* data, size_t len)
-{
-    uint16_t crc = 0xFFFF;
-    for (size_t i = 0; i < len; i++) {
-        crc ^= static_cast<uint16_t>(data[i]) << 8;
-        for (int j = 0; j < 8; j++)
-            crc = (crc & 0x8000) ? static_cast<uint16_t>((crc << 1) ^ 0x1021)
-                                 : static_cast<uint16_t>(crc << 1);
-    }
-    return crc;
-}
+// CRC + wire-packet parsing moved to rajagp_core (shared with the track
+// server) — see rajagp::parseRajaPayload below. One source of truth.
+#include <rajagp/RajaParser.h>
 
 static void closeSerialNoThrow()
 {
@@ -365,41 +356,28 @@ static void realDataThreadWorker(const std::string& com_port)
             {
                 telemetry_headers_seen++;
 
-                // Read the wire packet after the already matched magic marker.
-                // RajaTelemetryPacket is packed; layout must match the device sender.
-                RajaTelemetryPacket wire{};
-                wire.magic = PACKET_MAGIC_RAJA;
-                const size_t payloadSize = sizeof(RajaTelemetryPacket) - sizeof(uint32_t);
-                uint8_t* dst = reinterpret_cast<uint8_t*>(&wire) + sizeof(uint32_t);
+                // Read the payload bytes that follow the matched magic marker,
+                // then validate + translate via rajagp_core (same code path as
+                // the track server).
+                const size_t payloadSize = rajagp::kRajaPayloadAfterMagic;
+                uint8_t payload[rajagp::kRajaPayloadAfterMagic];
                 size_t totalRead = 0;
                 while (totalRead < payloadSize && !g_capture_stop_requested.load())
                 {
-                    const int r = serial.readBytes(reinterpret_cast<char*>(dst + totalRead), static_cast<int>(payloadSize - totalRead), 100);
+                    const int r = serial.readBytes(reinterpret_cast<char*>(payload + totalRead), static_cast<int>(payloadSize - totalRead), 100);
                     if (r > 0)
                         totalRead += static_cast<size_t>(r);
                     else
                         std::this_thread::sleep_for(std::chrono::milliseconds(1));
                 }
 
-                // Validate CRC-16 over everything except the trailing crc field.
+                // CRC check + RAJA→TelemetryPacket translation (rajagp_core).
+                TelemetryPacket packet{};
                 const bool crc_ok = (totalRead == payloadSize) &&
-                    (raja_crc16(reinterpret_cast<const uint8_t*>(&wire), sizeof(wire) - 2) == wire.crc);
+                    rajagp::parseRajaPayload(payload, packet);
 
                 if (crc_ok)
                 {
-                    // Translate the wire packet into the app's internal TelemetryPacket.
-                    TelemetryPacket packet{};
-                    packet.MagicMarker  = PACKET_MAGIC_DATA;
-                    packet.lat          = wire.lat;
-                    packet.lon          = wire.lon;
-                    packet.time         = wire.gps_utc_ms;
-                    packet.speed        = wire.speed;
-                    packet.acceleration = wire.acceleration;
-                    packet.gForceX      = wire.gForceX;
-                    packet.gForceY      = wire.gForceY;
-                    packet.fixtype      = wire.fix_type;
-                    packet.ID           = static_cast<int32_t>(wire.device_id);
-
                     telemetry_packets_ok++;
                    last_packet = packet;
                     has_last_packet = true;

@@ -7,7 +7,11 @@
 
 #include <glm/glm.hpp>
 
-struct TelemetryPacket;
+// TelemetryPacket now lives in rajagp_core; the old local forward declaration
+// would clash with the alias in Server.h, so pull in the real definition.
+#include <rajagp/Protocol.h>
+using TelemetryPacket = rajagp::TelemetryPacket;
+
 struct SplinePoint;
 class MapOrigin;
 
