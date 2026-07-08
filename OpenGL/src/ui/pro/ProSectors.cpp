@@ -200,14 +200,18 @@ void RenderSectorsWindow(const ProContext& ctx, int32_t vehicleId,
             dl->AddLine(pa, pb, colAtProg(cum[i] / total), trackTh);
         }
 
-        // Vehicle position dot
+        // Vehicle position dot — apply the same centering offset that is baked
+        // into g_smooth_track_points (see rebuildTrackCacheFromEdges).
         double vx = 0, vy = 0; bool found = false;
         {
             std::lock_guard<std::mutex> lk(g_vehicles_mutex);
             auto it = g_vehicles.find(vehicleId);
             if (it != g_vehicles.end()) {
-                vx = it->second.m_normalized_x;
-                vy = it->second.m_normalized_y;
+                const glm::vec2 rOff = it->second.m_apply_track_render_offset
+                                         ? getTrackRenderOffset()
+                                         : glm::vec2(0.0f, 0.0f);
+                vx = it->second.m_normalized_x + rOff.x;
+                vy = it->second.m_normalized_y + rOff.y;
                 found = true;
             }
         }

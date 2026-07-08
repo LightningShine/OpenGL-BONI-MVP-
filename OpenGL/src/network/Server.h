@@ -3,20 +3,11 @@
 #include <cstdint>
 #include <iostream>
 
-// GameNetworkingSockets doesn't build on ARM64 Windows
-#if defined(_M_X64) || defined(_M_AMD64) || defined(__x86_64__)
-#define NETWORKING_ENABLED 1
-#include <GameNetworkingSockets/steam/steamnetworkingsockets.h>
-#include <GameNetworkingSockets/steam/isteamnetworkingsockets.h>
-#include <GameNetworkingSockets/steam/isteamnetworkingutils.h>
-#include "miniupnpc/miniupnpc.h"
-#include "miniupnpc/upnpcommands.h"
-#else
+// GameNetworkingSockets has been REMOVED (x64-only, blocked ARM/Linux).
+// Networking is now: TrackServerClient (WebSocket → RAJAGP Track Server) for
+// viewing, and the local COM-port receiver for standalone tracker capture.
+// Kept as 0 so legacy #if NETWORKING_ENABLED blocks compile out.
 #define NETWORKING_ENABLED 0
-// Stub types for ARM64 compilation
-typedef void* HSteamNetConnection;
-typedef void* ISteamNetworkingSockets;
-#endif
 
 #include "../Config.h"
 #include "windows.h"
@@ -168,35 +159,18 @@ struct VehicleStatePacket {
 };
 #pragma pack(pop)
 
-int serverWork(const std::vector<glm::vec2>& track_points, std::mutex& points_mutex);
+// ============================================================================
+// GNS server API removed — hosting lives in the RAJAGP Track Server now.
+// What remains (implemented as no-ops in NetworkCompat.cpp) exists only for
+// the untouched serial/simulation call sites:
+// ============================================================================
 
-bool isServerRunning();
-
-// True when listen socket is created and server is ready to accept connections.
-bool isServerListening();
-
-void ChangeisServerRunning();
-
-void serverStop();
-
-void continueServerRunning();
-
-// Broadcast telemetry packet to all authenticated clients
+// Broadcast telemetry packet to all authenticated clients (no-op)
 void BroadcastTelemetryToClients(const TelemetryPacket& packet);
 
-// ✅ Mode flags (server and client are mutually exclusive)
-extern std::atomic<bool> g_is_server_mode;
-extern std::atomic<bool> g_is_client_mode;
-
-// Broadcast processed vehicle state to all authenticated clients
+// Broadcast processed vehicle state to all authenticated clients (no-op)
 void BroadcastVehicleStateToClients(const VehicleStatePacket& packet);
 
-// Send track and race data to newly authenticated client
-void SendTrackAndRaceData(HSteamNetConnection connection);
-
-// UI/runtime configurable server password (empty => allow all)
-void serverSetPassword(const char* password_or_null);
-const char* serverGetPassword();
-
-// Best-effort WAN IP discovered via UPnP (empty if unavailable)
-const char* serverGetWanIp();
+// Mode flags — permanently false since the app no longer hosts/joins via GNS.
+extern std::atomic<bool> g_is_server_mode;
+extern std::atomic<bool> g_is_client_mode;

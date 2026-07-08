@@ -27,7 +27,8 @@
 #include "libraries/include/imgui/backends/imgui_impl_glfw.h"
 #include "libraries/include/imgui/backends/imgui_impl_opengl3.h"
 
-#include "src/network/Client.h"
+#include "src/network/TrackServerClient.h"
+#include "src/ui/Accounts.h"
 #include "src/ui/pro/ProView.h"
 #include "src/network/Server.h"
 #include "src/network/ESP32_Code.h"
@@ -50,6 +51,7 @@ bool g_show_autostop_modal = false;
 #define GLFW_EXPOSE_NATIVE_WIN32
 #include <GLFW/glfw3native.h>
 #include <commdlg.h>  // For GetOpenFileNameA
+#include <shellapi.h> // For ShellExecuteA (Ctrl+P print results)
 
 #ifdef min
 #undef min
@@ -61,9 +63,7 @@ bool g_show_autostop_modal = false;
 #pragma comment(lib, "Ws2_32.lib")
 #endif
 
-#if NETWORKING_ENABLED
-extern bool g_is_server_running;
-#endif
+// (GNS globals removed — networking is TrackServerClient now)
 
 static void AddDashedRect(ImDrawList* draw_list, const ImVec2& p_min, const ImVec2& p_max, ImU32 col, float thickness, float dash_len, float gap_len)
 {
@@ -181,12 +181,7 @@ void UI::UpdateNetworkingIps()
         }
     }
 
-    // External IP via server UPnP discovery (best-effort; empty if unavailable)
-#if NETWORKING_ENABLED
-    const char* wan = serverGetWanIp();
-    if (wan && wan[0] != 0)
-        m_external_ip = wan;
-#endif
+    // (UPnP/WAN discovery removed with GNS — the track server has a fixed LAN address)
 }
 
 // Dispatch track data string to the correct loader (single-edge or dual-edge).
@@ -252,24 +247,13 @@ void UI::RenderNetworkingModal()
     if (!m_show_networking_modal)
         return;
 
-#if NETWORKING_ENABLED
-    // Auto-close on success + surface failures.
+    // Auto-close on success + surface failures (Track Server connection).
     {
-        const bool isServer = (m_networkingModalMode == NetworkingModalMode::Server);
-        if (isServer)
-        {
-            if (isServerRunning() && isServerListening())
-                m_show_networking_modal = false;
-        }
-        else
-        {
-            if (clientIsAuthenticated())
-                m_show_networking_modal = false;
-            else if (clientHadAuthFailure())
-                m_networking_password_invalid = true;
-        }
+        if (TrackServerClient::isConnected())
+            m_show_networking_modal = false;
+        else if (TrackServerClient::hadFailure())
+            m_networking_password_invalid = true;
     }
-#endif
 
     ImGuiIO& io = ImGui::GetIO();
     ImVec2 display_size = io.DisplaySize;
@@ -305,8 +289,6 @@ void UI::RenderNetworkingModal()
 
     ImGui::Begin("##NetworkingWindow", nullptr, flags);
     {
-        const bool isServer = (m_networkingModalMode == NetworkingModalMode::Server);
-
         // Deterministic layout in window-local coordinates
         ImGui::SetCursorPos(ImVec2(0, 0));
         ImDrawList* draw = ImGui::GetWindowDrawList();
@@ -329,7 +311,7 @@ void UI::RenderNetworkingModal()
 
         // Header
         ImFont* titleFont = m_fontTitle ? m_fontTitle : ImGui::GetFont();
-        const char* header = isServer ? "Server Creation" : "Server Connection";
+        const char* header = "Connect to Track Server";
         ImGui::PushFont(titleFont);
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0xF0 / 255.0f, 0xF0 / 255.0f, 0xF0 / 255.0f, 1.0f));
         ImGui::SetWindowFontScale(header_px / ImGui::GetFontSize());
@@ -355,33 +337,14 @@ void UI::RenderNetworkingModal()
         // Address
         {
             const char* hint = "Server IP: 178.169.20.56:777";
-            char hint_buf[128]{};
-            if (isServer)
-            {
-                // Render as plain text when creating server (not an input)
-                const char* ip = (!m_external_ip.empty()) ? m_external_ip.c_str() : "<unknown>";
-                snprintf(hint_buf, sizeof(hint_buf), "Server IP: %s:%u", ip, (unsigned)m_display_port);
+            ImGui::SetCursorPos(ImVec2(pad_x, addr_y));
+            ImGui::SetNextItemWidth(field_w);
+            ImGui::InputTextWithHint("##NetworkingAddr", hint, m_networking_addr, sizeof(m_networking_addr));
+            drawInputFrame(m_networking_addr_invalid);
 
-                ImFont* ipFont = m_fontUI ? m_fontUI : ImGui::GetFont();
-                ImGui::PushFont(ipFont);
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0xF0 / 255.0f, 0xF0 / 255.0f, 0xF0 / 255.0f, 0.90f));
-                ImGui::SetCursorPos(ImVec2(pad_x, addr_y + 8.0f));
-                ImGui::TextUnformatted(hint_buf);
-                ImGui::PopStyleColor();
-                ImGui::PopFont();
-            }
-
-            if (!isServer)
-            {
-                ImGui::SetCursorPos(ImVec2(pad_x, addr_y));
-                ImGui::SetNextItemWidth(field_w);
-                ImGui::InputTextWithHint("##NetworkingAddr", hint, m_networking_addr, sizeof(m_networking_addr));
-                drawInputFrame(m_networking_addr_invalid);
-
-                std::string host;
-                uint16_t port = 0;
-                m_networking_addr_invalid = (m_networking_addr[0] != 0) && !ParseAddressInput(m_networking_addr, host, port);
-            }
+            std::string host;
+            uint16_t port = 0;
+            m_networking_addr_invalid = (m_networking_addr[0] != 0) && !ParseAddressInput(m_networking_addr, host, port);
         }
 
         // Password
@@ -404,64 +367,25 @@ void UI::RenderNetworkingModal()
             ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 10.0f);
             ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(18, 12));
 
-            const char* btn = isServer ? "Create" : "Connect";
             ImGui::SetCursorPos(ImVec2(pad_x, button_y));
-            if (ImGui::Button(btn, ImVec2(field_w, button_h)))
+            if (ImGui::Button("Connect", ImVec2(field_w, button_h)))
             {
                 m_networking_addr_invalid = false;
                 m_networking_password_invalid = false;
 
-                if (isServer)
+                std::string host;
+                uint16_t port = 0;
+                const bool ok = ParseAddressInput(m_networking_addr, host, port);
+                if (!ok)
                 {
-#if NETWORKING_ENABLED
-                    // Persist server password for auth (empty => allow all)
-                    if (m_networking_password[0] == 0)
-                        serverSetPassword(nullptr);
-                    else
-                        serverSetPassword(m_networking_password);
-
-                    if (!isServerRunning())
-                    {
-                        continueServerRunning();
-                        std::thread ServerThread = std::thread(serverWork,
-                            std::ref(*m_points), std::ref(*m_pointsMutex));
-                        ServerThread.detach();
-                        ChangeisServerRunning();
-                    }
-#endif
-                    // Password persistence is handled inside server auth flow in existing code.
+                    m_networking_addr_invalid = true;
                 }
                 else
                 {
-                    std::string host;
-                    uint16_t port = 0;
-                    const bool ok = ParseAddressInput(m_networking_addr, host, port);
-                    if (!ok)
-                    {
-                        m_networking_addr_invalid = true;
-                    }
-                    else
-                    {
-                        // Optional password: if empty, do not send it.
-#if NETWORKING_ENABLED
-                        clientClearAuthState();
-                        if (m_networking_password[0] == 0)
-                            clientSetConnectParams(host.c_str(), port, nullptr);
-                        else
-                            clientSetConnectParams(host.c_str(), port, m_networking_password);
-
-                        if (!isClientRunning())
-                        {
-                            continueClientRunning();
-                            std::thread ClientThread = std::thread(clientStart,
-                                std::ref(*m_points), std::ref(*m_pointsMutex));
-                            ClientThread.detach();
-                            toggleClientRunning();
-                        }
-                        // If client thread is already running (e.g. waiting for new password),
-                        // just updating params above is enough.
-#endif
-                    }
+                    TrackServerClient::clearFailure();
+                    TrackServerClient::setConnectParams(host, port,
+                        m_networking_password);
+                    TrackServerClient::start();
                 }
 
                 // Do not auto-close: keep the card visible so user can see status/errors.
@@ -1053,8 +977,7 @@ void UI::BeginFrame()
         TelemetryTrackBuilder::Stop(true);
     }
 
-    // Keyboard shortcuts for networking modal
-    // Shift+C => client, Shift+S => server
+    // Keyboard shortcut: Shift+C => Connect to Track Server modal
     // Guard: only when not typing in an input field
     ImGuiIO& io = ImGui::GetIO();
     if (!m_showSplash && !io.WantTextInput)
@@ -1127,11 +1050,53 @@ void UI::BeginFrame()
             }
         }
 
-        // Save Results hotkey
-        if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_P))
+        // Ctrl+S — save session results as a .txt file (Save As dialog).
+        // Works for local (prototype/COM) and Track Server sessions alike.
+        if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S) && g_race_manager)
         {
-            std::cout << "[UI] Ctrl+P pressed. Save Results action triggered." << std::endl;
-            // Place your save results logic here
+            char saveFile[260] = "RaceResults.txt";
+            OPENFILENAMEA ofn = {};
+            ofn.lStructSize = sizeof(ofn);
+            ofn.hwndOwner = glfwGetWin32Window(m_window);
+            ofn.lpstrFile = saveFile;
+            ofn.nMaxFile = sizeof(saveFile);
+            ofn.lpstrFilter = "Text file\0*.txt\0All Files\0*.*\0";
+            ofn.nFilterIndex = 1;
+            ofn.lpstrDefExt = "txt";
+            ofn.Flags = OFN_OVERWRITEPROMPT | OFN_NOCHANGEDIR;
+            if (GetSaveFileNameA(&ofn))
+            {
+                std::ofstream f(ofn.lpstrFile);
+                if (f)
+                {
+                    f << g_race_manager->BuildResultsText();
+                    std::cout << "[UI] Results saved to " << ofn.lpstrFile << std::endl;
+                }
+                else
+                {
+                    std::cerr << "[UI] Cannot write " << ofn.lpstrFile << std::endl;
+                }
+            }
+        }
+
+        // Ctrl+P — print session results: write the report to a temp .txt and
+        // hand it to the standard Windows print flow for text files. Falls
+        // back to opening the file if no print handler is registered.
+        if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_P) && g_race_manager)
+        {
+            char tmpDir[MAX_PATH] = {};
+            GetTempPathA(MAX_PATH, tmpDir);
+            const std::string path = std::string(tmpDir) + "RAJAGP_Results.txt";
+            {
+                std::ofstream f(path);
+                f << g_race_manager->BuildResultsText();
+            }
+            HINSTANCE r = ShellExecuteA(nullptr, "print", path.c_str(),
+                                        nullptr, nullptr, SW_SHOWNORMAL);
+            if (reinterpret_cast<INT_PTR>(r) <= 32)
+                ShellExecuteA(nullptr, "open", path.c_str(),
+                              nullptr, nullptr, SW_SHOWNORMAL);
+            std::cout << "[UI] Results sent to print: " << path << std::endl;
         }
 
         // Track creation hotkey: Space finalizes an OPEN track (manual finish).
@@ -1177,7 +1142,7 @@ void UI::BeginFrame()
         if (io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_C))
         {
             UpdateNetworkingIps();
-            m_networkingModalMode = NetworkingModalMode::Client;
+            m_networkingModalMode = NetworkingModalMode::Connect;
             m_show_networking_modal = true;
             m_networking_addr_invalid = false;
             m_networking_password_invalid = false;
@@ -1186,17 +1151,6 @@ void UI::BeginFrame()
                 if (!m_external_ip.empty())
                     snprintf(m_networking_addr, sizeof(m_networking_addr), "%s:%u", m_external_ip.c_str(), (unsigned)m_display_port);
             }
-            io.AddInputCharacter(0); // consume
-        }
-        if (io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_S))
-        {
-            UpdateNetworkingIps();
-            m_networkingModalMode = NetworkingModalMode::Server;
-            m_show_networking_modal = true;
-            m_networking_addr_invalid = false;
-            m_networking_password_invalid = false;
-            if (!m_external_ip.empty())
-                snprintf(m_networking_addr, sizeof(m_networking_addr), "%s:%u", m_external_ip.c_str(), (unsigned)m_display_port);
             io.AddInputCharacter(0); // consume
         }
     }
@@ -1384,6 +1338,7 @@ void UI::Render()
 
     RenderPrototypeToast();
     RenderNetworkingModal();
+    AccountsPanel::Render(m_fontUI, m_fontUBold);
     RenderAutoStopModal();
 
     // Render help modal if open
@@ -1408,10 +1363,29 @@ void UI::RenderRaceStatusBar(ModeManager* modeManager)
         s_last_height = height;
     }
 
-    if (g_race_manager)
-    {
+    // Session phase: server race state when connected (Practice/Race/Race
+    // Finishing/Race Finished), local RaceManager session otherwise.
+    const bool server_session = TrackServerClient::isConnected() &&
+                                !TrackServerClient::raceState().empty();
+    if (server_session)
+        modeManager->SyncWithServerState(TrackServerClient::raceState());
+    else if (g_race_manager)
         modeManager->SyncWithSessionState(g_race_manager->GetSessionState());
 
+    // Current flag → both status-bar squares. Green is the default.
+    FlagColor flag_color = FlagColor::Green;
+    if (TrackServerClient::isConnected())
+    {
+        const std::string f = TrackServerClient::currentFlag();
+        if      (f == "yellow") flag_color = FlagColor::Yellow;
+        else if (f == "red")    flag_color = FlagColor::Red;
+        else if (f == "finish") flag_color = FlagColor::Checkered;
+    }
+    m_raceDisplay.GetStatusBar().GetFlags().SetLeftFlag(flag_color);
+    m_raceDisplay.GetStatusBar().GetFlags().SetRightFlag(flag_color);
+
+    if (g_race_manager)
+    {
         float max_time = g_race_manager->GetAutoStopSeconds();
         if (max_time > 0.0f) {
             float elapsed = g_race_manager->GetRaceElapsedTime();
@@ -1467,16 +1441,49 @@ void UI::RenderRaceStatusBar(ModeManager* modeManager)
 
     const ImU32 pill_bg = IM_COL32(24, 24, 24, 255);
     const ImU32 pill_border = IM_COL32(160, 160, 160, 180);
-    const ImU32 flag_fill = IM_COL32(73, 143, 73, 255);
     const ImU32 text_color = IM_COL32(240, 240, 240, 255);
+
+    // Square color follows the race flag (checkered pattern for the finish).
+    float fr, fg, fb, fa;
+    RaceFlags::GetFlagRGBA(flag_color, fr, fg, fb, fa);
+    const ImU32 flag_fill = IM_COL32(static_cast<int>(fr * 255),
+                                     static_cast<int>(fg * 255),
+                                     static_cast<int>(fb * 255), 255);
 
     ImDrawList* draw_list = ImGui::GetForegroundDrawList();
 
     draw_list->AddRectFilled(ImVec2(pill_x, pill_y), ImVec2(pill_x + pill_w, pill_y + pill_h), pill_bg, pill_rounding);
     draw_list->AddRect(ImVec2(pill_x, pill_y), ImVec2(pill_x + pill_w, pill_y + pill_h), pill_border, pill_rounding, 0, 1.5f);
 
-    draw_list->AddRectFilled(ImVec2(left_flag_x, flag_y), ImVec2(left_flag_x + flag_size, flag_y + flag_size), flag_fill, flag_rounding);
-    draw_list->AddRectFilled(ImVec2(right_flag_x, flag_y), ImVec2(right_flag_x + flag_size, flag_y + flag_size), flag_fill, flag_rounding);
+    auto drawFlagSquare = [&](float fx)
+    {
+        if (flag_color == FlagColor::Checkered)
+        {
+            // 4x4 checkered pattern
+            const int   cells = 4;
+            const float cell  = flag_size / cells;
+            for (int r = 0; r < cells; ++r)
+                for (int c = 0; c < cells; ++c)
+                {
+                    const ImU32 col = ((r + c) & 1) ? IM_COL32(25, 25, 25, 255)
+                                                    : IM_COL32(235, 235, 235, 255);
+                    draw_list->AddRectFilled(
+                        ImVec2(fx + c * cell, flag_y + r * cell),
+                        ImVec2(fx + (c + 1) * cell, flag_y + (r + 1) * cell), col);
+                }
+            draw_list->AddRect(ImVec2(fx, flag_y),
+                               ImVec2(fx + flag_size, flag_y + flag_size),
+                               IM_COL32(160, 160, 160, 200));
+        }
+        else
+        {
+            draw_list->AddRectFilled(ImVec2(fx, flag_y),
+                                     ImVec2(fx + flag_size, flag_y + flag_size),
+                                     flag_fill, flag_rounding);
+        }
+    };
+    drawFlagSquare(left_flag_x);
+    drawFlagSquare(right_flag_x);
 
     const float text_y_sys = bar_y + (bar_h - system_size.y) * 0.5f;
     const float text_y_ses = bar_y + (bar_h - session_size.y) * 0.5f;
@@ -2462,68 +2469,38 @@ void UI::RenderTopMenu()
         
         if (ImGui::BeginMenu("Networking"))
         {
-            if (ImGui::MenuItem("Client", "Shift+C"))
+            if (ImGui::MenuItem("Connect to Server", "Shift+C"))
             {
                 UpdateNetworkingIps();
-                m_networkingModalMode = NetworkingModalMode::Client;
+                m_networkingModalMode = NetworkingModalMode::Connect;
                 m_show_networking_modal = true;
                 m_networking_addr_invalid = false;
                 m_networking_password_invalid = false;
                 if (m_networking_addr[0] == 0)
                 {
-                    // Default hint: external_ip:777 (if available)
                     if (!m_external_ip.empty())
                         snprintf(m_networking_addr, sizeof(m_networking_addr), "%s:%u", m_external_ip.c_str(), (unsigned)m_display_port);
                 }
-            // shown by RenderNetworkingModal()
             }
             if (ImGui::MenuItem("Disconnect"))
             {
-#if NETWORKING_ENABLED
-                if (isClientRunning())
-                {
-                    clientStop();
-                    clientClearAuthState();
-                }
-                if (isServerRunning())
-                {
-                    serverStop();
-                }
-#endif
+                TrackServerClient::stop();
             }
-            ImGui::Separator();
-            if (ImGui::MenuItem("Server", "Shift+S"))
+            // Accounts management — admins only (create timed access tokens).
+            if (TrackServerClient::isConnected() && TrackServerClient::role() == "admin")
             {
-                UpdateNetworkingIps();
-                m_networkingModalMode = NetworkingModalMode::Server;
-                m_show_networking_modal = true;
-                m_networking_addr_invalid = false;
-                m_networking_password_invalid = false;
-                // Server side shows external_ip:port in the address field.
-                if (!m_external_ip.empty())
-                    snprintf(m_networking_addr, sizeof(m_networking_addr), "%s:%u", m_external_ip.c_str(), (unsigned)m_display_port);
-                // shown by RenderNetworkingModal()
+                if (ImGui::MenuItem("Accounts"))
+                    AccountsPanel::Toggle();
             }
             ImGui::Separator();
             {
                 ImGui::BeginDisabled();
-#if NETWORKING_ENABLED
-                ImGui::MenuItem(isServerRunning() ? "Server: Active" : "Server: Inactive", nullptr, false, false);
-#else
-                ImGui::MenuItem("Server: Unavailable", nullptr, false, false);
-#endif
-
-                if (!m_external_ip.empty())
-                    ImGui::MenuItem((std::string("WAN IP: ") + m_external_ip + ":" + std::to_string(m_display_port)).c_str(), nullptr, false, false);
-
-                const char* spw = "";
-#if NETWORKING_ENABLED
-                spw = serverGetPassword();
-#endif
-                if (spw && spw[0] != 0)
-                    ImGui::MenuItem((std::string("Password: ") + spw).c_str(), nullptr, false, false);
+                if (TrackServerClient::isConnected())
+                    ImGui::MenuItem((std::string("Track Server: Connected (") + TrackServerClient::role() + ")").c_str(), nullptr, false, false);
+                else if (TrackServerClient::isRunning())
+                    ImGui::MenuItem("Track Server: Connecting...", nullptr, false, false);
                 else
-                    ImGui::MenuItem("Password: <none>", nullptr, false, false);
+                    ImGui::MenuItem("Track Server: Not connected", nullptr, false, false);
 
                 if (!m_local_ip.empty())
                     ImGui::MenuItem((std::string("Local IP: ") + m_local_ip).c_str(), nullptr, false, false);
@@ -2627,11 +2604,20 @@ void UI::RenderBottomMenu()
     
     ImGui::PushFont(m_fontRegular);
 
-    // Telemetry packets per second on the left
+    // Telemetry packets per second on the left; when connected to the Track
+    // Server, also frame loss % and delay (computed from seq/server_time_ms).
     {
         const uint32_t pps = telemetryGetPacketsPerSecond();
-        char pps_text[64];
-        snprintf(pps_text, sizeof(pps_text), "PPS: %u", (unsigned)pps);
+        char pps_text[96];
+        if (TrackServerClient::isConnected()) {
+            const float loss  = TrackServerClient::netLossPercent();
+            const int   delay = TrackServerClient::netDelayMs();
+            snprintf(pps_text, sizeof(pps_text),
+                     "PPS: %u   Loss: %.1f%%   Delay: %d ms",
+                     (unsigned)pps, loss, delay);
+        } else {
+            snprintf(pps_text, sizeof(pps_text), "PPS: %u", (unsigned)pps);
+        }
         ImGui::SetCursorPosX(10);
         ImGui::SetCursorPosY(3);
         ImGui::TextUnformatted(pps_text);
@@ -2842,12 +2828,12 @@ void UI::RenderHelpModal()
         sectionHeader("File");
         bindRow("Ctrl+O",         "Open track file (dialog)");
         bindRow("Ctrl+V",         "Paste track from clipboard");
-        bindRow("Ctrl+P",         "Save race results to file");
+        bindRow("Ctrl+S",         "Save race results as .txt (dialog)");
+        bindRow("Ctrl+P",         "Print race results");
         bindRow("Space",          "Finalize open track recording");
 
         // ── NETWORK ───────────────────────────────────────────────────────
         sectionHeader("Network");
-        bindRow("Shift+S",        "Open Create Server dialog");
         bindRow("Shift+C",        "Open Connect to Server dialog");
 
         // ── RACE / SIMULATION ─────────────────────────────────────────────
@@ -2996,20 +2982,31 @@ void UI::RenderAutoStopModal()
         ImGui::SetCursorPosX((windowWidth - btnW) * 0.5f);
         if (ImGui::Button("Start Race", ImVec2(btnW, btnH)))
         {
-            if (g_race_manager)
+            // Parse HH:MM:SS
+            int h = 0, m = 0, s = 0;
+            float totalSeconds = 0.0f;
+            if (sscanf_s(m_autostop_time, "%d:%d:%d", &h, &m, &s) == 3)
             {
-                // Parse HH:MM:SS
-                int h = 0, m = 0, s = 0;
-                float totalSeconds = 0.0f;
-                if (sscanf_s(m_autostop_time, "%d:%d:%d", &h, &m, &s) == 3)
-                {
-                    totalSeconds = static_cast<float>(h * 3600 + m * 60 + s);
-                }
-                else if (sscanf_s(m_autostop_time, "%d:%d", &m, &s) == 2)
-                {
-                    totalSeconds = static_cast<float>(m * 60 + s);
-                }
+                totalSeconds = static_cast<float>(h * 3600 + m * 60 + s);
+            }
+            else if (sscanf_s(m_autostop_time, "%d:%d", &m, &s) == 2)
+            {
+                totalSeconds = static_cast<float>(m * 60 + s);
+            }
 
+            // Connected as admin → auto-stop and start run on the Track Server
+            // (laps counted on the leader, classification at the line).
+            if (TrackServerClient::isConnected() && TrackServerClient::role() == "admin")
+            {
+                char cmd[128];
+                snprintf(cmd, sizeof(cmd),
+                         R"({"type":"auto_stop","laps":%d,"seconds":%d})",
+                         m_autostop_laps, static_cast<int>(totalSeconds));
+                TrackServerClient::sendCommand(cmd);
+                TrackServerClient::sendCommand(R"({"type":"race","action":"start"})");
+            }
+            else if (g_race_manager)
+            {
                 g_race_manager->SetAutoStopConditions(m_autostop_laps, totalSeconds);
                 g_race_manager->StartSession();
             }

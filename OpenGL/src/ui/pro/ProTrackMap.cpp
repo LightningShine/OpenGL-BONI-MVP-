@@ -419,11 +419,21 @@ void RenderTrackMapWindow(const ProContext& ctx, int32_t vehicleId,
         DrawFlag(dl, {sf.x + outerTh * 0.8f, sf.y - outerTh - 14.f}, fmaxf(11.f * ux, 9.f));
 
         // Vehicle dot — gold circle, white outline + leader-line callout.
+        // g_smooth_track_points already carry the centering offset baked in by
+        // rebuildTrackCacheFromEdges, so the raw vehicle position must be
+        // shifted by the same getTrackRenderOffset() to land on the track.
         double vx = 0, vy = 0; bool found = false;
         {
             std::lock_guard<std::mutex> lk(g_vehicles_mutex);
             auto vit = g_vehicles.find(vehicleId);
-            if (vit != g_vehicles.end()) { vx = vit->second.m_normalized_x; vy = vit->second.m_normalized_y; found = true; }
+            if (vit != g_vehicles.end()) {
+                const glm::vec2 rOff = vit->second.m_apply_track_render_offset
+                                         ? getTrackRenderOffset()
+                                         : glm::vec2(0.0f, 0.0f);
+                vx = vit->second.m_normalized_x + rOff.x;
+                vy = vit->second.m_normalized_y + rOff.y;
+                found = true;
+            }
         }
         if (found) {
             ImVec2 dot = toScreen({(float)vx, (float)vy});

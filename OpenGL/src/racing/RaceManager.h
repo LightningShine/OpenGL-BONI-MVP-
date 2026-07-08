@@ -22,6 +22,7 @@ struct VehicleStanding
     float totalRaceTime;             // Sum of all completed lap times
     double distanceFromStart;        // Progress along track (0.0 to 1.0)
     int position;                    // Current race position (1st, 2nd, etc.)
+    int serverPosition;              // Track Server classification (0 = local session)
     bool isLapped;                   // True if behind leader by 1+ laps
     bool hasStartedFirstLap;         // True if vehicle started racing
     bool isFinished;                 // True if vehicle has crossed finish in Finishing state
@@ -33,8 +34,8 @@ struct VehicleStanding
     VehicleStanding() 
         : vehicleID(0), completedLaps(0), currentLapNumber(0), currentLapTime(0.0f), 
           bestLapTime(-1.0f), totalRaceTime(0.0f), distanceFromStart(0.0), 
-          position(0), isLapped(false), hasStartedFirstLap(false), isFinished(false),
-          deltaTimeToBest(0.0f), deltaTimeToLeader(0.0f) {}
+          position(0), serverPosition(0), isLapped(false), hasStartedFirstLap(false),
+          isFinished(false), deltaTimeToBest(0.0f), deltaTimeToLeader(0.0f) {}
 };
 
 // ============================================================================
@@ -95,6 +96,9 @@ public:
     // ========================================================================
     void PrintSessionSummary() const;
     bool SaveResultsToFile() const;
+    // Full results report as text — used by Ctrl+S (save as), Ctrl+P (print)
+    // and SaveResultsToFile(). Works for local and Track Server sessions.
+    std::string BuildResultsText() const;
     
 private:
     // ========================================================================

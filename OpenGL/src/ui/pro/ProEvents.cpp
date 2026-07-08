@@ -1,6 +1,7 @@
 #include "ProEvents.h"
 #include "../../racing/RaceManager.h"
 #include "../../vehicle/Vehicle.h"
+#include "../../network/TrackServerClient.h"
 #include <imgui.h>
 #include <mutex>
 #include <deque>
@@ -95,6 +96,27 @@ static void detectEvents() {
     if (!g_race_manager) return;
     float        sessT = g_race_manager->GetRaceElapsedTime();
     SessionState st    = g_race_manager->GetSessionState();
+
+    // Race flag changes (Track Server) — race-control events in the log.
+    // The first observed flag is adopted silently (connecting is not a change).
+    {
+        static std::string s_flagPrev;
+        const std::string f = TrackServerClient::isConnected()
+                                ? TrackServerClient::currentFlag() : std::string();
+        if (!f.empty() && f != s_flagPrev) {
+            if (!s_flagPrev.empty()) {
+                ImU32 col = EV_INFO;
+                std::string label = "FLAG: ";
+                if      (f == "green")  { col = IM_COL32(0x00,0xD2,0x6E,255); label += "Green"; }
+                else if (f == "yellow") { col = IM_COL32(0xF5,0xD9,0x0A,255); label += "Yellow"; }
+                else if (f == "red")    { col = EV_STOP;                      label += "Red"; }
+                else if (f == "finish") { col = EV_LEAD;                      label += "Finish (checkered)"; }
+                else                    { label += f; }
+                pushEvent(sessT, label, col);
+            }
+            s_flagPrev = f;
+        }
+    }
 
     struct Snap { int32_t id; std::string name; float bestLap; float sec[3]; bool secV[3]; double prog; bool started; };
     std::vector<Snap> snaps;

@@ -238,13 +238,13 @@
          a sibling of this repo (same parent folder). -->
     <ClCompile Include="..\..\RAJAGP Server\core\src\Crc.cpp" />
     <ClCompile Include="..\..\RAJAGP Server\core\src\RajaParser.cpp" />
-    <ClCompile Include="Client.cpp" />
+    <ClCompile Include="src\network\TrackServerClient.cpp" />
+    <ClCompile Include="src\network\NetworkCompat.cpp" />
     <ClCompile Include="libraries\include\serialib\serialib.cpp" />
     <ClCompile Include="src\core\main.cpp" />
     <ClCompile Include="src\input\Input.cpp" />
     <ClCompile Include="src\network\ESP32_Code.cpp" />
     <ClCompile Include="src\network\SimulationServer.cpp" />
-    <ClCompile Include="src\network\Server.cpp" />
     <ClCompile Include="src\racing\RaceManager.cpp" />
     <ClCompile Include="src\racing\StopReset\StartStop.cpp" />
     <ClCompile Include="src\racing\TimeDiffirence\TimeDiff.cpp" />
@@ -265,6 +265,7 @@
     <ClCompile Include="src\ui\pro\ProLaptime.cpp" />
     <ClCompile Include="src\ui\pro\ProEvents.cpp" />
     <ClCompile Include="src\ui\pro\ProSectors.cpp" />
+    <ClCompile Include="src\ui\Accounts.cpp" />
     <ClCompile Include="src\vehicle\Vehicle.cpp" />
     <ClCompile Include="src\thirdparty\glad.c" />
     <ClCompile Include="src\vehicle\VehicleInterpolator.cpp" />
@@ -283,7 +284,8 @@
     <ClInclude Include="libraries\include\stb_image.h" />
     <ClInclude Include="src\Config.h" />
     <ClInclude Include="src\input\Input.h" />
-    <ClInclude Include="src\network\Client.h" />
+    <ClInclude Include="src\network\TrackServerClient.h" />
+    <ClInclude Include="src\ui\Accounts.h" />
     <ClInclude Include="src\network\ESP32_Code.h" />
     <ClInclude Include="src\network\Server.h" />
     <ClInclude Include="src\network\SimulationServer.h" />

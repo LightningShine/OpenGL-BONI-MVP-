@@ -103,6 +103,10 @@ public:
 	double m_prev_track_progress = 0.0;
 	bool m_has_authoritative_state = false;
 	bool m_apply_track_render_offset = true;
+	// Race position computed by the Track Server (0 = none). When set, the
+	// leaderboard uses IT instead of local progress — this is what freezes the
+	// order after the checkered flag (post-finish overtakes must not count).
+	int m_server_position = 0;
 	
 	// ========================================================================
 	// FUTURE: Detailed telemetry history

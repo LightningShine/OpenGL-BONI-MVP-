@@ -513,6 +513,8 @@ std::vector<VehicleStanding> RaceManager::GetStandingsInternal() const
         standing.hasStartedFirstLap = vehicle.m_has_started_first_lap;
         standing.isFinished = vehicle.m_is_finished;
         standing.distanceFromStart = vehicle.m_track_progress;
+        standing.serverPosition = vehicle.m_has_authoritative_state
+                                    ? vehicle.m_server_position : 0;
         
         // Best lap logic depends on LAP_START_NUMBER
         int minCompletedLaps = (RaceConstants::LAP_START_NUMBER == 0) ? 1 : 2;
@@ -543,11 +545,20 @@ std::vector<VehicleStanding> RaceManager::GetStandingsInternal() const
     }
     
     // ========================================================================
-    // SORT: 1) Started racing? 2) Completed laps (desc), 3) Progress (desc)
+    // SORT: 0) Track Server position when authoritative, else
+    //       1) Started racing? 2) Completed laps (desc), 3) Progress (desc)
     // ========================================================================
     std::sort(standings.begin(), standings.end(),
         [this, useFinishOrder](const VehicleStanding& a, const VehicleStanding& b) -> bool
         {
+            // Networked session: the server's classification is the truth. It
+            // freezes at the checkered flag, so a finished leader can never be
+            // visually overtaken by live track progress after the line.
+            if (a.serverPosition > 0 && b.serverPosition > 0)
+                return a.serverPosition < b.serverPosition;
+            if ((a.serverPosition > 0) != (b.serverPosition > 0))
+                return a.serverPosition > 0;
+
             if (a.hasStartedFirstLap != b.hasStartedFirstLap)
                 return a.hasStartedFirstLap > b.hasStartedFirstLap;
 
@@ -776,33 +787,20 @@ void RaceManager::PrintSessionSummary() const
 }
 
 // ============================================================================
-// SAVE RESULTS TO FILE (Ctrl+P)
+// RESULTS REPORT — one text generator for Ctrl+S (save as .txt), Ctrl+P
+// (print) and the timestamped auto-save. Works for local (prototype/COM)
+// sessions and Track Server sessions alike: standings already come out in
+// server classification order when connected.
 // ============================================================================
-bool RaceManager::SaveResultsToFile() const
+std::string RaceManager::BuildResultsText() const
 {
-    // ??????? ?????????? saves ???? ?? ???
-    std::filesystem::create_directories("saves");
-    
-    // ?????????? ??? ????? ? timestamp
     auto now = std::chrono::system_clock::now();
     auto time_t_now = std::chrono::system_clock::to_time_t(now);
     std::tm tm_now;
     localtime_s(&tm_now, &time_t_now);
-    
-    char filename[256];
-    std::snprintf(filename, sizeof(filename), 
-                 "saves/VehicleResults_%04d-%02d-%02d_%02d-%02d-%02d.txt",
-                 tm_now.tm_year + 1900, tm_now.tm_mon + 1, tm_now.tm_mday,
-                 tm_now.tm_hour, tm_now.tm_min, tm_now.tm_sec);
-    
-    std::ofstream file(filename);
-    if (!file.is_open())
-    {
-        std::cerr << "[RACE MANAGER] Failed to create file: " << filename << std::endl;
-        return false;
-    }
-    
-    // ?????????? ??????????
+
+    std::ostringstream file;
+
     file << "========================================\n";
     file << "       RACE SESSION RESULTS\n";
     file << "========================================\n";
@@ -903,15 +901,36 @@ bool RaceManager::SaveResultsToFile() const
     file << "========================================\n";
     file << "End of Report\n";
     file << "========================================\n";
-    
-    file.close();
 
-    // Free telemetry memory now that results are saved
+    return file.str();
+}
+
+// ============================================================================
+// SAVE RESULTS TO FILE (timestamped, saves/ directory)
+// ============================================================================
+bool RaceManager::SaveResultsToFile() const
+{
+    std::filesystem::create_directories("saves");
+
+    auto now = std::chrono::system_clock::now();
+    auto time_t_now = std::chrono::system_clock::to_time_t(now);
+    std::tm tm_now;
+    localtime_s(&tm_now, &time_t_now);
+
+    char filename[256];
+    std::snprintf(filename, sizeof(filename),
+                 "saves/VehicleResults_%04d-%02d-%02d_%02d-%02d-%02d.txt",
+                 tm_now.tm_year + 1900, tm_now.tm_mon + 1, tm_now.tm_mday,
+                 tm_now.tm_hour, tm_now.tm_min, tm_now.tm_sec);
+
+    std::ofstream file(filename);
+    if (!file.is_open())
     {
-        std::lock_guard<std::mutex> lock(g_vehicles_mutex);
-        for (auto& [id, vehicle] : g_vehicles)
-            vehicle.laps.clear();
+        std::cerr << "[RACE MANAGER] Failed to create file: " << filename << std::endl;
+        return false;
     }
+    file << BuildResultsText();
+    file.close();
 
     std::cout << "[RACE MANAGER] Results saved to: " << filename << std::endl;
     return true;

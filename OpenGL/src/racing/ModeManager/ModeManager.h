@@ -1,5 +1,7 @@
 #pragma once
 
+#include <string>
+
 #include "../StopReset/StartStop.h"
 
 enum class RaceMode
@@ -12,10 +14,11 @@ enum class RaceMode
 
 enum class RacePhase
 {
-    Practice,
-    Race,
-    Finishing,
-    Finished
+    Practice,      // no race in progress — free running
+    Qualification, // reserved: qualifying mode (future)
+    Race,          // race running
+    Finishing,     // checkered flag out — cars classify at the line
+    Finished       // race over, results frozen
 };
 
 class ModeManager
@@ -46,6 +49,16 @@ public:
         }
     }
 
+    // Track Server race state ("idle"/"running"/"finishing"/"finished") —
+    // used instead of the local session when connected to a server.
+    void SyncWithServerState(const std::string& state)
+    {
+        if      (state == "running")   m_phase = RacePhase::Race;
+        else if (state == "finishing") m_phase = RacePhase::Finishing;
+        else if (state == "finished")  m_phase = RacePhase::Finished;
+        else                           m_phase = RacePhase::Practice;
+    }
+
     const char* GetModeLabel() const
     {
         switch (m_mode)
@@ -67,12 +80,14 @@ public:
         {
         case RacePhase::Practice:
             return "Practice";
+        case RacePhase::Qualification:
+            return "Qualification";
         case RacePhase::Race:
             return "Race";
         case RacePhase::Finishing:
-            return "Finishing";
+            return "Race Finishing";
         case RacePhase::Finished:
-            return "Finished";
+            return "Race Finished";
         default:
             return "Unknown";
         }

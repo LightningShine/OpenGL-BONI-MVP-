@@ -44,7 +44,7 @@
 #include "../../UI.h"
 #include "../../UI_Elements.h"
 #include "../network/Server.h"
-#include "../network/Client.h"
+#include "../network/TrackServerClient.h"
 #include "../network/ESP32_Code.h"
 #include "../network/SimulationServer.h"
 #include "../track/TrackRecorder.h"
@@ -311,37 +311,8 @@ const std::vector<glm::vec2>* track_points = nullptr, std::mutex* points_mutex =
 		was_f11_pressed = false;
 	}
 	
-	// Ctrl+P - Save race results to file
-	static bool was_ctrl_p_pressed = false;
-	if (glfwGetKey(window, GLFW_KEY_LEFT_CONTROL) == GLFW_PRESS || 
-	    glfwGetKey(window, GLFW_KEY_RIGHT_CONTROL) == GLFW_PRESS)
-	{
-		if (glfwGetKey(window, GLFW_KEY_P) == GLFW_PRESS && !was_ctrl_p_pressed)
-		{
-			was_ctrl_p_pressed = true;
-			
-			extern RaceManager* g_race_manager;
-			if (g_race_manager)
-			{
-				if (g_race_manager->SaveResultsToFile())
-				{
-					std::cout << "[INPUT] Race results saved successfully (Ctrl+P)" << std::endl;
-				}
-				else
-				{
-					std::cout << "[INPUT] Failed to save race results" << std::endl;
-				}
-			}
-			else
-			{
-				std::cout << "[INPUT] RaceManager not initialized" << std::endl;
-			}
-		}
-	}
-	else
-	{
-		was_ctrl_p_pressed = false;
-	}
+	// Ctrl+P (print results) and Ctrl+S (save results) are handled in the UI
+	// layer (UI.cpp keyboard shortcuts) so they share BuildResultsText().
 
 	static bool wasPPressed = false;
 	static bool isWaitingForVehicleId = false;
@@ -1024,6 +995,14 @@ int main()
 			continue;
 		}
 
+		// ✅ Track received from the RAJAGP Track Server (socket thread) —
+		// upload to the GPU here, on the thread that owns the GL context.
+		{
+			std::vector<glm::vec2> ts_left, ts_right;
+			if (TrackServerClient::consumePendingTrack(ts_left, ts_right))
+				TrackRenderer::rebuildTrackCacheFromEdges(ts_left, ts_right);
+		}
+
 		// ✅ Build track rendering cache if track was loaded from network
 		// This must be done in main thread because OpenGL context is not thread-safe
 		if (g_is_map_loaded && !TrackRenderer::isTrackCacheValid() && !g_smooth_track_points.empty())
@@ -1225,10 +1204,7 @@ int main()
 	stopRealDataCapture();
 	stopComPortAutoDiscovery();
 
-#if NETWORKING_ENABLED
-	serverStop();
-	clientStop();
-#endif
+	TrackServerClient::stop();
 	
 	TrackRenderer::clearTrackCache();  // Clear track VAO/VBO
 	VehicleNameRenderer::Shutdown();

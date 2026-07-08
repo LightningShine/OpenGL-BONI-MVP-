@@ -101,18 +101,17 @@ void RaceStatusBar::Render(const ModeManager& modeManager)
     // Right flag position
     float rightFlagX = m_posX + m_barWidth - padding - m_flagSize;
 
-    // Draw left flag
-    FlagColor leftFlag = FlagColor::Green;
+    // Draw left flag — colors come from m_flags (set from the current race
+    // flag: server flag when connected, green by default).
     float flagR, flagG, flagB, flagA;
-    RaceFlags::GetFlagRGBA(leftFlag, flagR, flagG, flagB, flagA);
+    RaceFlags::GetFlagRGBA(m_flags.GetLeftFlag(), flagR, flagG, flagB, flagA);
     DrawBorderedRectangle(leftFlagX, leftFlagY, m_flagSize, m_flagSize,
                           flagR, flagG, flagB, flagA,
                           0.5f, 0.5f, 0.5f, 1.0f,
                           1.0f);
 
     // Draw right flag
-    FlagColor rightFlag = FlagColor::Green;
-    RaceFlags::GetFlagRGBA(rightFlag, flagR, flagG, flagB, flagA);
+    RaceFlags::GetFlagRGBA(m_flags.GetRightFlag(), flagR, flagG, flagB, flagA);
     DrawBorderedRectangle(rightFlagX, leftFlagY, m_flagSize, m_flagSize,
                           flagR, flagG, flagB, flagA,
                           0.5f, 0.5f, 0.5f, 1.0f,

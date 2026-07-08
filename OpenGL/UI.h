@@ -128,7 +128,7 @@ private:
     uint32_t m_sessionElapsedMs;
     std::chrono::steady_clock::time_point m_sessionStartTime;
 
-    enum class NetworkingModalMode { None, Client, Server };
+    enum class NetworkingModalMode { None, Connect };
     NetworkingModalMode m_networkingModalMode;
     bool m_show_networking_modal;
     char m_networking_addr[128];

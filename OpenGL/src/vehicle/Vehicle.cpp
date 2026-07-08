@@ -89,7 +89,8 @@ Vehicle::Vehicle(double normalized_x, double normalized_y)
     // Устанавливаем позицию из параметров
     m_normalized_x = normalized_x;
     m_normalized_y = normalized_y;
-    m_apply_track_render_offset = false;
+    // m_apply_track_render_offset stays true (Vehicle.h default) so
+    // getTrackRenderOffset() keeps vehicles aligned with the centred track.
 
     // Конвертируем обратно в GPS через origin UTM
     m_meters_easting = g_map_origin.m_origin_meters_easting + (m_normalized_x * MapConstants::MAP_SIZE);
@@ -144,7 +145,8 @@ Vehicle::Vehicle(int32_t id, double normalized_x, double normalized_y)
     // Устанавливаем позицию из параметров
     m_normalized_x = normalized_x;
     m_normalized_y = normalized_y;
-    m_apply_track_render_offset = false;
+    // m_apply_track_render_offset stays true (Vehicle.h default) so
+    // getTrackRenderOffset() keeps vehicles aligned with the centred track.
 
     // Конвертируем обратно в GPS через origin UTM
     m_meters_easting = g_map_origin.m_origin_meters_easting + (m_normalized_x * MapConstants::MAP_SIZE);
@@ -524,14 +526,19 @@ void renderAllVehicles(GLuint shader_program, GLuint vao, GLuint vbo,
         renderVehicle(shader_program, vao, vbo, data.vehicle, projection);
     }
 
-    // Draw TLA names above each vehicle if enabled
+    // Draw TLA names above each vehicle if enabled.
+    // Apply the same track-centering offset used by the dot so label and
+    // dot always land at the same screen position.
     if (g_show_vehicle_names) {
         for (const RenderData& data : vehiclesToRender) {
             if (!data.vehicle.name.empty()) {
+                const glm::vec2 rOff = data.vehicle.m_apply_track_render_offset
+                                         ? getTrackRenderOffset()
+                                         : glm::vec2(0.0f, 0.0f);
                 VehicleNameRenderer::DrawName(
                     data.vehicle.name,
-                    static_cast<float>(data.vehicle.m_normalized_x),
-                    static_cast<float>(data.vehicle.m_normalized_y),
+                    static_cast<float>(data.vehicle.m_normalized_x) + rOff.x,
+                    static_cast<float>(data.vehicle.m_normalized_y) + rOff.y,
                     projection, g_ui ? g_ui->GetTitleFont() : nullptr, 1.0f);
             }
         }

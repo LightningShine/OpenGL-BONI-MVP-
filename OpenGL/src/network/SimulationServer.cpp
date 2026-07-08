@@ -84,6 +84,13 @@ void telemetryResetPrototypeIdMapping()
     s_proto_to_race_id.clear();
 }
 
+int32_t telemetryGetRaceIdForPrototype(int32_t prototype_id)
+{
+    std::lock_guard<std::mutex> lock(s_proto_map_mutex);
+    auto it = s_proto_to_race_id.find(prototype_id);
+    return it != s_proto_to_race_id.end() ? it->second : -1;
+}
+
 static bool isRaceIdOccupiedLocked(int32_t raceId)
 {
     return g_vehicles.find(raceId) != g_vehicles.end();
@@ -418,7 +425,36 @@ namespace {
 // UNIFIED TELEMETRY PROCESSING - Single entry point for all data sources
 // Used by: simulation, real COM port, network clients
 // ============================================================================
-void processIncomingTelemetry(const TelemetryPacket& packet)
+// One physical packet received by the PC (COM frame or one WebSocket state
+// message — NOT one car record). PPS is a sliding window: packets whose
+// arrival timestamps are within the last 1000ms.
+void telemetryCountPacket()
+{
+    const uint32_t now_ms = getMonotonicTimeMs();
+
+    std::lock_guard<std::mutex> lock(g_pps_mutex);
+    g_pps_last_packet_ms = now_ms;
+
+    // Push timestamp
+    g_pps_ring[g_pps_head] = now_ms;
+    g_pps_head = (g_pps_head + 1) % kPpsRingSize;
+    if (g_pps_count < kPpsRingSize)
+        ++g_pps_count;
+
+    // Drop timestamps older than 1s
+    while (g_pps_count > 0)
+    {
+        const size_t tail = (g_pps_head + kPpsRingSize - g_pps_count) % kPpsRingSize;
+        const uint32_t t = g_pps_ring[tail];
+        if ((now_ms - t) <= 1000)
+            break;
+        --g_pps_count;
+    }
+
+    g_telemetry_packets_per_second.store(static_cast<uint32_t>(g_pps_count), std::memory_order_relaxed);
+}
+
+void processIncomingTelemetry(const TelemetryPacket& packet, bool count_pps)
 {
     // If we are in telemetry track creation mode, feed packets into builder.
     // Builder will auto-initialize origin from the first packet.
@@ -426,32 +462,8 @@ void processIncomingTelemetry(const TelemetryPacket& packet)
     {
         TelemetryTrackBuilder::OnTelemetryPacket(packet);
     }
-    // Count EVERY packet received by the PC (regardless of whether it is used later).
-    // PPS is computed as a sliding window: number of packets whose arrival timestamps are within the last 1000ms.
-    {
-        const uint32_t now_ms = getMonotonicTimeMs();
-
-        std::lock_guard<std::mutex> lock(g_pps_mutex);
-        g_pps_last_packet_ms = now_ms;
-
-        // Push timestamp
-        g_pps_ring[g_pps_head] = now_ms;
-        g_pps_head = (g_pps_head + 1) % kPpsRingSize;
-        if (g_pps_count < kPpsRingSize)
-            ++g_pps_count;
-
-        // Drop timestamps older than 1s
-        while (g_pps_count > 0)
-        {
-            const size_t tail = (g_pps_head + kPpsRingSize - g_pps_count) % kPpsRingSize;
-            const uint32_t t = g_pps_ring[tail];
-            if ((now_ms - t) <= 1000)
-                break;
-            --g_pps_count;
-        }
-
-        g_telemetry_packets_per_second.store(static_cast<uint32_t>(g_pps_count), std::memory_order_relaxed);
-    }
+    if (count_pps)
+        telemetryCountPacket();
 
     if (packet.MagicMarker != PACKET_MAGIC_DATA && packet.MagicMarker != PacketMagic::DATA)
     {
@@ -733,10 +745,9 @@ void processIncomingTelemetry(const TelemetryPacket& packet)
             // 1. Server sends telemetry for vehicle that client doesn't have yet (normal - create it)
             // 2. Vehicle was deleted by timeout (should not recreate)
 
-            #if NETWORKING_ENABLED
-            // On CLIENT: Only create vehicle if it doesn't exist (server will send all vehicles)
-            // On SERVER: Create vehicle from simulation or real data
-
+            // Create the vehicle from telemetry. Must NOT depend on the
+            // removed GNS networking: both the standalone COM receiver and the
+            // Track Server WebSocket stream land here and need vehicles.
             std::cout << "[TELEMETRY] Creating new vehicle #" << raceID << " from prototype #" << packet.ID << std::endl;
 
             Vehicle new_vehicle(packet);
@@ -791,10 +802,6 @@ void processIncomingTelemetry(const TelemetryPacket& packet)
             state.track_progress = static_cast<float>(insertIt->second.m_track_progress);
             fillPacketRaceStateFromVehicle(state, insertIt->second);
             BroadcastVehicleStateToClients(state);
-            #else
-            // Without networking, ignore unknown vehicles
-            std::cerr << "[TELEMETRY WARNING] Ignoring packet for unknown vehicle #" << raceID << std::endl;
-            #endif
         }
     }
 
