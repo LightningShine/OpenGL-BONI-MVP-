@@ -1,0 +1,62 @@
+#pragma once
+#include <glm/glm.hpp>
+
+// Forward declarations
+struct ImFont;
+class MapOrigin;
+
+// ============================================================================
+// UI Elements - Non-interactive visual elements
+// Compass, Laptimer, Leaderboard, etc.
+// ============================================================================
+
+class UIElements
+{
+public:
+    UIElements();
+    ~UIElements();
+    
+    bool initialize();
+    void shutdown();
+    
+    // Compass
+    void drawCompass(float camera_yaw, const MapOrigin& origin);
+    
+    // Laptimer (with default parameters for empty state)
+    void drawLapTimer(float current_lap_time = 0.0f, 
+                     float last_lap_time = -1.0f,   // -1 means no data
+                     float best_lap_time = -1.0f,   // -1 means no data
+                     float time_diff = 0.0f,
+                     int current_lap = 0,
+                     int target_laps = 0);
+    
+    // Leaderboard
+    void drawLeaderboard();
+    
+    // Start/Finish Text (scaled with zoom, behind UI)
+    void RenderStartFinishText(float camera_zoom, const glm::vec2& camera_pos, 
+                               float window_width, float window_height);
+    
+    // Setters
+    void setFontTitle(ImFont* font) { m_font_title = font; }
+    void setFontRobotoMono(ImFont* font) { m_font_roboto_mono = font; }
+    void setFontOswald(ImFont* font) { m_font_oswald = font; }
+    void setFontOswaldBold(ImFont* font) { m_font_oswald_bold = font; }
+    void setFontJetBrainsMono(ImFont* font) { m_font_jetbrains_mono = font; }
+    void setCompassTexture(void* texture) { m_compass_texture = texture; }
+
+private:
+    // Fonts
+    ImFont* m_font_title;       // Russo One Regular
+    ImFont* m_font_roboto_mono;  // Roboto Mono (leaderboard headers)
+    ImFont* m_font_oswald;       // Oswald Regular (leaderboard data)
+    ImFont* m_font_oswald_bold;  // Oswald Bold (leaderboard data)
+    ImFont* m_font_jetbrains_mono; // JetBrains Mono (leaderboard POS/DRIVER/GAP)
+    
+    // Textures
+    void* m_compass_texture;
+    
+    // Helper methods
+    void drawSeparatorLine(float center_x, float y_position, 
+                          float line_width, float display_height);
+};

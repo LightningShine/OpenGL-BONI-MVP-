@@ -1,207 +1,487 @@
-﻿#include "../network/ESP32_Code.h"
-#include "../vehicle/Vehicle.h"
-#include "../input/Input.h"
-#include "../rendering/Interpolation.h"
-#include "../Config.h"
+#include "../network/ESP32_Code.h"
+#include "SimulationServer.h"
+#include <iostream>
+#include <thread>
+#include <chrono>
+#include <atomic>
+#include <mutex>
+#include <vector>
+#include <algorithm>
+#include <cstdlib>
+#include <limits>
+#include <GeographicLib/UTMUPS.hpp>
 
+// External globals from core/vehicle/track systems
+extern std::atomic<bool> g_is_map_loaded;
+extern std::vector<SplinePoint> g_smooth_track_points;
+extern std::mutex g_track_mutex;
+extern MapOrigin g_map_origin;
+
+#if defined(_WIN32)
+#include <windows.h>
+#include <setupapi.h>
+#include <devguid.h>
+#include <regstr.h>
+#pragma comment(lib, "setupapi.lib")
+#endif
+
+// ✅ Mode flags (defined in Server.cpp)
+extern std::atomic<bool> g_is_server_mode;
+extern std::atomic<bool> g_is_client_mode;
 
 serialib serial;
 
+static std::atomic<bool> g_capture_running{ false };
+static std::atomic<bool> g_capture_stop_requested{ false };
+static std::thread g_capture_thread;
+static std::mutex g_serial_mutex;
+
+static std::mutex g_last_packet_mutex;
+static TelemetryPacket g_last_packet{};
+static std::atomic<bool> g_has_last_packet{ false };
+
+static std::atomic<bool> g_discovery_running{ false };
+static std::atomic<bool> g_discovery_stop_requested{ false };
+static std::thread g_discovery_thread;
+
+static std::mutex g_ports_mutex;
+static std::vector<ComPortInfo> g_ports;
+static std::mutex g_selected_port_mutex;
+static std::string g_selected_port;
+
+// CRC + wire-packet parsing moved to rajagp_core (shared with the track
+// server) — see rajagp::parseRajaPayload below. One source of truth.
+#include <rajagp/RajaParser.h>
+
+static void closeSerialNoThrow()
+{
+    std::lock_guard<std::mutex> lock(g_serial_mutex);
+    // serialib has no isOpen() in all versions; just attempt close.
+    try { serial.closeDevice(); }
+    catch (...) {}
+}
+
+bool calibrateOriginToStartFinish()
+{
+    if (!g_is_map_loaded)
+        return false;
+
+    TelemetryPacket packet{};
+    {
+        if (!g_has_last_packet.load(std::memory_order_relaxed))
+            return false;
+        std::lock_guard<std::mutex> lock(g_last_packet_mutex);
+        packet = g_last_packet;
+    }
+
+    glm::vec2 startPoint(0.0f, 0.0f);
+    {
+        std::lock_guard<std::mutex> lock(g_track_mutex);
+        if (g_smooth_track_points.empty())
+            return false;
+        startPoint = g_smooth_track_points.front().position;
+    }
+
+    // Current telemetry position in UTM meters
+    const double lat_deg = static_cast<double>(packet.lat) / 1e7;
+    const double lon_deg = static_cast<double>(packet.lon) / 1e7;
+    double easting = 0.0;
+    double northing = 0.0;
+    coordinatesToMeters(lat_deg, lon_deg, easting, northing);
+
+    // Calculate current normalized position BEFORE calibration (for diagnostics)
+    double nx_before = 0.0;
+    double ny_before = 0.0;
+    getCoordinateDifferenceFromOrigin(easting, northing, nx_before, ny_before);
+
+    // Set origin so that this telemetry point maps to the track start point:
+    // start = (UTM_current - origin) / MAP_SIZE  => origin = UTM_current - start*MAP_SIZE
+    g_map_origin.m_origin_meters_easting = easting - static_cast<double>(startPoint.x) * MapConstants::MAP_SIZE;
+    g_map_origin.m_origin_meters_northing = northing - static_cast<double>(startPoint.y) * MapConstants::MAP_SIZE;
+
+    try {
+        using namespace GeographicLib;
+        const bool northp = (g_map_origin.m_origin_zone_char >= 'N');
+        UTMUPS::Reverse(
+            g_map_origin.m_origin_zone_int,
+            northp,
+            g_map_origin.m_origin_meters_easting,
+            g_map_origin.m_origin_meters_northing,
+            g_map_origin.m_origin_lat_dd,
+            g_map_origin.m_origin_lon_dd);
+    }
+    catch (...) {}
+
+    std::cout << "[ORIGIN] Calibrated to Start/Finish using latest telemetry packet." << std::endl;
+    std::cout << "[ORIGIN]   Start point norm=(" << startPoint.x << "," << startPoint.y << ")" << std::endl;
+    std::cout << "[ORIGIN]   Telemetry norm BEFORE=(" << nx_before << "," << ny_before << ")" << std::endl;
+    std::cout << "[ORIGIN]   New origin UTM: easting=" << g_map_origin.m_origin_meters_easting
+              << " northing=" << g_map_origin.m_origin_meters_northing << std::endl;
+
+    // Calculate normalized position AFTER calibration (should match startPoint)
+    double nx_after = 0.0;
+    double ny_after = 0.0;
+    getCoordinateDifferenceFromOrigin(easting, northing, nx_after, ny_after);
+    std::cout << "[ORIGIN]   Telemetry norm AFTER =(" << nx_after << "," << ny_after << ")" << std::endl;
+
+    return true;
+}
+
 bool openCOMPort(const std::string& port_name)
 {
-    int result = serial.openDevice(port_name.c_str(), 115200);
+    std::lock_guard<std::mutex> lock(g_serial_mutex);
+
+    // On Windows, COM ports must be opened as "\\\\.\\COMx" for COM10+.
+    // Using the prefix is safe for COM1..COM9 too.
+    std::string device = port_name;
+#if defined(_WIN32)
+    if (device.rfind("\\\\.\\\\", 0) != 0)
+        device = "\\\\.\\\\" + device;
+#endif
+
+    int result = serial.openDevice(device.c_str(), 921600);
 
     if (result == 1) {
         std::cout << "Successfully opened " << port_name << std::endl;
-
         serial.flushReceiver();
-
         return true;
     }
 
+    // serialib Windows error codes:
+    // -1 device not found
+    // -2 error while opening the device
+    // -3 error while getting port parameters
+    // -5 error while writing port parameters
+    // -6 error while writing timeout parameters
     switch (result) {
-    case -1: std::cerr << "Error: Device not found: " << port_name << std::endl; break;
-    case -2: std::cerr << "Error: Error while setting port parameters." << std::endl; break;
-    case -3: std::cerr << "Error: Another program is already using this port!" << std::endl; break;
-    default: std::cerr << "Error: Unknown error opening port." << std::endl; break;
+    case -1:
+        std::cerr << "Error: Device not found: " << port_name << std::endl;
+        break;
+    case -2:
+        std::cerr << "Error: Error while opening the device";
+#if defined(_WIN32)
+        std::cerr << " (GetLastError=" << GetLastError() << ")";
+#endif
+        std::cerr << std::endl;
+        break;
+    case -3:
+        std::cerr << "Error: Error while getting port parameters" << std::endl;
+        break;
+    case -5:
+        std::cerr << "Error: Error while writing port parameters" << std::endl;
+        break;
+    case -6:
+        std::cerr << "Error: Error while writing timeout parameters" << std::endl;
+        break;
+    default:
+        std::cerr << "Error: Unknown error opening port (code=" << result << ")" << std::endl;
+        break;
     }
     return false;
 }
 
-
-void readFromCOM()
+#if defined(_WIN32)
+static std::vector<ComPortInfo> enumerateComPortsWindows()
 {
-    uint32_t header = 0;
-    uint8_t byte;
-    // Читаем по байту, пока не соберем 4 байта
-    if (serial.readBytes(&byte, 1) > 0)
-    {
-        header = (header << 8) | byte;
+    std::vector<ComPortInfo> out;
 
-        // Проверяем, является ли текущий header одним из наших типов
-        if (header == (uint32_t)PacketType::TELEMETRY) {
-            TelemetryPacket Tpacket;
-            serial.readBytes((char*)&Tpacket + 4, sizeof(Tpacket) - 4);
+    HDEVINFO hDevInfo = SetupDiGetClassDevsA(&GUID_DEVCLASS_PORTS, nullptr, nullptr, DIGCF_PRESENT);
+    if (hDevInfo == INVALID_HANDLE_VALUE)
+        return out;
+
+    SP_DEVINFO_DATA devInfo{};
+    devInfo.cbSize = sizeof(devInfo);
+
+    for (DWORD i = 0; SetupDiEnumDeviceInfo(hDevInfo, i, &devInfo); ++i)
+    {
+        char friendly[512]{};
+        DWORD regType = 0;
+        DWORD size = 0;
+        if (!SetupDiGetDeviceRegistryPropertyA(hDevInfo, &devInfo, SPDRP_FRIENDLYNAME, &regType,
+            reinterpret_cast<PBYTE>(friendly), static_cast<DWORD>(sizeof(friendly) - 1), &size))
+        {
+            continue;
         }
-        
+
+        std::string desc(friendly);
+        auto lparen = desc.rfind("(COM");
+        auto rparen = (lparen != std::string::npos) ? desc.find(')', lparen) : std::string::npos;
+        if (lparen == std::string::npos || rparen == std::string::npos)
+            continue;
+
+        std::string port = desc.substr(lparen + 1, rparen - (lparen + 1));
+        out.push_back(ComPortInfo{ port, desc });
+    }
+
+SetupDiDestroyDeviceInfoList(hDevInfo);
+
+std::sort(out.begin(), out.end(), [](const ComPortInfo& a, const ComPortInfo& b) {
+        auto num = [](const std::string& p) -> int {
+            if (p.rfind("COM", 0) != 0) return 100000;
+            return std::atoi(p.c_str() + 3);
+        };
+        const int na = num(a.port);
+        const int nb = num(b.port);
+        if (na != nb) return na < nb;
+        return a.port < b.port;
+        });
+
+    out.erase(std::unique(out.begin(), out.end(), [](const ComPortInfo& x, const ComPortInfo& y) {
+        return x.port == y.port;
+        }), out.end());
+
+    return out;
+}
+#endif
+
+static void comDiscoveryThreadWorker()
+{
+    while (!g_discovery_stop_requested.load())
+    {
+        std::vector<ComPortInfo> ports;
+#if defined(_WIN32)
+        ports = enumerateComPortsWindows();
+#endif
+
+        {
+            std::lock_guard<std::mutex> lock(g_ports_mutex);
+            g_ports = std::move(ports);
+        }
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(1000));
     }
 }
 
+void startComPortAutoDiscovery()
+{
+    bool expected = false;
+    if (!g_discovery_running.compare_exchange_strong(expected, true))
+        return;
+
+    g_discovery_stop_requested.store(false);
+    g_discovery_thread = std::thread(comDiscoveryThreadWorker);
+}
+
+void stopComPortAutoDiscovery()
+{
+    if (!g_discovery_running.load())
+        return;
+
+    g_discovery_stop_requested.store(true);
+    if (g_discovery_thread.joinable())
+        g_discovery_thread.join();
+    g_discovery_running.store(false);
+}
+
+std::vector<ComPortInfo> getAvailableComPorts()
+{
+    std::lock_guard<std::mutex> lock(g_ports_mutex);
+    return g_ports;
+}
+
+std::string getSelectedComPort()
+{
+    std::lock_guard<std::mutex> lock(g_selected_port_mutex);
+    return g_selected_port;
+}
+
+void stopRealDataCapture()
+{
+    g_capture_stop_requested.store(true);
+    if (g_capture_thread.joinable())
+        g_capture_thread.join();
+
+    g_capture_running.store(false);
+    g_capture_stop_requested.store(false);
+    closeSerialNoThrow();
+}
+
+static void realDataThreadWorker(const std::string& com_port)
+{
+    if (!openCOMPort(com_port)) {
+        std::cerr << "[REAL DATA] Failed to open " << com_port << std::endl;
+        return;
+    }
+
+    std::cout << "[REAL DATA] Listening on " << com_port << std::endl;
+
+    uint64_t bytes_seen = 0;
+    uint64_t telemetry_headers_seen = 0;
+    uint64_t telemetry_packets_ok = 0;
+    uint64_t telemetry_packets_bad = 0;
+    uint64_t nonmatch_bytes = 0;
+
+    auto last_stats = std::chrono::steady_clock::now();
+    auto last_coord_log = std::chrono::steady_clock::now();
+    TelemetryPacket last_packet{};
+    bool has_last_packet = false;
+
+    // SX1280 device sends RajaTelemetryPacket in little-endian order.
+    // magic PACKET_MAGIC_RAJA (0x52414A41 'RAJA') appears on the wire as bytes: 41 4A 41 52
+    constexpr uint8_t kMagicLE[4] = { 0x41, 0x4A, 0x41, 0x52 };
+    uint8_t window[4] = { 0, 0, 0, 0 };
+    int windowCount = 0;
+
+    while (!g_capture_stop_requested.load())
+    {
+      const auto now = std::chrono::steady_clock::now();
+        // Read stream byte-by-byte and scan for magic marker.
+        uint8_t byte = 0;
+        if (serial.readBytes(&byte, 1, 100) <= 0)
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        else
+        {
+            bytes_seen++;
+
+            // shift window
+            window[0] = window[1];
+            window[1] = window[2];
+            window[2] = window[3];
+            window[3] = byte;
+            if (windowCount < 4) {
+                windowCount++;
+                continue;
+            }
+
+            const bool matched = (window[0] == kMagicLE[0] && window[1] == kMagicLE[1] && window[2] == kMagicLE[2] && window[3] == kMagicLE[3]);
+            if (!matched)
+            {
+                nonmatch_bytes++;
+
+                // keep scanning
+            }
+            else
+            {
+                telemetry_headers_seen++;
+
+                // Read the payload bytes that follow the matched magic marker,
+                // then validate + translate via rajagp_core (same code path as
+                // the track server).
+                const size_t payloadSize = rajagp::kRajaPayloadAfterMagic;
+                uint8_t payload[rajagp::kRajaPayloadAfterMagic];
+                size_t totalRead = 0;
+                while (totalRead < payloadSize && !g_capture_stop_requested.load())
+                {
+                    const int r = serial.readBytes(reinterpret_cast<char*>(payload + totalRead), static_cast<int>(payloadSize - totalRead), 100);
+                    if (r > 0)
+                        totalRead += static_cast<size_t>(r);
+                    else
+                        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                }
+
+                // CRC check + RAJA→TelemetryPacket translation (rajagp_core).
+                TelemetryPacket packet{};
+                const bool crc_ok = (totalRead == payloadSize) &&
+                    rajagp::parseRajaPayload(payload, packet);
+
+                if (crc_ok)
+                {
+                    telemetry_packets_ok++;
+                   last_packet = packet;
+                    has_last_packet = true;
+
+                    {
+                        std::lock_guard<std::mutex> lock(g_last_packet_mutex);
+                        g_last_packet = packet;
+                        g_has_last_packet.store(true, std::memory_order_relaxed);
+                    }
+
+                    processIncomingTelemetry(packet);
+
+                    // ✅ 2. Broadcast to network clients (if server is running)
+                    // Only broadcast if in server mode (not client mode)
+                    if (g_is_server_mode && !g_is_client_mode) {
+                        BroadcastTelemetryToClients(packet);
+                    }
+                }
+                else
+                {
+                    telemetry_packets_bad++;
+                    if ((telemetry_packets_bad % 10) == 1)
+                    {
+                        std::cerr << "[SERIAL] RAJA packet rejected ("
+                                  << (totalRead == payloadSize ? "CRC mismatch" : "short read")
+                                  << "). expected=" << payloadSize
+                                  << " got=" << totalRead
+                                  << " | ok=" << telemetry_packets_ok
+                                  << " bad=" << telemetry_packets_bad
+                                  << std::endl;
+                    }
+
+        // Periodic coordinate log (every 5 seconds)
+        if (has_last_packet && (now - last_coord_log >= std::chrono::seconds(5)))
+        {
+            last_coord_log = now;
+           // Arduino packs GPS as scaled integers: degrees * 1e7
+            const double lat = static_cast<double>(last_packet.lat) / 1e7;
+            const double lon = static_cast<double>(last_packet.lon) / 1e7;
+            std::cout << "[SERIAL] last GNSS: lat=" << lat
+                      << " lon=" << lon
+                      << " fix=" << last_packet.fixtype
+                      << " speed=" << (static_cast<double>(last_packet.speed) / 100.0)
+                      << "km/h"
+                      << std::endl;
+        }
+                }
+            }
+        }
+
+        // Periodic stats (every 2 seconds)
+        if (now - last_stats >= std::chrono::seconds(2))
+        {
+            last_stats = now;
+            std::cout << "[SERIAL] stats: bytes_seen=" << bytes_seen
+                      << " telemetry_headers_seen=" << telemetry_headers_seen
+                      << " telemetry_packets_ok=" << telemetry_packets_ok
+                      << " telemetry_packets_bad=" << telemetry_packets_bad
+                      << " nonmatch_bytes=" << nonmatch_bytes
+                      << std::endl;
+        }
+    }
+
+    std::cout << "[REAL DATA] Stopped listening on " << com_port << std::endl;
+    closeSerialNoThrow();
+}
+
+void startRealDataCapture(const std::string& com_port)
+{
+    stopRealDataCapture();
+    g_capture_running.store(true);
+    g_capture_stop_requested.store(false);
+    g_capture_thread = std::thread(realDataThreadWorker, com_port);
+}
+
+bool selectAndOpenComPort(const std::string& port)
+{
+    if (port.empty())
+        return false;
+
+    {
+        std::lock_guard<std::mutex> lock(g_selected_port_mutex);
+        g_selected_port = port;
+    }
+
+    std::cout << "[SERIAL] Selected COM port: " << port << std::endl;
+
+    // Avoid showing stale PPS from the previous source while the new port is opening.
+    telemetryResetPpsCounters();
+    telemetryResetPrototypeIdMapping();
+    startRealDataCapture(port);
+    return true;
+}
 
 void testSerial()
 {
-    if (openCOMPort("COM1"))
+    if (openCOMPort("COM5"))
     {
         std::cout << "Connection established. Ready to receive data." << std::endl;
-
         std::this_thread::sleep_for(std::chrono::seconds(2));
-
         serial.closeDevice();
         std::cout << "Port closed." << std::endl;
     }
 }
 
-// Simulation worker function (runs in separate thread)
-static void simulationThreadWorker(int vehicle_id, std::vector<SplinePoint> smooth_path)
-{
-    // Calculate cumulative distances along the path
-    std::vector<float> cumulative_distances;
-    cumulative_distances.reserve(smooth_path.size());
-    cumulative_distances.push_back(0.0f);
-    
-    float total_path_length = 0.0f;
-    for (size_t i = 1; i < smooth_path.size(); i++) {
-        float segment_length = glm::distance(smooth_path[i].position, smooth_path[i - 1].position);
-        total_path_length += segment_length;
-        cumulative_distances.push_back(total_path_length);
-    }
-    
-    if (total_path_length < 1e-6f) {
-        std::cerr << "Error: Path length is zero!" << std::endl;
-        return;
-    }
 
-    const float duration_seconds = SimulationConstants::DEFAULT_DURATION_SECONDS;
-    const float update_interval_ms = SimulationConstants::UPDATE_INTERVAL_MS;
-    const int total_updates = static_cast<int>(duration_seconds * SimulationConstants::UPDATE_RATE_HZ);
 
-    for (int step = 0; step <= total_updates; step++) {
-        float progress = static_cast<float>(step) / static_cast<float>(total_updates);
-        
-        // Calculate target distance along path
-        float target_distance = progress * total_path_length;
-        
-        // Find segment containing this distance (binary search for efficiency)
-        size_t segment_index = 0;
-        for (size_t i = 1; i < cumulative_distances.size(); i++) {
-            if (cumulative_distances[i] >= target_distance) {
-                segment_index = i - 1;
-                break;
-            }
-        }
-        
-        // Handle edge case (end of path)
-        if (segment_index >= smooth_path.size() - 1) {
-            segment_index = smooth_path.size() - 2;
-        }
-        
-        // Calculate interpolation factor within this segment
-        float segment_start_dist = cumulative_distances[segment_index];
-        float segment_end_dist = cumulative_distances[segment_index + 1];
-        float segment_length = segment_end_dist - segment_start_dist;
-        
-        float local_fraction = 0.0f;
-        if (segment_length > 1e-6f) {
-            local_fraction = (target_distance - segment_start_dist) / segment_length;
-            local_fraction = glm::clamp(local_fraction, 0.0f, 1.0f);
-        }
-        
-        // Interpolate position
-        glm::vec2 current_pos = glm::mix(
-            smooth_path[segment_index].position,
-            smooth_path[segment_index + 1].position,
-            local_fraction
-        );
-
-        // Denormalize (multiply by MAP_SIZE)
-        double offset_x = current_pos.x * MapConstants::MAP_SIZE;
-        double offset_y = current_pos.y * MapConstants::MAP_SIZE;
-
-        // Convert to GPS coordinates (simplified approximation)
-        double lat_offset = offset_y / SimulationConstants::METERS_PER_DEGREE_LAT;
-        double lon_offset = offset_x / (SimulationConstants::METERS_PER_DEGREE_LAT * 
-                                       std::cos(g_map_origin.m_origin_lat_dd * SimulationConstants::TWO_PI / 360.0));
-
-        double sim_lat = g_map_origin.m_origin_lat_dd + lat_offset;
-        double sim_lon = g_map_origin.m_origin_lon_dd + lon_offset;
-
-        // Calculate realistic speed variation
-        double speed_kph = SimulationConstants::MIN_SPEED_KPH + 
-                          SimulationConstants::SPEED_VARIATION_KPH * 
-                          std::sin(progress * SimulationConstants::TWO_PI);
-
-        // Create telemetry packet
-        TelemetryPacket packet;
-        packet.ID = vehicle_id;
-        packet.lat = static_cast<int32_t>(sim_lat * 1e7);
-        packet.lon = static_cast<int32_t>(sim_lon * 1e7);
-        packet.speed = static_cast<uint16_t>(speed_kph * 100.0);
-        packet.acceleration = static_cast<int16_t>(0);
-        packet.gForceX = static_cast<int16_t>(0);
-        packet.gForceY = static_cast<int16_t>(0);
-        packet.fixtype = 4;
-        packet.time = static_cast<uint32_t>(step * update_interval_ms);
-
-        // Update vehicle (thread-safe)
-        {
-            std::lock_guard<std::mutex> lock(g_vehicles_mutex);
-            g_vehicles[vehicle_id] = Vehicle(packet);
-        }
-
-        // Progress indicator
-        //if (step % SimulationConstants::PROGRESS_LOG_INTERVAL == 0) {
-        //    std::cout << "Vehicle #" << vehicle_id << " progress: " 
-        //              << static_cast<int>(progress * 100) 
-        //              << "% (distance: " << target_distance << "/" << total_path_length << ")" 
-        //              << std::endl;
-        //}
-
-        // Sleep until next update
-        if (step < total_updates) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(static_cast<int>(update_interval_ms)));
-        }
-    }
-
-    std::cout << "Simulation complete for vehicle #" << vehicle_id << std::endl;
-	removeVehicles();
-}
-
-void simulateVehicleMovement(int vehicle_id, const std::vector<SplinePoint>& smooth_track_points)
-{
-    // Guard clauses
-    if (smooth_track_points.empty()) {
-        std::cerr << "Error: Empty track points for simulation" << std::endl;
-        return;
-    }
-
-    if (!g_is_map_loaded) {
-        std::cerr << "Error: Map not loaded, cannot simulate vehicle movement" << std::endl;
-        return;
-    }
-
-    // Calculate total path length for info
-    float total_distance = 0.0f;
-    for (size_t i = 1; i < smooth_track_points.size(); ++i) {
-        total_distance += glm::distance(smooth_track_points[i].position, smooth_track_points[i - 1].position);
-    }
-
-    std::cout << "Starting vehicle simulation:" << std::endl;
-    std::cout << "  Vehicle ID: " << vehicle_id << std::endl;
-    std::cout << "  Duration: " << SimulationConstants::DEFAULT_DURATION_SECONDS << "s" << std::endl;
-    std::cout << "  Path points: " << smooth_track_points.size() << std::endl;
-    std::cout << "  Total distance: " << total_distance << " units" << std::endl;
-
-    // Launch simulation in separate thread
-    std::thread simulation_thread(simulationThreadWorker, vehicle_id, smooth_track_points);
-    simulation_thread.detach();
-}

@@ -3,6 +3,21 @@
 #include <iostream>
 #include <algorithm>
 
+glm::vec2 g_track_render_offset(0.0f, 0.0f);
+
+glm::vec2 getTrackRenderOffset()
+{
+    return g_track_render_offset;
+}
+
+static void resetTrackRenderOffsetIfNoRecenter(const TrackCenterInfo& info)
+{
+    if (!info.is_closed)
+    {
+        g_track_render_offset = glm::vec2(0.0f, 0.0f);
+    }
+}
+
 // Structure to store the interpolation result
 
 
@@ -295,4 +310,99 @@ std::vector<SplinePoint> interpolateRoundedPolyline(const std::vector<glm::vec2>
 
     if (is_closed) result.push_back(result.front());
     return result;
+}
+
+// ============================================================================
+// TRACK CENTERING FUNCTIONS
+// ============================================================================
+
+TrackCenterInfo calculateTrackCenter(const std::vector<glm::vec2>& points)
+{
+    TrackCenterInfo info;
+    info.geometric_center = glm::vec2(0.0f, 0.0f);
+    info.offset = glm::vec2(0.0f, 0.0f);
+    info.is_closed = false;
+    
+    if (points.size() < 2) {
+        return info;
+    }
+    
+    // Check if track is closed
+    info.is_closed = (glm::distance(points.front(), points.back()) < 1e-4f);
+    
+    // Calculate geometric center (average of all points)
+    glm::vec2 sum(0.0f, 0.0f);
+    size_t count = info.is_closed ? points.size() - 1 : points.size(); // Exclude duplicate if closed
+    
+    for (size_t i = 0; i < count; i++) {
+        sum += points[i];
+    }
+    
+    info.geometric_center = sum / (float)count;
+    
+    // Offset needed to move center to (0, 0)
+    info.offset = -info.geometric_center;
+
+    resetTrackRenderOffsetIfNoRecenter(info);
+    
+    std::cout << "[TRACK CENTER] Calculated center: (" << info.geometric_center.x << ", " << info.geometric_center.y << ")" << std::endl;
+    std::cout << "[TRACK CENTER] Track is " << (info.is_closed ? "CLOSED" : "OPEN") << std::endl;
+    std::cout << "[TRACK CENTER] Offset to apply: (" << info.offset.x << ", " << info.offset.y << ")" << std::endl;
+    
+    return info;
+}
+
+void recenterTrack(std::vector<glm::vec2>& points, const TrackCenterInfo& center_info)
+{
+    if (points.empty()) return;
+    for (auto& point : points)
+        point += center_info.offset;
+    g_track_render_offset = center_info.offset;
+}
+
+std::vector<glm::vec2> resamplePolyline(const std::vector<glm::vec2>& pts, int n)
+{
+    if ((int)pts.size() < 2 || n < 2) return pts;
+
+    std::vector<float> arc(pts.size(), 0.0f);
+    for (size_t i = 1; i < pts.size(); ++i)
+        arc[i] = arc[i - 1] + glm::distance(pts[i], pts[i - 1]);
+    const float total = arc.back();
+    if (total < 1e-6f) return pts;
+
+    std::vector<glm::vec2> out;
+    out.reserve(n);
+    size_t seg = 0;
+    for (int i = 0; i < n; ++i)
+    {
+        float t = (float)i / (n - 1) * total;
+        while (seg + 1 < pts.size() - 1 && arc[seg + 1] < t)
+            ++seg;
+        float dt = arc[seg + 1] - arc[seg];
+        float alpha = (dt < 1e-6f) ? 0.0f : (t - arc[seg]) / dt;
+        out.push_back(glm::mix(pts[seg], pts[seg + 1], alpha));
+    }
+    return out;
+}
+
+void alignPolylineDirection(std::vector<glm::vec2>& b, const std::vector<glm::vec2>& ref)
+{
+    if (b.empty() || ref.empty()) return;
+    if (glm::distance(b.front(), ref.front()) > glm::distance(b.front(), ref.back()))
+        std::reverse(b.begin(), b.end());
+}
+
+std::vector<glm::vec2> generateTriangleStripFromEdges(
+    const std::vector<glm::vec2>& left,
+    const std::vector<glm::vec2>& right)
+{
+    const size_t n = std::min(left.size(), right.size());
+    std::vector<glm::vec2> strip;
+    strip.reserve(n * 2);
+    for (size_t i = 0; i < n; ++i)
+    {
+        strip.push_back(left[i]);
+        strip.push_back(right[i]);
+    }
+    return strip;
 }

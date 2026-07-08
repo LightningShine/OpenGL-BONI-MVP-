@@ -24,4 +24,25 @@ std::vector<glm::vec2> filterPointsByDistance(const std::vector<glm::vec2>& poin
 
 std::vector<glm::vec2> generateTriangleStripFromLine(const std::vector<SplinePoint>& spline_points, float width);
 
-// Just comment to make snippet not empty
+// Track centering
+struct TrackCenterInfo {
+    glm::vec2 geometric_center;  // Геометрический центр трека
+    glm::vec2 offset;            // Смещение которое нужно применить к точкам
+    bool is_closed;              // Замкнут ли трек
+};
+
+TrackCenterInfo calculateTrackCenter(const std::vector<glm::vec2>& points);
+void recenterTrack(std::vector<glm::vec2>& points, const TrackCenterInfo& center_info);
+
+// Track render offset (normalized units).
+// If track points are shifted (e.g. via recenterTrack), vehicles must be rendered with the same offset
+// to stay aligned with the track.
+extern glm::vec2 g_track_render_offset;
+glm::vec2 getTrackRenderOffset();
+
+// Dual-edge track utilities
+std::vector<glm::vec2> resamplePolyline(const std::vector<glm::vec2>& pts, int n);
+void alignPolylineDirection(std::vector<glm::vec2>& b, const std::vector<glm::vec2>& reference);
+std::vector<glm::vec2> generateTriangleStripFromEdges(
+    const std::vector<glm::vec2>& left,
+    const std::vector<glm::vec2>& right);

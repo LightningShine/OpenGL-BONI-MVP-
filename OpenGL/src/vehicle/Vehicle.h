@@ -5,13 +5,52 @@
 #include <mutex>
 #include <atomic>
 #include <chrono>
+#include <vector>
 #include <glm/glm.hpp>
 #include <glm/gtc/type_ptr.hpp>
+
+extern int g_focused_vehicle_id;  // -1 = лидер (дефолт), иначе ID машины
+extern bool g_show_vehicle_names; // true = show TLA names above vehicles
+
+struct LapData
+{
+	float lapTime;                              // Lap time in seconds
+	int positionAtFinish;                       // Position when crossing line
+	std::vector<glm::vec2> telemetryPoints;     // Placeholder for future telemetry
+	
+	LapData() : lapTime(0.0f), positionAtFinish(0) {}
+	LapData(float time, int position) : lapTime(time), positionAtFinish(position) {}
+};
+
+
+struct LapInfo
+{
+	float timefromstart;
+	double progress;
+	std::chrono::steady_clock::time_point timestamp;
+	double total_progress;
+	float gForceX, gForceY;
+	float aceleration, speed;
+	int curentPosition;
+	
+};
+
+struct CarLapSessions
+{
+	int lapnumber;
+	int globalLapnumber;
+	std::vector<LapInfo> samples;
+};
+
+
+
 
 class Vehicle
 {
 public:
 	Vehicle();
+	Vehicle(double normalized_x, double normalized_y);
+	Vehicle(int32_t id, double normalized_x, double normalized_y);  // ✅ New: with explicit ID
 	Vehicle(const TelemetryPacket& packet);
 	
 	double m_lat_dd;
@@ -28,9 +67,59 @@ public:
 	int32_t m_id;
 	std::string name = "Unknown";
 	std::chrono::steady_clock::time_point m_last_update_time = std::chrono::steady_clock::now();
-	glm::vec3 m_cached_color; // ✅ Кешируем цвет при создании
+	glm::vec3 m_cached_color; 
+	bool m_is_leader = false;  
+	
+	// ========================================================================
+	// RENDERING CACHE (for smooth triangle rotation)
+	// ========================================================================
+	mutable float m_last_rotation_angle = 0.0f;
+	
+	// ========================================================================
+	// LAP TIMING DATA (RaceManager reads/writes, Vehicle stores)
+	// ========================================================================
+	std::map<int, LapData> m_laps;
+	float m_current_lap_timer = 0.0f;
+	int m_current_lap_number = 1;
+	int m_completed_laps = 0;
+	double m_total_progress = 0.0;
+	bool m_has_started_first_lap = false;
+	float m_best_lap_time = -1.0f;
+	int bestlapID = -1;
+	bool m_is_finished = false;
 
-	glm::vec3 getColor() const;	
+
+	// ========================================================================
+	// POSITION TRACKING (for line crossing detection)
+	// ========================================================================
+	double m_prev_x = 0.0;
+	double m_prev_y = 0.0;
+	double m_heading = 0.0;  // ✅ Current direction in radians
+
+	// ========================================================================
+	// TRACK PROGRESS (0.0 = start, 1.0 = full lap)
+	// ========================================================================
+	double m_track_progress = 0.0;
+	double m_prev_track_progress = 0.0;
+	bool m_has_authoritative_state = false;
+	bool m_apply_track_render_offset = true;
+	// Race position computed by the Track Server (0 = none). When set, the
+	// leaderboard uses IT instead of local progress — this is what freezes the
+	// order after the checkered flag (post-finish overtakes must not count).
+	int m_server_position = 0;
+	
+	// ========================================================================
+	// FUTURE: Detailed telemetry history
+	// ========================================================================
+	std::map<int, CarLapSessions> laps;
+
+	// Accumulator for throttling telemetry sample recording (seconds)
+	float m_telemetry_sample_timer = 0.0f;
+	
+	// ========================================================================
+	// COLOR GENERATION
+	// ========================================================================
+	glm::vec3 getColor() const;
 };
 
 
@@ -38,13 +127,21 @@ extern std::map<int32_t, Vehicle> g_vehicles;
 extern std::mutex g_vehicles_mutex;   
 extern std::atomic<bool> g_is_vehicles_active;
 
-// ✅ Генератор уникальных ID для машин
-int32_t generateVehicleID();
 
-// === ФУНКЦИИ ===
+
+
+
+
+
+
+
+// === Function ===
 void vehicleLoop(); // Главный цикл обновления машин
 
+int32_t generateVehicleID();
+
 std::vector<glm::vec2> generateCircle(float radius, int segments = 16);
+std::vector<glm::vec2> generateTriangle(float size); // ✅ Треугольник для лидера
 
 void renderVehicle(GLuint shader_program, GLuint vao, GLuint vbo,
 	const Vehicle& vehicle, const glm::mat4& projection);

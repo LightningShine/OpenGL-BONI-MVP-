@@ -2,6 +2,7 @@
 #include "Input.h"
 #include "../rendering/Interpolation.h"
 #include "../Config.h"
+#include <fstream>
 
 MapOrigin g_map_origin;
 std::atomic<bool> g_is_map_loaded = false;
@@ -141,6 +142,8 @@ void loadTrackFromData(const std::string& data, std::vector<glm::vec2>& points, 
 	std::stringstream ss(data);
 	std::string line;
 	bool firstPoint = true;
+	bool hasSavedStart = false;
+	glm::vec2 savedStartNorm(0.0f, 0.0f);
 
 	{
 		std::lock_guard<std::mutex> lock(points_mutex);
@@ -150,6 +153,14 @@ void loadTrackFromData(const std::string& data, std::vector<glm::vec2>& points, 
 	while (std::getline(ss, line))
 	{
 		if (line.empty()) continue;
+		if (line.rfind("#start_norm", 0) == 0)
+		{
+			std::stringstream hs(line);
+			std::string tag;
+			hs >> tag >> savedStartNorm.x >> savedStartNorm.y;
+			hasSavedStart = !hs.fail();
+			continue;
+		}
 		
 		// Simple check if line contains digits
 		bool hasDigit = false;
@@ -180,9 +191,124 @@ void loadTrackFromData(const std::string& data, std::vector<glm::vec2>& points, 
 		}
 	}
 	std::cout << "Track loaded with " << points.size() << " points." << std::endl;
+
+	// If the file contains a saved start marker, rotate points so start/finish stays stable.
+	if (hasSavedStart)
+	{
+		size_t bestIdx = 0;
+		float bestDistSq = std::numeric_limits<float>::max();
+		{
+			std::lock_guard<std::mutex> lock(points_mutex);
+			for (size_t i = 0; i < points.size(); ++i)
+			{
+				const glm::vec2 d = points[i] - savedStartNorm;
+				const float dsq = d.x * d.x + d.y * d.y;
+				if (dsq < bestDistSq)
+				{
+					bestDistSq = dsq;
+					bestIdx = i;
+				}
+			}
+			if (bestIdx != 0 && bestIdx < points.size())
+			{
+				std::rotate(points.begin(), points.begin() + bestIdx, points.end());
+			}
+		}
+	}
 	
-	// ✅ Устанавливаем флаг что карта загружена
 	g_is_map_loaded = true;
+}
+
+bool isDualEdgeFormat(const std::string& data)
+{
+	return data.find("#version 2") == 0;
+}
+
+bool loadDualEdgeFromData(const std::string& data,
+	std::vector<glm::vec2>& leftOut,
+	std::vector<glm::vec2>& rightOut)
+{
+	if (!isDualEdgeFormat(data)) return false;
+
+	std::stringstream ss(data);
+	std::string line;
+
+	enum class Sec { None, Left, Right };
+	Sec sec = Sec::None;
+	bool firstPoint = true;
+
+	leftOut.clear();
+	rightOut.clear();
+
+	while (std::getline(ss, line))
+	{
+		if (line.rfind("#edge left",  0) == 0) { sec = Sec::Left;  continue; }
+		if (line.rfind("#edge right", 0) == 0) { sec = Sec::Right; continue; }
+		if (!line.empty() && line[0] == '#') continue;
+
+		bool hasDigit = false;
+		for (char c : line) { if (isdigit((unsigned char)c)) { hasDigit = true; break; } }
+		if (!hasDigit) continue;
+
+		double lat, lon;
+		coordinatesToDecimalFormat(line, lat, lon);
+
+		double e, n;
+		if (firstPoint)
+		{
+			createOriginDD(lat, lon, e, n);
+			g_map_origin.m_map_size = MapConstants::MAP_SIZE;
+			firstPoint = false;
+		}
+		else
+		{
+			coordinatesToMeters(lat, lon, e, n);
+		}
+
+		double nx, ny;
+		getCoordinateDifferenceFromOrigin(e, n, nx, ny);
+		glm::vec2 pt((float)nx, (float)ny);
+
+		if      (sec == Sec::Left)  leftOut.push_back(pt);
+		else if (sec == Sec::Right) rightOut.push_back(pt);
+	}
+
+	bool ok = leftOut.size() >= 2 && rightOut.size() >= 2;
+	if (ok) g_is_map_loaded = true;
+	return ok;
+}
+
+bool loadTrk2File(const std::string& path,
+	std::vector<glm::vec2>& leftOut,
+	std::vector<glm::vec2>& rightOut)
+{
+	std::ifstream f(path, std::ios::binary);
+	if (!f) return false;
+
+	Trk2FileHeader h;
+	if (!f.read(reinterpret_cast<char*>(&h), sizeof(h))) return false;
+	if (memcmp(h.magic, "TRK2", 4) != 0 || h.version != 2) return false;
+	if (h.left_count < 2 || h.right_count < 2) return false;
+
+	g_map_origin.m_origin_meters_easting  = h.origin_easting;
+	g_map_origin.m_origin_meters_northing = h.origin_northing;
+	g_map_origin.m_origin_zone_int        = h.origin_zone;
+	g_map_origin.m_origin_zone_char       = h.origin_zone_char;
+	g_map_origin.m_map_size               = h.map_size;
+	try {
+		bool northp = h.origin_zone_char >= 'N';
+		GeographicLib::UTMUPS::Reverse(h.origin_zone, northp,
+			h.origin_easting, h.origin_northing,
+			g_map_origin.m_origin_lat_dd, g_map_origin.m_origin_lon_dd);
+	} catch (...) {}
+
+	leftOut.resize(h.left_count);
+	rightOut.resize(h.right_count);
+	f.read(reinterpret_cast<char*>(leftOut.data()),  h.left_count  * sizeof(glm::vec2));
+	f.read(reinterpret_cast<char*>(rightOut.data()), h.right_count * sizeof(glm::vec2));
+
+	g_is_map_loaded = true;
+	return true;
 }
 
 void createOriginDD(double lat_deg, double lon_deg, double& easting_meters, double& northing_meters)
@@ -249,14 +375,23 @@ void coordinatesToMeters(double DDlat, double DDlon, double &MetrCord_est, doubl
 	try {
 		using namespace GeographicLib;
 
+      // Force origin zone only when it is valid.
+		// If origin zone is not initialized yet, let GeographicLib pick the zone.
+		const int setzone = g_map_origin.m_origin_zone_int;
 		int zone;
 		bool northp;
-
-		// Cordinate converter
-		UTMUPS::Forward(DDlat, DDlon, zone, northp, MetrCord_est, MetrCord_north);
+		if (setzone >= 1 && setzone <= 60)
+		{
+			UTMUPS::Forward(DDlat, DDlon, zone, northp, MetrCord_est, MetrCord_north, setzone);
+		}
+		else
+		{
+			UTMUPS::Forward(DDlat, DDlon, zone, northp, MetrCord_est, MetrCord_north);
+		}
 	}
 	catch (const std::exception& e) {
-		std::cerr << "GeographicLib Error: " << e.what() << std::endl;
+		std::cerr << "[COORD ERROR] GeographicLib: " << e.what() << std::endl;
+		std::cerr << "[COORD ERROR] Input: lat=" << DDlat << ", lon=" << DDlon << std::endl;
 		MetrCord_est = 0;
 		MetrCord_north = 0;
 	}
@@ -265,13 +400,23 @@ void coordinatesToMeters(double DDlat, double DDlon, double &MetrCord_est, doubl
 
 void getCoordinateDifferenceFromOrigin(double Metr_est, double Metr_north, double &normalized_x, double &normalized_y)
 {
-
 	double diff_easting = Metr_est - g_map_origin.m_origin_meters_easting;
 	double diff_northing = Metr_north - g_map_origin.m_origin_meters_northing;
 
 	normalized_x = (diff_easting / g_map_origin.m_map_size);
 	normalized_y = (diff_northing / g_map_origin.m_map_size);
 
+	// Debug output for vehicles (skip track loading)
+	static int call_count = 0;
+	call_count++;
+	if (call_count % 120 == 0) { // Log every 120th call (every 2 seconds at 60Hz)
+		std::cout << "[COORD] UTM: (" << Metr_est << ", " << Metr_north << ")" << std::endl;
+		std::cout << "[COORD] Origin UTM: (" << g_map_origin.m_origin_meters_easting 
+				  << ", " << g_map_origin.m_origin_meters_northing << ")" << std::endl;
+		std::cout << "[COORD] Diff: (" << diff_easting << ", " << diff_northing << ")" << std::endl;
+		std::cout << "[COORD] MAP_SIZE: " << g_map_origin.m_map_size << std::endl;
+		std::cout << "[COORD] Normalized: (" << normalized_x << ", " << normalized_y << ")" << std::endl;
+	}
 }
 
 void inputDataInCode(std::vector<glm::vec2>& points, std::mutex& points_mutex, std::atomic<bool>& running, double &normalized_x, double &normalized_y)

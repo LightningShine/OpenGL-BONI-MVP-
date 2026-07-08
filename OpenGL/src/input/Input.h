@@ -8,7 +8,7 @@
 #include <iostream>
 #include <sstream>
 #include <string>
-#include <UTMUPS.hpp>
+#include <GeographicLib/UTMUPS.hpp>
 
 
 
@@ -33,6 +33,16 @@ void inputDataInCode(std::vector<glm::vec2>& points, std::mutex& points_mutex, s
 void chooseInputMode(std::vector<glm::vec2>& points, std::mutex& points_mutex, std::atomic<bool>& running);
 
 void loadTrackFromData(const std::string& data, std::vector<glm::vec2>& points, std::mutex& points_mutex);
+
+bool isDualEdgeFormat(const std::string& data);
+bool loadDualEdgeFromData(const std::string& data,
+    std::vector<glm::vec2>& leftOut,
+    std::vector<glm::vec2>& rightOut);
+
+// Binary .trk2 loader — reads file directly (no string conversion needed).
+bool loadTrk2File(const std::string& path,
+    std::vector<glm::vec2>& leftOut,
+    std::vector<glm::vec2>& rightOut);
 
 class MapOrigin
 {

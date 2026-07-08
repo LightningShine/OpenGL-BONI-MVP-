@@ -1,0 +1,177 @@
+========================================
+       RACE SESSION RESULTS
+========================================
+Date: 2026-05-26 10:59:40
+========================================
+
+FINAL STANDINGS:
+----------------
+
+Position: 1
+  Vehicle ID: #5
+  Completed Laps: 9
+  Progress: 0.011
+  Total Race Time: 15:06.508
+  Best Lap Time: 1:16.743
+  Current Lap 8: 0:00.006 (in progress)
+  Lap Times:
+    Lap 0: 1:16.743
+    Lap 1: 1:43.048
+    Lap 2: 1:40.119
+    Lap 3: 1:54.960
+    Lap 4: 1:36.910
+    Lap 5: 1:42.703
+    Lap 6: 1:34.260
+    Lap 7: 2:08.301
+    Lap 8: 1:29.464
+
+Position: 2
+  Vehicle ID: #6
+  Completed Laps: 10
+  Progress: 0.954
+  Total Race Time: 16:07.495
+  Best Lap Time: 1:21.616
+  Current Lap 9: 0:00.014 (in progress)
+  Lap Times:
+    Lap 0: 1:42.369
+    Lap 1: 1:30.631
+    Lap 2: 1:34.427
+    Lap 3: 1:38.573
+    Lap 4: 1:34.769
+    Lap 5: 1:33.847
+    Lap 6: 1:25.259
+    Lap 7: 1:55.637
+    Lap 8: 1:21.616
+    Lap 9: 1:50.367
+
+Position: 3
+  Vehicle ID: #8
+  Completed Laps: 10
+  Progress: 0.877
+  Total Race Time: 15:57.561
+  Best Lap Time: 1:14.199
+  Current Lap 9: 0:00.012 (in progress)
+  Lap Times:
+    Lap 0: 1:47.011
+    Lap 1: 1:25.342
+    Lap 2: 2:03.300
+    Lap 3: 1:32.563
+    Lap 4: 1:33.345
+    Lap 5: 1:36.406
+    Lap 6: 1:18.195
+    Lap 7: 1:46.833
+    Lap 8: 1:14.199
+    Lap 9: 1:40.368
+
+Position: 4
+  Vehicle ID: #3
+  Completed Laps: 10
+  Progress: 0.208
+  Total Race Time: 16:31.256
+  Best Lap Time: 1:13.683
+  Current Lap 9: 0:00.001 (in progress)
+  Lap Times:
+    Lap 0: 1:35.838
+    Lap 1: 1:13.683
+    Lap 2: 2:06.056
+    Lap 3: 1:51.773
+    Lap 4: 1:30.639
+    Lap 5: 1:32.173
+    Lap 6: 1:42.667
+    Lap 7: 1:52.673
+    Lap 8: 1:38.097
+    Lap 9: 1:27.656
+
+Position: 5
+  Vehicle ID: #4
+  Completed Laps: 10
+  Progress: 0.549
+  Total Race Time: 16:36.727
+  Best Lap Time: 1:17.947
+  Current Lap 9: 0:00.007 (in progress)
+  Lap Times:
+    Lap 0: 1:39.548
+    Lap 1: 1:17.947
+    Lap 2: 1:24.246
+    Lap 3: 1:43.811
+    Lap 4: 1:58.472
+    Lap 5: 1:30.821
+    Lap 6: 1:50.251
+    Lap 7: 1:57.871
+    Lap 8: 1:20.525
+    Lap 9: 1:53.236
+
+Position: 6
+  Vehicle ID: #2
+  Completed Laps: 9
+  Progress: 0.439
+  Total Race Time: 16:25.349
+  Best Lap Time: 1:20.013
+  Current Lap 8: 0:00.001 (in progress)
+  Lap Times:
+    Lap 0: 2:00.959
+    Lap 1: 2:22.137
+    Lap 2: 1:39.339
+    Lap 3: 1:20.013
+    Lap 4: 1:42.014
+    Lap 5: 2:12.775
+    Lap 6: 1:35.594
+    Lap 7: 1:28.858
+    Lap 8: 2:03.660
+
+Position: 7 (LAPPED)
+  Vehicle ID: #9
+  Completed Laps: 6
+  Progress: 0.271
+  Total Race Time: 10:33.040
+  Best Lap Time: 1:37.177
+  Current Lap 6: 0:00.013 (in progress)
+  Lap Times:
+    Lap 1: 1:37.177
+    Lap 2: 1:42.527
+    Lap 3: 1:38.478
+    Lap 4: 1:55.735
+    Lap 5: 1:46.962
+    Lap 6: 1:52.160
+
+Position: 8
+  Vehicle ID: #1
+  Completed Laps: 10
+  Progress: 0.432
+  Total Race Time: 17:03.325
+  Best Lap Time: 1:09.162
+  Current Lap 9: 0:00.002 (in progress)
+  Lap Times:
+    Lap 0: 1:36.841
+    Lap 1: 1:46.089
+    Lap 2: 2:20.062
+    Lap 3: 1:31.256
+    Lap 4: 1:52.819
+    Lap 5: 1:33.196
+    Lap 6: 1:43.067
+    Lap 7: 1:09.162
+    Lap 8: 1:57.129
+    Lap 9: 1:33.703
+
+Position: 9
+  Vehicle ID: #7
+  Completed Laps: 10
+  Progress: 0.103
+  Total Race Time: 16:55.505
+  Best Lap Time: 1:21.806
+  Current Lap 9: 0:00.005 (in progress)
+  Lap Times:
+    Lap 0: 1:53.546
+    Lap 1: 1:33.166
+    Lap 2: 1:33.986
+    Lap 3: 1:38.290
+    Lap 4: 1:39.258
+    Lap 5: 1:21.806
+    Lap 6: 1:35.099
+    Lap 7: 2:00.464
+    Lap 8: 1:24.410
+    Lap 9: 2:15.479
+
+========================================
+End of Report
+========================================

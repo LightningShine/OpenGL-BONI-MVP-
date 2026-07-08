@@ -1,0 +1,205 @@
+[1mdiff --git a/OpenGL/UI.cpp b/OpenGL/UI.cpp[m
+[1mindex b265707..6e7ce9b 100644[m
+[1m--- a/OpenGL/UI.cpp[m
+[1m+++ b/OpenGL/UI.cpp[m
+[36m@@ -40,6 +40,7 @@[m [mvoid RenderRaceMenu();[m
+ [m
+ [m
+ extern int g_focused_vehicle_id;[m
+[32m+[m[32mbool g_show_autostop_modal = false;[m
+ [m
+ // Windows API for native file dialogs (include AFTER C++ standard library)[m
+ #ifdef _WIN32[m
+[36m@@ -1271,7 +1272,8 @@[m [mvoid UI::Render()[m
+ [m
+     RenderPrototypeToast();[m
+     RenderNetworkingModal();[m
+[31m-    [m
+[32m+[m[32m    RenderAutoStopModal();[m
+[32m+[m
+     // Render help modal if open[m
+     RenderHelpModal();[m
+ }[m
+[36m@@ -1325,8 +1327,8 @@[m [mvoid UI::RenderRaceStatusBar(ModeManager* modeManager)[m
+     const float flag_y = bar_y + (bar_h - flag_size) * 0.5f;[m
+     const float flag_rounding = flag_size * 0.15f;[m
+ [m
+[31m-    const float pill_pad_x = bar_h * 0.35f;[m
+[31m-    const float flag_to_text = bar_h * 3.5f; [m
+[32m+[m[32m    const float pill_pad_x = bar_h * 0.8f;[m
+[32m+[m[32m    const float flag_to_text = bar_h * 5.0f;[m[41m [m
+ [m
+     const float pill_w = pill_pad_x + flag_size + flag_to_text + phase_size.x + flag_to_text + flag_size + pill_pad_x;[m
+     const float pill_h = bar_h;[m
+[36m@@ -2527,3 +2529,91 @@[m [mbool UI::WantsMouseCapture() const {[m
+ bool UI::WantsKeyboardCapture() const {[m
+     return ImGui::GetIO().WantCaptureKeyboard;[m
+ }[m
+[32m+[m
+[32m+[m[32mvoid UI::RenderAutoStopModal()[m
+[32m+[m[32m{[m
+[32m+[m[32m    if (!g_show_autostop_modal)[m
+[32m+[m[32m        return;[m
+[32m+[m
+[32m+[m[32m    ImVec2 display_size = ImGui::GetIO().DisplaySize;[m
+[32m+[m
+[32m+[m[32m    ImGui::SetNextWindowPos(ImVec2(0, 0));[m
+[32m+[m[32m    ImGui::SetNextWindowSize(display_size);[m
+[32m+[m[32m    ImGui::SetNextWindowBgAlpha(UIConfig::MODAL_OVERLAY_ALPHA);[m
+[32m+[m
+[32m+[m[32m    ImGuiWindowFlags bg_flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |[m
+[32m+[m[32m        ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings;[m
+[32m+[m
+[32m+[m[32m    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.0f, 0.0f, 0.0f, UIConfig::MODAL_OVERLAY_ALPHA));[m
+[32m+[m[32m    if (ImGui::Begin("##AutoStopBackground", nullptr, bg_flags))[m
+[32m+[m[32m    {[m
+[32m+[m[32m        ImVec2 modal_size = ImVec2(UIConfig::HELP_MODAL_WIDTH * display_size.x * 0.8f, UIConfig::HELP_MODAL_HEIGHT * display_size.y * 0.6f);[m
+[32m+[m[32m        ImVec2 modal_pos = ImVec2((display_size.x - modal_size.x) * 0.5f, (display_size.y - modal_size.y) * 0.5f);[m
+[32m+[m[32m        ImVec2 mouse_pos = ImGui::GetMousePos();[m
+[32m+[m
+[32m+[m[32m        bool clicked_outside = ImGui::IsMouseClicked(0) &&[m
+[32m+[m[32m            (mouse_pos.x < modal_pos.x || mouse_pos.x > modal_pos.x + modal_size.x ||[m
+[32m+[m[32m             mouse_pos.y < modal_pos.y || mouse_pos.y > modal_pos.y + modal_size.y);[m
+[32m+[m
+[32m+[m[32m        if (clicked_outside)[m
+[32m+[m[32m            g_show_autostop_modal = false;[m
+[32m+[m[32m    }[m
+[32m+[m[32m    ImGui::End();[m
+[32m+[m[32m    ImGui::PopStyleColor();[m
+[32m+[m
+[32m+[m[32m    ImVec2 modal_size = ImVec2(UIConfig::HELP_MODAL_WIDTH * display_size.x * 0.8f, UIConfig::HELP_MODAL_HEIGHT * display_size.y * 0.6f);[m
+[32m+[m[32m    ImGui::SetNextWindowPos(ImVec2(display_size.x * 0.5f, display_size.y * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));[m
+[32m+[m[32m    ImGui::SetNextWindowSize(modal_size);[m
+[32m+[m[32m    ImGui::SetNextWindowFocus();[m
+[32m+[m
+[32m+[m[32m    ImGuiWindowFlags modal_flags = ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse;[m
+[32m+[m
+[32m+[m[32m    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(UIConfig::MODAL_PADDING_X * display_size.x, UIConfig::MODAL_PADDING_Y * display_size.y));[m
+[32m+[m[32m    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(UIConfig::MODAL_ITEM_SPACING_X * display_size.x, UIConfig::MODAL_ITEM_SPACING_Y * display_size.y));[m
+[32m+[m
+[32m+[m[32m    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(UIConfig::MODAL_BG_R, UIConfig::MODAL_BG_G, UIConfig::MODAL_BG_B, UIConfig::MODAL_BG_ALPHA));[m
+[32m+[m[32m    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(UIConfig::MODAL_TEXT_R, UIConfig::MODAL_TEXT_G, UIConfig::MODAL_TEXT_B, 1.0f));[m
+[32m+[m[32m    ImGui::PushStyleColor(ImGuiCol_TitleBg, ImVec4(UIConfig::MODAL_TITLE_BG_R, UIConfig::MODAL_TITLE_BG_G, UIConfig::MODAL_TITLE_BG_B, 1.0f));[m
+[32m+[m[32m    ImGui::PushStyleColor(ImGuiCol_TitleBgActive, ImVec4(UIConfig::MODAL_TITLE_ACTIVE_R, UIConfig::MODAL_TITLE_ACTIVE_G, UIConfig::MODAL_TITLE_ACTIVE_B, 1.0f));[m
+[32m+[m[32m    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(UIConfig::MODAL_BUTTON_R, UIConfig::MODAL_BUTTON_G, UIConfig::MODAL_BUTTON_B, UIConfig::MODAL_BUTTON_ALPHA));[m
+[32m+[m[32m    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(UIConfig::MODAL_BUTTON_HOVER_R, UIConfig::MODAL_BUTTON_HOVER_G, UIConfig::MODAL_BUTTON_HOVER_B, 1.0f));[m
+[32m+[m[32m    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(UIConfig::MODAL_BUTTON_ACTIVE_R, UIConfig::MODAL_BUTTON_ACTIVE_G, UIConfig::MODAL_BUTTON_ACTIVE_B, 1.0f));[m
+[32m+[m
+[32m+[m[32m    bool modal_open = true;[m
+[32m+[m[32m    if (ImGui::Begin("Auto Stop Conditions", &modal_open, modal_flags))[m
+[32m+[m[32m    {[m
+[32m+[m[32m        ImGui::PushFont(m_fontUI);[m
+[32m+[m
+[32m+[m[32m        ImGui::TextColored(ImVec4(0.5f, 0.8f, 1.0f, 1.0f), "Choose when the race will automatically end:");[m
+[32m+[m[32m        ImGui::Separator();[m
+[32m+[m[32m        ImGui::Spacing();[m
+[32m+[m
+[32m+[m[32m        ImGui::Text("Laps:");[m
+[32m+[m[32m        ImGui::InputInt("##laps", &m_autostop_laps);[m
+[32m+[m
+[32m+[m[32m        ImGui::Spacing();[m
+[32m+[m
+[32m+[m[32m        ImGui::Text("Time (MM:SS):");[m
+[32m+[m[32m        ImGui::InputText("##time", m_autostop_time, sizeof(m_autostop_time));[m
+[32m+[m
+[32m+[m[32m        ImGui::Spacing();[m
+[32m+[m[32m        ImGui::Separator();[m
+[32m+[m[32m        ImGui::Spacing();[m
+[32m+[m
+[32m+[m[32m        if (ImGui::Button("Start Race", ImVec2(120, 35)))[m
+[32m+[m[32m        {[m
+[32m+[m[32m            if (g_race_manager)[m
+[32m+[m[32m                g_race_manager->StartSession();[m
+[32m+[m[32m            g_show_autostop_modal = false;[m
+[32m+[m[32m        }[m
+[32m+[m
+[32m+[m[32m        ImGui::PopFont();[m
+[32m+[m[32m    }[m
+[32m+[m[32m    ImGui::End();[m
+[32m+[m
+[32m+[m[32m    if (!modal_open)[m
+[32m+[m[32m        g_show_autostop_modal = false;[m
+[32m+[m
+[32m+[m[32m    ImGui::PopStyleColor(7);[m
+[32m+[m[32m    ImGui::PopStyleVar(2);[m
+[32m+[m[32m}[m
+[1mdiff --git a/OpenGL/UI.h b/OpenGL/UI.h[m
+[1mindex 29c6cf8..3285f26 100644[m
+[1m--- a/OpenGL/UI.h[m
+[1m+++ b/OpenGL/UI.h[m
+[36m@@ -31,6 +31,7 @@[m [mpublic:[m
+     void RenderBottomMenu();[m
+     void RenderNetworkingModal();[m
+     void RenderHelpModal();[m
+[32m+[m[32m    void RenderAutoStopModal();[m
+     void RenderPrototypeToast();[m
+     void EndFrame();[m
+     [m
+[36m@@ -66,6 +67,10 @@[m [mprivate:[m
+     bool m_closeSplash;[m
+     bool m_show_help_modal;[m
+     [m
+[32m+[m[32m    // Auto Stop config[m
+[32m+[m[32m    int m_autostop_laps = 1;[m
+[32m+[m[32m    char m_autostop_time[64] = "00:00";[m
+[32m+[m
+     // Fonts[m
+     ImFont* m_fontRegular;  // 12px for menu[m
+     ImFont* m_fontUI;       // 16px for UI elements (modals, etc.)[m
+[1mdiff --git a/OpenGL/imgui.ini b/OpenGL/imgui.ini[m
+[1mindex 4caaf55..92d98c0 100644[m
+[1m--- a/OpenGL/imgui.ini[m
+[1m+++ b/OpenGL/imgui.ini[m
+[36m@@ -7,8 +7,8 @@[m [mPos=163,150[m
+ Size=191,71[m
+ [m
+ [Window][##SplashMain][m
+[31m-Pos=806,269[m
+[31m-Size=1267,1201[m
+[32m+[m[32mPos=806,265[m
+[32m+[m[32mSize=1267,1180[m
+ [m
+ [Window][##Splash][m
+ Pos=0,0[m
+[36m@@ -16,7 +16,7 @@[m [mSize=2560,1411[m
+ [m
+ [Window][##DarkBg][m
+ Pos=0,0[m
+[31m-Size=2880,1741[m
+[32m+[m[32mSize=2880,1711[m
+ [m
+ [Window][Keyboard Shortcuts][m
+ Pos=810,387[m
+[1mdiff --git a/OpenGL/src/ui/UIRaceManager/UIRaceManager.cpp b/OpenGL/src/ui/UIRaceManager/UIRaceManager.cpp[m
+[1mindex be00ae0..6705306 100644[m
+[1m--- a/OpenGL/src/ui/UIRaceManager/UIRaceManager.cpp[m
+[1m+++ b/OpenGL/src/ui/UIRaceManager/UIRaceManager.cpp[m
+[36m@@ -9,6 +9,8 @@[m
+ [m
+ extern RaceManager* g_race_manager;[m
+ [m
+[32m+[m[32mextern bool g_show_autostop_modal;[m
+[32m+[m
+ void RenderRaceMenu()[m
+ {[m
+     if (ImGui::BeginMenu("Race"))[m
+[36m@@ -41,6 +43,19 @@[m [mvoid RenderRaceMenu()[m
+             g_race_manager->ResetSession();[m
+         }[m
+ [m
+[32m+[m[32m        ImGui::Separator();[m
+[32m+[m
+[32m+[m[32m        if (ImGui::MenuItem("Auto Stop..."))[m
+[32m+[m[32m        {[m
+[32m+[m[32m            g_show_autostop_modal = true;[m
+[32m+[m[32m        }[m
+[32m+[m
+[32m+[m[32m        ImGui::Separator();[m
+[32m+[m
+[32m+[m[32m        ImGui::BeginDisabled();[m
+[32m+[m[32m        ImGui::MenuItem("Settings");[m
+[32m+[m[32m        ImGui::EndDisabled();[m
+[32m+[m
+         ImGui::EndMenu();[m
+     }[m
+ }[m
