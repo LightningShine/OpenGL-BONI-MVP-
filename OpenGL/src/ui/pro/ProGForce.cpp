@@ -12,9 +12,10 @@ namespace Pro {
 
 void RenderGForceWindow(const ProContext& ctx, int32_t vehicleId,
                          ImVec2 vpSz, float topH) {
-    ImGui::SetNextWindowPos ({410.f, topH + 600.f}, ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize({225.f, 225.f},         ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSizeConstraints({120.f, 120.f}, {vpSz.x, vpSz.y});
+    const float ui = ui_scale::get();
+    ImGui::SetNextWindowPos ({410.f * ui, topH + 600.f * ui}, ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize({225.f * ui, 225.f * ui},        ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSizeConstraints({120.f * ui, 120.f * ui}, {vpSz.x, vpSz.y});
 
     if (!ImGui::Begin("##GForce", nullptr,
         PanelFlags() | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse |

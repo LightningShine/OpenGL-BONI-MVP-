@@ -176,8 +176,13 @@ void RaceManager::Update(float deltaTime)
         // Check for start/finish crossing.
         // Use strict segment intersection for correctness. Progress-cycle fallback below
         // handles low-rate updates on closed tracks.
-        const glm::vec2 prevPos(vehicle.m_prev_x, vehicle.m_prev_y);
-        const glm::vec2 curPos(vehicle.m_normalized_x, vehicle.m_normalized_y);
+        // The S/F line lives in the centered track frame; GPS vehicles store raw
+        // coordinates, so shift them by the same render offset the drawing uses
+        // (for .trk2 tracks the offset is non-zero — without it no lap counts).
+        const glm::vec2 frameOff = vehicle.m_apply_track_render_offset
+                                     ? getTrackRenderOffset() : glm::vec2(0.0f, 0.0f);
+        const glm::vec2 prevPos(vehicle.m_prev_x + frameOff.x, vehicle.m_prev_y + frameOff.y);
+        const glm::vec2 curPos(vehicle.m_normalized_x + frameOff.x, vehicle.m_normalized_y + frameOff.y);
 
         const glm::vec2 sfP1 = m_startFinishP1;
         const glm::vec2 sfP2 = m_startFinishP2;

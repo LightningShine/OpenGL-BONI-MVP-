@@ -731,6 +731,7 @@ namespace TrackRenderer
         s_debug_line.clear();
         s_track_cache_valid = false;
         g_is_map_loaded = false;
+        g_smooth_track_points.clear();  // PRO Track Map draws from these
         
         // ??????? OpenGL ???????
         if (s_track_vao != 0)

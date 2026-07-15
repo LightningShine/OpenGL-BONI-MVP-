@@ -113,7 +113,7 @@ void Render(const ProContext& ctx, float swipeAnim) {
     }
 
     int32_t vehicleId = getDisplayVehicleId();
-    static constexpr float STATUS_H = 30.f;
+    const float STATUS_H = ui_scale::points(30.f); // высота PRO статус-бара
     const float panelTopH = topH + STATUS_H;
 
     // ── Global style for all floating panels ─────────────────────────────────

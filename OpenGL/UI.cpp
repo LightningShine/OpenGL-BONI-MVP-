@@ -24,6 +24,7 @@
 #include "libraries/include/stb_image.h"
 
 #include "libraries/include/imgui/imgui.h"
+#include "libraries/include/imgui/imgui_internal.h" // окна для пересчёта при смене DPI
 #include "libraries/include/imgui/backends/imgui_impl_glfw.h"
 #include "libraries/include/imgui/backends/imgui_impl_opengl3.h"
 
@@ -37,6 +38,8 @@
 #include "src/racing/ModeManager/ModeManager.h"
 #include "src/vehicle/Vehicle.h"
 #include "src/track/TelemetryTrackBuilder.h"
+#include "src/ui/TrackReviewPanel.h"
+#include "src/ui/ui_scale.hpp"
 
 void RenderRaceMenu();
 
@@ -212,6 +215,10 @@ static void applyTrackData(const std::string& data,
                     g_map_origin.m_origin_meters_easting, g_map_origin.m_origin_meters_northing,
                     g_map_origin.m_origin_lat_dd, g_map_origin.m_origin_lon_dd);
             } catch (...) {}
+            // The origin shift above already converts live GPS positions into the
+            // recentered frame — keeping recenterTrack's render offset on top of it
+            // would shift vehicles a second time (car drawn beside the track).
+            g_track_render_offset = glm::vec2(0.0f, 0.0f);
         }
     }
     TrackRenderer::rebuildTrackCache(*points, *mtx);
@@ -248,156 +255,165 @@ void UI::RenderNetworkingModal()
         return;
 
     // Auto-close on success + surface failures (Track Server connection).
+    if (TrackServerClient::isConnected())
+        m_show_networking_modal = false;
+    else if (TrackServerClient::hadFailure())
+        m_networking_password_invalid = true;
+
+    ImGuiIO& io      = ImGui::GetIO();
+    const ImVec2 dsz = io.DisplaySize;
+
+    // Adaptive: width clamped for small/large screens, height derived from content
+    // Размеры в пунктах × DPI (ui_scale): карточка держит один физический
+    // размер на любом мониторе, а не растёт с разрешением окна.
+    float mW = ui_scale::points(520.0f);
+    if (mW > dsz.x * 0.9f) mW = dsz.x * 0.9f;
+    const float titleH = ui_scale::points(50.0f);
+    const float padX   = mW * 0.08f;
+    const float padY   = ui_scale::points(20.0f);
+    const float fieldH = ui_scale::points(42.0f);
+    const float gap    = ui_scale::points(14.0f);
+    const float btnH   = ui_scale::points(46.0f);
+    const float mH     = titleH + padY + fieldH + gap + fieldH + padY + btnH + padY;
+    // Anchored near the bottom: card center at 80% of screen height (20% from bottom edge)
+    const ImVec2 mPos((dsz.x - mW) * 0.5f, dsz.y * 0.80f - mH * 0.5f);
+    const ImVec2 mEnd(mPos.x + mW, mPos.y + mH);
+
+    // ── colors (Help modal palette) ─────────────────────────────────────────
+    const ImVec4 colGold(218.f/255.f, 165.f/255.f, 64.f/255.f, 1.f);
+    const ImU32  uGold  = IM_COL32(218, 165, 64, 255);
+    const ImU32  uSep   = IM_COL32(55, 55, 55, 255);
+    const ImU32  uRed   = IM_COL32(0x96, 0x00, 0x00, 255);
+    const ImU32  uFrame = IM_COL32(0xFF, 0xFF, 0xFF, (int)(255 * 0.21f));
+
+    // Free-floating card (no dim overlay); click outside closes
+    if (ImGui::IsMouseClicked(0))
     {
-        if (TrackServerClient::isConnected())
+        ImVec2 mp = ImGui::GetMousePos();
+        if (mp.x < mPos.x || mp.x > mEnd.x || mp.y < mPos.y || mp.y > mEnd.y)
             m_show_networking_modal = false;
-        else if (TrackServerClient::hadFailure())
-            m_networking_password_invalid = true;
     }
 
-    ImGuiIO& io = ImGui::GetIO();
-    ImVec2 display_size = io.DisplaySize;
+    if (!m_show_networking_modal) return;
+    if (ImGui::IsKeyPressed(ImGuiKey_Escape)) { m_show_networking_modal = false; return; }
 
-    // Window placement/size (match connection card)
-    const float win_w = display_size.x * (290.0f / 1600.0f);
-    const float win_h = display_size.y * (180.0f / 900.0f);
-    const ImVec2 win_pos((display_size.x - win_w) * 0.5f, (display_size.y - win_h) * 0.9f);
+    // ── modal window (Help style) ────────────────────────────────────────────
+    ImGui::SetNextWindowPos(mPos);
+    ImGui::SetNextWindowSize(ImVec2(mW, mH));
+    ImGui::SetNextWindowFocus();
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,   ImVec2(0, 0));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding,  0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.0f);
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(UIConfig::MODAL_BG_R, UIConfig::MODAL_BG_G, UIConfig::MODAL_BG_B, UIConfig::MODAL_BG_ALPHA));
+    ImGui::PushStyleColor(ImGuiCol_Border,   ImVec4(0.22f, 0.22f, 0.22f, 1.f));
 
-    // Close on Esc
-    if (ImGui::IsKeyPressed(ImGuiKey_Escape))
-        m_show_networking_modal = false;
-
-    // Colors
-    const ImU32 gold = IM_COL32(0xDA, 0xA5, 0x40, 255);
-    const ImU32 red = IM_COL32(0x96, 0x00, 0x00, 255);
-    const ImU32 border_ok = IM_COL32(0xFF, 0xFF, 0xFF, (int)(255 * 0.21f));
-    const ImU32 text_hint = IM_COL32(0xF0, 0xF0, 0xF0, (int)(255 * 0.10f));
-
-    // Networking window (not a popup)
-    ImGui::SetNextWindowPos(win_pos);
-    ImGui::SetNextWindowSize(ImVec2(win_w, win_h));
-    ImGui::SetNextWindowBgAlpha(0.0f);
-
-    ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
-        ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
-        ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing |
-        ImGuiWindowFlags_NoBringToFrontOnFocus;
-
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 18.0f);
-
-    ImGui::Begin("##NetworkingWindow", nullptr, flags);
+    bool modal_open = true;
+    if (ImGui::Begin("##NetworkingModal", &modal_open,
+        ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+        ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings))
     {
-        // Deterministic layout in window-local coordinates
-        ImGui::SetCursorPos(ImVec2(0, 0));
-        ImDrawList* draw = ImGui::GetWindowDrawList();
-        const ImVec2 p0 = ImGui::GetCursorScreenPos();
-        const ImVec2 p1(p0.x + win_w, p0.y + win_h);
-        draw->AddRectFilled(p0, p1, IM_COL32(20, 20, 20, 235), 18.0f);
-        draw->AddRect(p0, p1, IM_COL32(240, 240, 240, 90), 18.0f, 0, 2.0f);
+        ImDrawList* dl = ImGui::GetWindowDrawList();
 
-        const float pad_x = win_w * 0.125f; // (1 - 0.75)/2
-        const float field_w = win_w * 0.75f;
-        const float header_y = 14.0f;
-        const float header_px = 20.0f;
-        const float field_h = 34.0f;
-        const float gap_1 = 18.0f;
-        const float gap_2 = 14.0f;
-        const float button_h = 44.0f;
-        const float button_y = win_h - 20.0f - button_h;
-        const float pass_y = button_y - gap_2 - field_h;
-        const float addr_y = pass_y - gap_1 - field_h;
-
-        // Header
-        ImFont* titleFont = m_fontTitle ? m_fontTitle : ImGui::GetFont();
-        const char* header = "Connect to Track Server";
-        ImGui::PushFont(titleFont);
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0xF0 / 255.0f, 0xF0 / 255.0f, 0xF0 / 255.0f, 1.0f));
-        ImGui::SetWindowFontScale(header_px / ImGui::GetFontSize());
-        const float header_w = ImGui::CalcTextSize(header).x;
-        ImGui::SetCursorPos(ImVec2((win_w - header_w) * 0.5f, header_y));
-        ImGui::TextUnformatted(header);
-        ImGui::SetWindowFontScale(1.0f);
-        ImGui::PopStyleColor();
-        ImGui::PopFont();
+        // ── Custom title bar (Help style) ──────────────────────────────────
+        const float titleBarBot = mPos.y + titleH;
+        dl->AddRectFilled(mPos, ImVec2(mEnd.x, titleBarBot),
+            IM_COL32((int)(UIConfig::MODAL_TITLE_BG_R * 255),
+                     (int)(UIConfig::MODAL_TITLE_BG_G * 255),
+                     (int)(UIConfig::MODAL_TITLE_BG_B * 255), 255),
+            10.0f, ImDrawFlags_RoundCornersTop);
+        dl->AddLine(ImVec2(mPos.x, titleBarBot), ImVec2(mEnd.x, titleBarBot), uSep, 1.0f);
+        dl->AddRectFilled(ImVec2(mPos.x, mPos.y + 3.f), ImVec2(mPos.x + 4.0f, titleBarBot - 3.f), uGold, 2.0f);
+        if (m_fontUBold) ImGui::PushFont(m_fontUBold);
+        {
+            const char* tTxt = "Connect to Track Server";
+            const ImVec2 tSz = ImGui::CalcTextSize(tTxt);
+            dl->AddText(ImVec2(mPos.x + 14.f, mPos.y + (titleH - tSz.y) * 0.5f),
+                        IM_COL32(235, 235, 235, 255), tTxt);
+        }
+        if (m_fontUBold) ImGui::PopFont();
 
         auto drawInputFrame = [&](bool invalid) {
-            ImVec2 min = ImGui::GetItemRectMin();
-            ImVec2 max = ImGui::GetItemRectMax();
-            ImGui::GetWindowDrawList()->AddRect(min, max, invalid ? red : border_ok, 8.0f, 0, 2.0f);
+            ImGui::GetWindowDrawList()->AddRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(),
+                invalid ? uRed : uFrame, 0.0f, 0, 1.5f);
         };
 
+        bool doConnect = false;
+        const float fieldW = mW - padX * 2;
+
         // Shared input styling
-        ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0, 0, 0, 0));
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0xF0 / 255.0f, 0xF0 / 255.0f, 0xF0 / 255.0f, 0.90f));
-        ImGui::PushStyleColor(ImGuiCol_TextDisabled, ImGui::ColorConvertU32ToFloat4(text_hint));
-        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(14, 10));
+        ImGui::PushStyleColor(ImGuiCol_FrameBg,      ImVec4(0.13f, 0.13f, 0.13f, 1.f));
+        ImGui::PushStyleColor(ImGuiCol_Text,         ImVec4(0.94f, 0.94f, 0.94f, 1.f));
+        ImGui::PushStyleColor(ImGuiCol_TextDisabled, ImVec4(1.f, 1.f, 1.f, 0.25f));
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 0.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(12, (fieldH - ImGui::GetFontSize()) * 0.5f));
 
         // Address
+        ImGui::SetCursorPos(ImVec2(padX, titleH + padY));
+        ImGui::SetNextItemWidth(fieldW);
+        if (ImGui::IsWindowAppearing())
+            ImGui::SetKeyboardFocusHere();
+        doConnect |= ImGui::InputTextWithHint("##NetworkingAddr", "Server IP: 178.169.20.56:777",
+            m_networking_addr, sizeof(m_networking_addr), ImGuiInputTextFlags_EnterReturnsTrue);
+        drawInputFrame(m_networking_addr_invalid);
         {
-            const char* hint = "Server IP: 178.169.20.56:777";
-            ImGui::SetCursorPos(ImVec2(pad_x, addr_y));
-            ImGui::SetNextItemWidth(field_w);
-            ImGui::InputTextWithHint("##NetworkingAddr", hint, m_networking_addr, sizeof(m_networking_addr));
-            drawInputFrame(m_networking_addr_invalid);
-
             std::string host;
             uint16_t port = 0;
             m_networking_addr_invalid = (m_networking_addr[0] != 0) && !ParseAddressInput(m_networking_addr, host, port);
         }
 
         // Password
-        {
-            ImGui::SetCursorPos(ImVec2(pad_x, pass_y));
-            ImGui::SetNextItemWidth(field_w);
-            ImGui::InputTextWithHint("##NetworkingPassword", "Server Password (Optional)", m_networking_password, sizeof(m_networking_password), ImGuiInputTextFlags_Password);
-            drawInputFrame(m_networking_password_invalid);
-        }
+        ImGui::SetCursorPos(ImVec2(padX, titleH + padY + fieldH + gap));
+        ImGui::SetNextItemWidth(fieldW);
+        doConnect |= ImGui::InputTextWithHint("##NetworkingPassword", "Server Password (Optional)",
+            m_networking_password, sizeof(m_networking_password),
+            ImGuiInputTextFlags_Password | ImGuiInputTextFlags_EnterReturnsTrue);
+        drawInputFrame(m_networking_password_invalid);
 
-        ImGui::PopStyleVar();
+        ImGui::PopStyleVar(2);
         ImGui::PopStyleColor(3);
 
-        // Button
+        // Enter anywhere in the modal also connects
+        doConnect |= ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false);
+
+        // Connect button (Help-style gold)
+        if (m_fontUBold) ImGui::PushFont(m_fontUBold);
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 0.0f);
+        ImGui::PushStyleColor(ImGuiCol_Button,        colGold);
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(238.f/255.f, 185.f/255.f, 84.f/255.f, 1.f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(198.f/255.f, 145.f/255.f, 44.f/255.f, 1.f));
+        ImGui::PushStyleColor(ImGuiCol_Text,          ImVec4(0.07f, 0.07f, 0.07f, 1.f));
+        ImGui::SetCursorPos(ImVec2(padX, mH - padY - btnH));
+        doConnect |= ImGui::Button("Connect", ImVec2(fieldW, btnH));
+        ImGui::PopStyleColor(4);
+        ImGui::PopStyleVar();
+        if (m_fontUBold) ImGui::PopFont();
+
+        if (doConnect)
         {
-            ImGui::PushStyleColor(ImGuiCol_Button, ImGui::ColorConvertU32ToFloat4(gold));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0xDA / 255.0f, 0xA5 / 255.0f, 0x40 / 255.0f, 0.85f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0xDA / 255.0f, 0xA5 / 255.0f, 0x40 / 255.0f, 0.75f));
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
-            ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 10.0f);
-            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(18, 12));
+            m_networking_addr_invalid = false;
+            m_networking_password_invalid = false;
 
-            ImGui::SetCursorPos(ImVec2(pad_x, button_y));
-            if (ImGui::Button("Connect", ImVec2(field_w, button_h)))
+            std::string host;
+            uint16_t port = 0;
+            if (!ParseAddressInput(m_networking_addr, host, port))
             {
-                m_networking_addr_invalid = false;
-                m_networking_password_invalid = false;
-
-                std::string host;
-                uint16_t port = 0;
-                const bool ok = ParseAddressInput(m_networking_addr, host, port);
-                if (!ok)
-                {
-                    m_networking_addr_invalid = true;
-                }
-                else
-                {
-                    TrackServerClient::clearFailure();
-                    TrackServerClient::setConnectParams(host, port,
-                        m_networking_password);
-                    TrackServerClient::start();
-                }
-
-                // Do not auto-close: keep the card visible so user can see status/errors.
+                m_networking_addr_invalid = true;
             }
-
-            ImGui::PopStyleVar(2);
-            ImGui::PopStyleColor(4);
+            else
+            {
+                TrackServerClient::clearFailure();
+                TrackServerClient::setConnectParams(host, port, m_networking_password);
+                TrackServerClient::start();
+            }
+            // Keep the card open so errors stay visible; it auto-closes on
+            // successful connect (see top of function).
         }
-
     }
-
     ImGui::End();
+
+    if (!modal_open) m_show_networking_modal = false;
+
+    ImGui::PopStyleColor(2);
     ImGui::PopStyleVar(3);
 }
 
@@ -577,6 +593,7 @@ UI::UI()
 , m_fontOswald(nullptr)
 , m_fontOswaldBold(nullptr)
 , m_fontJetBrainsMono(nullptr)
+, m_fontJBMonoBold(nullptr)
 , m_fontRussoSmall(nullptr)
 , m_backgroundTexture(nullptr)
     , m_iconFile(nullptr)
@@ -764,6 +781,83 @@ void UI::LoadRecentFiles()
     }
 }
 
+/// Загружает все шрифты приложения в атлас ImGui.
+/// Размеры — пункты из UIConfig × текущий DPI-масштаб (ui_scale), поэтому
+/// текст держит постоянный физический размер и остаётся резким на любом
+/// мониторе. Зовётся при старте и повторно при смене DPI.
+void UI::load_fonts()
+{
+    ImGuiIO& io = ImGui::GetIO();
+
+    ImFontConfig font_config;
+    font_config.OversampleH = 3;
+    font_config.OversampleV = 3;
+
+    auto load_font = [&](const char* path, float size_pt) -> ImFont* {
+        const float size_px = ui_scale::points(size_pt);
+        if (std::filesystem::exists(path))
+            return io.Fonts->AddFontFromFileTTF(path, size_px, &font_config);
+        std::cerr << "[UI] Warning: Font not found: " << path << ", using default\n";
+        return io.Fonts->AddFontDefault(&font_config);
+    };
+
+    m_fontRegular    = load_font(UIConfig::FONT_PATH_UBUNTU_REGULAR, UIConfig::FONT_PT_MENU);
+    m_fontUI         = load_font(UIConfig::FONT_PATH_UBUNTU_REGULAR, UIConfig::FONT_PT_UI);
+    m_fontUBold      = load_font(UIConfig::FONT_PATH_UBUNTU_BOLD,    UIConfig::FONT_PT_UI);
+    m_fontTitle      = load_font(UIConfig::FONT_PATH_RUSSO_ONE,      UIConfig::FONT_PT_TITLE);
+    m_fontRace       = load_font(UIConfig::FONT_PATH_F1,             UIConfig::FONT_PT_RACE);
+    m_fontRobotoMono = load_font(UIConfig::FONT_PATH_ROBOTO_MONO,    UIConfig::FONT_PT_TITLE);
+    m_fontOswald     = load_font(UIConfig::FONT_PATH_OSWALD,         UIConfig::FONT_PT_TITLE);
+    m_fontOswaldBold = load_font(UIConfig::FONT_PATH_OSWALD_BOLD,    UIConfig::FONT_PT_TITLE);
+    m_fontJetBrainsMono = load_font(UIConfig::FONT_PATH_JETBRAINS_MONO, UIConfig::FONT_PT_TITLE);
+    m_fontJBMonoBold = load_font(UIConfig::FONT_PATH_JETBRAINS_MONO_BOLD, UIConfig::FONT_PT_TITLE);
+    m_fontRussoSmall = load_font(UIConfig::FONT_PATH_RUSSO_ONE,      UIConfig::FONT_PT_RUSSO_SMALL);
+}
+
+/// Пересобирает атлас шрифтов под новый DPI-масштаб и подтягивает размеры
+/// стиля ImGui. Зовётся из BeginFrame ДО NewFrame — трогать атлас посреди
+/// кадра нельзя.
+void UI::apply_ui_scale_change()
+{
+    const float new_scale = ui_scale::get();
+    const float ratio = (m_appliedUiScale > 0.0f) ? new_scale / m_appliedUiScale : 1.0f;
+    if (ratio != 1.0f)
+    {
+        ImGui::GetStyle().ScaleAllSizes(ratio);
+
+        // Позиции/размеры окон сохранены в пикселях старого монитора —
+        // умножаем на отношение масштабов, чтобы вся раскладка (включая
+        // перетащенные PRO-панели) сохранила физическое расположение.
+        ImGuiContext* ctx = ImGui::GetCurrentContext();
+        for (int i = 0; i < ctx->Windows.Size; ++i)
+        {
+            ImGuiWindow* win = ctx->Windows[i];
+            win->Pos      = ImVec2(win->Pos.x * ratio,      win->Pos.y * ratio);
+            win->Size     = ImVec2(win->Size.x * ratio,     win->Size.y * ratio);
+            win->SizeFull = ImVec2(win->SizeFull.x * ratio, win->SizeFull.y * ratio);
+        }
+    }
+    m_appliedUiScale = new_scale;
+
+    // Старая GL-текстура атласа удаляется; бэкенд создаст новую в NewFrame
+    ImGui_ImplOpenGL3_DestroyFontsTexture();
+    ImGui::GetIO().Fonts->Clear();
+    load_fonts();
+    ImGui::GetIO().Fonts->Build();
+
+    // Указатели ImFont* стали новыми — раздаём их всем держателям
+    if (m_ui_elements)
+    {
+        m_ui_elements->setFontTitle(m_fontTitle);
+        m_ui_elements->setFontRobotoMono(m_fontRobotoMono);
+        m_ui_elements->setFontOswald(m_fontOswald);
+        m_ui_elements->setFontOswaldBold(m_fontOswaldBold);
+        m_ui_elements->setFontJetBrainsMono(m_fontJetBrainsMono);
+    }
+
+    std::cout << "[UI] Fonts rebuilt for UI scale " << new_scale << std::endl;
+}
+
 bool UI::Initialize(GLFWwindow* window)
 {
     if (!window)
@@ -790,34 +884,8 @@ bool UI::Initialize(GLFWwindow* window)
     int window_width, window_height;
     glfwGetWindowSize(window, &window_width, &window_height);
     
-    // Load Fonts with oversampling for better quality
-    ImFontConfig font_config;
-    font_config.OversampleH = 3;
-    font_config.OversampleV = 3;
-    
-    // Calculate font sizes based on window height
-    float font_size_menu = UIConfig::MENU_TEXT_SIZE * window_height;        // 12px for menu
-    float font_size_ui = UIConfig::FONT_SIZE_REGULAR * window_height;       // 16px for UI elements
-    float font_size_title = 32.0f / UIConfig::BASE_HEIGHT * window_height;  // 32px base for Russo One (better quality when scaled)
-    float font_size_race = UIConfig::FONT_SIZE_RACE * window_height;
-    
-    auto loadFont = [&](const char* path, float size) -> ImFont* {
-        if (std::filesystem::exists(path))
-            return io.Fonts->AddFontFromFileTTF(path, size, &font_config);
-        std::cerr << "[UI] Warning: Font not found: " << path << ", using default\n";
-        return io.Fonts->AddFontDefault(&font_config);
-    };
-
-    m_fontRegular    = loadFont("styles/fonts/Ubuntu/Ubuntu-Regular.ttf", font_size_menu);
-    m_fontUI         = loadFont("styles/fonts/Ubuntu/Ubuntu-Regular.ttf", font_size_ui);
-    m_fontUBold      = loadFont("styles/fonts/Ubuntu/Ubuntu-Bold.ttf",    font_size_ui);
-    m_fontTitle      = loadFont("styles/fonts/Russo_One/RussoOne-Regular.ttf", font_size_title);
-    m_fontRace       = loadFont(UIConfig::FONT_PATH_F1, font_size_race);
-    m_fontRobotoMono = loadFont(UIConfig::FONT_PATH_ROBOTO_MONO, font_size_title);
-    m_fontOswald     = loadFont(UIConfig::FONT_PATH_OSWALD, font_size_title);
-    m_fontOswaldBold = loadFont(UIConfig::FONT_PATH_OSWALD_BOLD, font_size_title);
-    m_fontJetBrainsMono = loadFont(UIConfig::FONT_PATH_JETBRAINS_MONO, font_size_title);
-    m_fontRussoSmall = loadFont(UIConfig::FONT_PATH_RUSSO_ONE, 13.0f / UIConfig::BASE_HEIGHT * window_height);
+    load_fonts();
+    m_appliedUiScale = ui_scale::get();
 
     // Setup ImGui style - Blender-like
     ImGuiStyle& style = ImGui::GetStyle();
@@ -923,6 +991,12 @@ void UI::Shutdown()
 
 void UI::BeginFrame()
 {
+    // Окно перетащили на монитор с другим DPI — пересобираем шрифты до
+    // начала кадра, чтобы текст остался резким, а элементы — того же
+    // физического размера.
+    if (ui_scale::consume_scale_changed())
+        apply_ui_scale_change();
+
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
@@ -1182,32 +1256,51 @@ void UI::Render()
     }
 
     // ── Edge-recording HUD ──────────────────────────────────────────────────
+    // One contextual button walks the phases:
+    //   LEFT edge → "Finish Left Edge" → TRANSIT (no points recorded)
+    //   TRANSIT   → "Start Right Edge" (pressed at the right edge start)
+    //   RIGHT edge → "Finish & Review" → review screen
     {
-        const auto phase = TelemetryTrackBuilder::GetPhase();
-        if (phase == EdgePhase::Left || phase == EdgePhase::Right)
+        const EdgePhase phase = TelemetryTrackBuilder::GetPhase();
+        if (phase == EdgePhase::Left || phase == EdgePhase::Transit || phase == EdgePhase::Right)
         {
             const ImGuiIO& io = ImGui::GetIO();
-            const float w = 320.f, h = 70.f;
-            ImGui::SetNextWindowPos(ImVec2((io.DisplaySize.x - w) * 0.5f, 16.f), ImGuiCond_Always);
+            const float w = ui_scale::points(340.f);
+            const float h = ui_scale::points(84.f);
+            ImGui::SetNextWindowPos(ImVec2((io.DisplaySize.x - w) * 0.5f, ui_scale::points(16.f)), ImGuiCond_Always);
             ImGui::SetNextWindowSize(ImVec2(w, h), ImGuiCond_Always);
             ImGui::SetNextWindowBgAlpha(0.82f);
             ImGui::Begin("##EdgeHUD", nullptr,
                 ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs |
                 ImGuiWindowFlags_NoMove       | ImGuiWindowFlags_NoNav);
 
-            auto pts = TelemetryTrackBuilder::GetRawPointsSnapshot();
+            const size_t pointCount   = TelemetryTrackBuilder::PointCount();
+            const float  lengthMeters = TelemetryTrackBuilder::LengthMeters();
             if (phase == EdgePhase::Left)
                 ImGui::TextColored(ImVec4(0.4f, 0.7f, 1.f, 1.f),
-                    "Recording LEFT edge  —  %zu pts", pts.size());
+                    "Recording LEFT edge  —  %zu pts, %.0f m", pointCount, lengthMeters);
+            else if (phase == EdgePhase::Transit)
+                ImGui::TextColored(ImVec4(0.85f, 0.85f, 0.85f, 1.f),
+                    "Transit — drive to the RIGHT edge start");
             else
                 ImGui::TextColored(ImVec4(1.f, 0.5f, 0.3f, 1.f),
-                    "Recording RIGHT edge  —  %zu pts", pts.size());
+                    "Recording RIGHT edge  —  %zu pts, %.0f m", pointCount, lengthMeters);
+
+            // GPS quality: fix type 4+ means RTK-grade accuracy.
+            const int fixType = TelemetryTrackBuilder::LastFixType();
+            if (fixType >= 4)
+                ImGui::TextColored(ImVec4(0.43f, 0.98f, 0.56f, 1.f), "RTK fix — full accuracy");
+            else if (fixType > 0)
+                ImGui::TextColored(ImVec4(0.95f, 0.77f, 0.25f, 1.f), "GPS fix %d — reduced accuracy!", fixType);
+            else
+                ImGui::TextColored(ImVec4(0.55f, 0.55f, 0.55f, 1.f), "Waiting for GPS data...");
 
             ImGui::End();
 
             // Separate clickable window for the action button (NoInputs is off here)
-            ImGui::SetNextWindowPos(ImVec2((io.DisplaySize.x - w) * 0.5f, 90.f), ImGuiCond_Always);
-            ImGui::SetNextWindowSize(ImVec2(w, 40.f), ImGuiCond_Always);
+            ImGui::SetNextWindowPos(ImVec2((io.DisplaySize.x - w) * 0.5f,
+                                           ui_scale::points(16.f) + h + ui_scale::points(8.f)), ImGuiCond_Always);
+            ImGui::SetNextWindowSize(ImVec2(w, ui_scale::points(40.f)), ImGuiCond_Always);
             ImGui::SetNextWindowBgAlpha(0.0f);
             ImGui::Begin("##EdgeBtn", nullptr,
                 ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoNav);
@@ -1218,15 +1311,21 @@ void UI::Render()
             ImGui::PushStyleColor(ImGuiCol_Text,          ImVec4(1.f, 1.f, 1.f, 1.f));
             ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 10.f);
 
+            const ImVec2 btnSize(w - ui_scale::points(16.f), ui_scale::points(32.f));
             if (phase == EdgePhase::Left)
             {
-                if (ImGui::Button("Switch to Right Edge", ImVec2(w - 16.f, 32.f)))
-                    TelemetryTrackBuilder::SwitchToRightEdge();
+                if (ImGui::Button("Finish Left Edge", btnSize))
+                    TelemetryTrackBuilder::FinishLeftEdge();
+            }
+            else if (phase == EdgePhase::Transit)
+            {
+                if (ImGui::Button("Start Right Edge", btnSize))
+                    TelemetryTrackBuilder::StartRightEdge();
             }
             else
             {
-                if (ImGui::Button("Finalize Track", ImVec2(w - 16.f, 32.f)))
-                    TelemetryTrackBuilder::FinalizeEdges();
+                if (ImGui::Button("Finish & Review", btnSize))
+                    TelemetryTrackBuilder::FinishRightEdge();
             }
 
             ImGui::PopStyleVar(1);
@@ -1234,6 +1333,7 @@ void UI::Render()
             ImGui::End();
         }
     }
+
 
     // Live preview while recording a track edge.
     static auto s_last_preview_update = std::chrono::steady_clock::now();
@@ -1268,6 +1368,13 @@ void UI::Render()
                     // Too few right points yet — show just the right edge as a thin line.
                     TrackRenderer::rebuildEdgeLineCache(right);
                 }
+            }
+            else if (phase == EdgePhase::Transit)
+            {
+                // Between edges: keep showing the finished left edge
+                std::vector<glm::vec2> left = TelemetryTrackBuilder::GetLeftEdgeSnapshot();
+                if (left.size() >= 2)
+                    TrackRenderer::rebuildEdgeLineCache(left);
             }
             else
             {
@@ -1336,6 +1443,16 @@ void UI::Render()
         }
     }
 
+    // Wipe the loaded map (both classic and PRO views) when the Track Server
+    // connection drops — manual disconnect or connection loss.
+    {
+        static bool s_srv_was_connected = false;
+        bool conn = TrackServerClient::isConnected();
+        if (s_srv_was_connected && !conn && g_race_manager)
+            g_race_manager->ResetMap();
+        s_srv_was_connected = conn;
+    }
+
     RenderPrototypeToast();
     RenderNetworkingModal();
     AccountsPanel::Render(m_fontUI, m_fontUBold);
@@ -1343,6 +1460,10 @@ void UI::Render()
 
     // Render help modal if open
     RenderHelpModal();
+
+    // Review screen — rendered last so nothing draws on top of it.
+    // (Draws itself only while the recorder is in the Review phase.)
+    TrackReviewPanel::Render(m_fontTitle, m_fontUI, m_fontJBMonoBold);
 }
 
 void UI::RenderRaceStatusBar(ModeManager* modeManager)
@@ -1409,7 +1530,18 @@ void UI::RenderRaceStatusBar(ModeManager* modeManager)
 
     const std::string system_time = status_bar.GetSystemTimeString();
     const std::string session_time = status_bar.GetSessionTimeString();
+
+    // While the track recorder is running, its phase replaces the race phase
+    // (Practice/Race) in the pill, so the user always sees what is going on.
     const char* phase_label = modeManager->GetPhaseLabel();
+    switch (TelemetryTrackBuilder::GetPhase())
+    {
+        case EdgePhase::Left:    phase_label = "REC: LEFT EDGE";  break;
+        case EdgePhase::Transit: phase_label = "REC: TRANSIT";    break;
+        case EdgePhase::Right:   phase_label = "REC: RIGHT EDGE"; break;
+        case EdgePhase::Review:  phase_label = "TRACK REVIEW";    break;
+        default: break;
+    }
 
     ImFont* font = m_fontUI ? m_fontUI : ImGui::GetFont();
     ImGui::PushFont(font);
@@ -1948,6 +2080,7 @@ void UI::RenderProView()
         m_fontTitle,
         m_fontRobotoMono,
         m_fontRussoSmall,
+        m_fontJBMonoBold,
         m_logoTexture
     };
     Pro::Render(ctx, m_swipeAnim);
@@ -2213,20 +2346,26 @@ void UI::RenderTopMenu()
             ImGui::Separator();
 
             {
-                const auto phase = TelemetryTrackBuilder::GetPhase();
-                const bool active = TelemetryTrackBuilder::IsActive();
-                const char* label = (phase == EdgePhase::Left)  ? "Track Recording: LEFT edge" :
-                                    (phase == EdgePhase::Right) ? "Track Recording: RIGHT edge" :
-                                    active                      ? "Track Recording: ON" : "Track Recording: OFF";
+                // Same phase flow as the on-screen HUD button.
+                const EdgePhase phase  = TelemetryTrackBuilder::GetPhase();
+                const bool inProgress = TelemetryTrackBuilder::IsActive() || phase == EdgePhase::Review;
+                const char* label =
+                    (phase == EdgePhase::Left)    ? "Track Recording: LEFT edge"  :
+                    (phase == EdgePhase::Transit) ? "Track Recording: transit"    :
+                    (phase == EdgePhase::Right)   ? "Track Recording: RIGHT edge" :
+                    (phase == EdgePhase::Review)  ? "Track Recording: review"     :
+                    inProgress                    ? "Track Recording: ON" : "Track Recording: OFF";
                 if (ImGui::MenuItem(label))
                 {
-                    if (active) { TelemetryTrackBuilder::Stop(); }
-                    else        { TelemetryTrackBuilder::StartLeftEdge(); }
+                    if (inProgress) { TelemetryTrackBuilder::Stop(); }
+                    else            { TelemetryTrackBuilder::StartLeftEdge(); }
                 }
-                if (phase == EdgePhase::Left && ImGui::MenuItem("  → Switch to Right Edge"))
-                    TelemetryTrackBuilder::SwitchToRightEdge();
-                if (phase == EdgePhase::Right && ImGui::MenuItem("  ✓ Finalize Track"))
-                    TelemetryTrackBuilder::FinalizeEdges();
+                if (phase == EdgePhase::Left && ImGui::MenuItem("  Finish Left Edge"))
+                    TelemetryTrackBuilder::FinishLeftEdge();
+                if (phase == EdgePhase::Transit && ImGui::MenuItem("  Start Right Edge"))
+                    TelemetryTrackBuilder::StartRightEdge();
+                if (phase == EdgePhase::Right && ImGui::MenuItem("  Finish & Review"))
+                    TelemetryTrackBuilder::FinishRightEdge();
             }
             if (ImGui::MenuItem("Simulate Prototype Lap (Test)", nullptr, false, TelemetryTrackBuilder::IsActive()))
             {
@@ -2326,9 +2465,10 @@ void UI::RenderTopMenu()
 
                             sendEllipse(55.0, 40.0, 400);  // левая грань
 
-                            // Ждём пока пользователь нажмёт "Switch to Right Edge"
+                            // Ждём пока пользователь пройдёт Transit:
+                            // "Finish Left Edge" → "Start Right Edge"
                             while (s_dual_sim_active.load() &&
-                                   TelemetryTrackBuilder::GetPhase() == EdgePhase::Left)
+                                   TelemetryTrackBuilder::GetPhase() != EdgePhase::Right)
                                 std::this_thread::sleep_for(std::chrono::milliseconds(50));
 
                             sendEllipse(70.0, 55.0, 400);  // правая грань
@@ -2889,98 +3029,159 @@ void UI::RenderAutoStopModal()
     if (!g_show_autostop_modal)
         return;
 
-    ImVec2 display_size = ImGui::GetIO().DisplaySize;
+    ImGuiIO& io      = ImGui::GetIO();
+    const ImVec2 dsz = io.DisplaySize;
 
+    // Adaptive: width clamped, height derived from content
+    // Размеры в пунктах × DPI (ui_scale) — см. комментарий в NetworkingModal
+    float mW = ui_scale::points(420.0f);
+    if (mW > dsz.x * 0.9f) mW = dsz.x * 0.9f;
+    const float titleH = ui_scale::points(44.0f);
+    const float padX   = mW * 0.08f;
+    const float padY   = ui_scale::points(24.0f);
+    const float fieldW = mW - padX * 2;
+    const char* subTxt = "Choose when the race will automatically end:";
+    ImFont* bodyFont   = m_fontUI ? m_fontUI : ImGui::GetFont();
+    ImGui::PushFont(bodyFont);
+    const float subH   = ImGui::CalcTextSize(subTxt, nullptr, false, fieldW).y + ui_scale::points(24.0f);
+    const float labelH = ImGui::GetFontSize() + ui_scale::points(14.0f);
+    ImGui::PopFont();
+    const float fieldH = ui_scale::points(34.0f);
+    const float gap    = ui_scale::points(15.0f);
+    const float btnH   = ui_scale::points(40.0f);
+    const float mH     = titleH + padY + subH + (labelH + fieldH) * 2 + gap + padY + btnH + padY;
+    const ImVec2 mPos((dsz.x - mW) * 0.5f, (dsz.y - mH) * 0.5f);
+    const ImVec2 mEnd(mPos.x + mW, mPos.y + mH);
+
+    // ── colors (Help modal palette) ─────────────────────────────────────────
+    const ImVec4 colGold(218.f/255.f, 165.f/255.f, 64.f/255.f, 1.f);
+    const ImU32  uGold  = IM_COL32(218, 165, 64, 255);
+    const ImU32  uSep   = IM_COL32(55, 55, 55, 255);
+    const ImU32  uFrame = IM_COL32(0xFF, 0xFF, 0xFF, (int)(255 * 0.21f));
+
+    // ── overlay (blocks world input, click outside closes) ──────────────────
     ImGui::SetNextWindowPos(ImVec2(0, 0));
-    ImGui::SetNextWindowSize(display_size);
+    ImGui::SetNextWindowSize(dsz);
     ImGui::SetNextWindowBgAlpha(UIConfig::MODAL_OVERLAY_ALPHA);
-
     ImGuiWindowFlags bg_flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
-        ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings;
-
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.0f, 0.0f, 0.0f, UIConfig::MODAL_OVERLAY_ALPHA));
-    if (ImGui::Begin("##AutoStopBackground", nullptr, bg_flags))
+                                ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
+                                ImGuiWindowFlags_NoSavedSettings;
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.f, 0.f, 0.f, UIConfig::MODAL_OVERLAY_ALPHA));
+    if (ImGui::Begin("##AutoStopOverlay", nullptr, bg_flags))
     {
-        ImVec2 modal_size = ImVec2(UIConfig::HELP_MODAL_WIDTH * display_size.x * 0.8f, UIConfig::HELP_MODAL_HEIGHT * display_size.y * 0.6f);
-        ImVec2 modal_pos = ImVec2((display_size.x - modal_size.x) * 0.5f, (display_size.y - modal_size.y) * 0.5f);
-        ImVec2 mouse_pos = ImGui::GetMousePos();
-
-        bool clicked_outside = ImGui::IsMouseClicked(0) &&
-            (mouse_pos.x < modal_pos.x || mouse_pos.x > modal_pos.x + modal_size.x ||
-             mouse_pos.y < modal_pos.y || mouse_pos.y > modal_pos.y + modal_size.y);
-
-        if (clicked_outside)
+        ImVec2 mp = ImGui::GetMousePos();
+        if (ImGui::IsMouseClicked(0) &&
+            (mp.x < mPos.x || mp.x > mEnd.x || mp.y < mPos.y || mp.y > mEnd.y))
             g_show_autostop_modal = false;
     }
     ImGui::End();
     ImGui::PopStyleColor();
 
-    ImVec2 modal_size = ImVec2(UIConfig::HELP_MODAL_WIDTH * display_size.x * 0.8f, UIConfig::HELP_MODAL_HEIGHT * display_size.y * 0.6f);
-    ImGui::SetNextWindowPos(ImVec2(display_size.x * 0.5f, display_size.y * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(modal_size);
+    if (!g_show_autostop_modal) return;
+    if (ImGui::IsKeyPressed(ImGuiKey_Escape)) { g_show_autostop_modal = false; return; }
+
+    // ── modal window (Help style) ────────────────────────────────────────────
+    ImGui::SetNextWindowPos(mPos);
+    ImGui::SetNextWindowSize(ImVec2(mW, mH));
     ImGui::SetNextWindowFocus();
-
-    ImGuiWindowFlags modal_flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse;
-
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(UIConfig::MODAL_PADDING_X * display_size.x + 10.0f, UIConfig::MODAL_PADDING_Y * display_size.y + 10.0f));
-    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(UIConfig::MODAL_ITEM_SPACING_X * display_size.x, 15.0f));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 12.0f);
-
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,   ImVec2(0, 0));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding,  0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.0f);
     ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(UIConfig::MODAL_BG_R, UIConfig::MODAL_BG_G, UIConfig::MODAL_BG_B, UIConfig::MODAL_BG_ALPHA));
-    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_TitleBg, ImVec4(UIConfig::MODAL_TITLE_BG_R, UIConfig::MODAL_TITLE_BG_G, UIConfig::MODAL_TITLE_BG_B, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_TitleBgActive, ImVec4(UIConfig::MODAL_TITLE_ACTIVE_R, UIConfig::MODAL_TITLE_ACTIVE_G, UIConfig::MODAL_TITLE_ACTIVE_B, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Border,   ImVec4(0.22f, 0.22f, 0.22f, 1.f));
 
     bool modal_open = true;
-    if (ImGui::Begin("Auto Stop Conditions", &modal_open, modal_flags))
+    if (ImGui::Begin("##AutoStopModal", &modal_open,
+        ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+        ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings))
     {
-        ImGui::PushFont(m_fontUI);
+        ImDrawList* dl = ImGui::GetWindowDrawList();
 
-        float windowWidth = ImGui::GetWindowSize().x;
-        const char* headerText = "Choose when the race will automatically end:";
-        float textWidth = ImGui::CalcTextSize(headerText).x;
+        // ── Custom title bar (Help style) ──────────────────────────────────
+        const float titleBarBot = mPos.y + titleH;
+        dl->AddRectFilled(mPos, ImVec2(mEnd.x, titleBarBot),
+            IM_COL32((int)(UIConfig::MODAL_TITLE_BG_R * 255),
+                     (int)(UIConfig::MODAL_TITLE_BG_G * 255),
+                     (int)(UIConfig::MODAL_TITLE_BG_B * 255), 255),
+            10.0f, ImDrawFlags_RoundCornersTop);
+        dl->AddLine(ImVec2(mPos.x, titleBarBot), ImVec2(mEnd.x, titleBarBot), uSep, 1.0f);
+        dl->AddRectFilled(ImVec2(mPos.x, mPos.y + 3.f), ImVec2(mPos.x + 4.0f, titleBarBot - 3.f), uGold, 2.0f);
+        if (m_fontUBold) ImGui::PushFont(m_fontUBold);
+        {
+            const char* tTxt = "Auto Stop Conditions";
+            const ImVec2 tSz = ImGui::CalcTextSize(tTxt);
+            dl->AddText(ImVec2(mPos.x + 14.f, mPos.y + (titleH - tSz.y) * 0.5f),
+                        IM_COL32(235, 235, 235, 255), tTxt);
+        }
+        if (m_fontUBold) ImGui::PopFont();
 
-        ImGui::SetCursorPos(ImVec2((windowWidth - textWidth) * 0.5f, ImGui::GetCursorPosY()));
-        ImGui::TextUnformatted(headerText);
-        ImGui::Separator();
-        ImGui::Spacing();
+        auto drawInputFrame = [&]() {
+            ImGui::GetWindowDrawList()->AddRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(),
+                uFrame, 0.0f, 0, 1.5f);
+        };
 
-        // Inputs are 2 steps lighter than background
-        ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(UIConfig::MODAL_BG_R + 0.12f, UIConfig::MODAL_BG_G + 0.12f, UIConfig::MODAL_BG_B + 0.13f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ImVec4(UIConfig::MODAL_BG_R + 0.18f, UIConfig::MODAL_BG_G + 0.18f, UIConfig::MODAL_BG_B + 0.19f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_FrameBgActive, ImVec4(UIConfig::MODAL_BG_R + 0.22f, UIConfig::MODAL_BG_G + 0.22f, UIConfig::MODAL_BG_B + 0.23f, 1.0f));
-        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f);
-        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(8.0f, 8.0f));
+        bool doStart = false;
+        ImGui::PushFont(bodyFont);
 
-        ImGui::Text("Laps:");
-        ImGui::SetNextItemWidth(windowWidth * 0.9); // Use available width
-        // Explicitly format integer input to be visible and editable easily
-        ImGui::InputInt("##laps", &m_autostop_laps, 0, 0);
+        float y = titleH + padY;
+        ImGui::SetCursorPos(ImVec2(padX, y));
+        ImGui::PushTextWrapPos(padX + fieldW);
+        ImGui::TextColored(ImVec4(0.70f, 0.70f, 0.70f, 1.f), "%s", subTxt);
+        ImGui::PopTextWrapPos();
+        y += subH;
 
-        ImGui::Spacing();
+        // Inactive condition (0 laps / 0 time) is grayed so the user sees what applies
+        int th = 0, tm = 0, ts = 0;
+        int previewSeconds = 0;
+        if (sscanf_s(m_autostop_time, "%d:%d:%d", &th, &tm, &ts) == 3)
+            previewSeconds = th * 3600 + tm * 60 + ts;
+        else if (sscanf_s(m_autostop_time, "%d:%d", &tm, &ts) == 2)
+            previewSeconds = tm * 60 + ts;
+        const bool lapsActive = m_autostop_laps > 0;
+        const bool timeActive = previewSeconds > 0;
+        const ImVec4 colGray(0.45f, 0.45f, 0.45f, 1.f);
 
-        ImGui::Text("Time (HH:MM:SS):");
-        ImGui::SetNextItemWidth(windowWidth * 0.9);
-        ImGui::InputText("##time", m_autostop_time, sizeof(m_autostop_time));
+        // Shared input styling
+        ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.13f, 0.13f, 0.13f, 1.f));
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 0.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(12, (fieldH - ImGui::GetFontSize()) * 0.5f));
+
+        ImGui::SetCursorPos(ImVec2(padX, y));
+        ImGui::TextColored(lapsActive ? colGold : colGray, "Laps");
+        ImGui::SetCursorPos(ImVec2(padX, y + labelH));
+        ImGui::SetNextItemWidth(fieldW);
+        ImGui::PushStyleColor(ImGuiCol_Text, lapsActive ? ImVec4(0.94f, 0.94f, 0.94f, 1.f) : colGray);
+        doStart |= ImGui::InputInt("##laps", &m_autostop_laps, 0, 0, ImGuiInputTextFlags_EnterReturnsTrue);
+        ImGui::PopStyleColor();
+        drawInputFrame();
+        y += labelH + fieldH + gap;
+
+        ImGui::SetCursorPos(ImVec2(padX, y));
+        ImGui::TextColored(timeActive ? colGold : colGray, "Time (HH:MM:SS)");
+        ImGui::SetCursorPos(ImVec2(padX, y + labelH));
+        ImGui::SetNextItemWidth(fieldW);
+        ImGui::PushStyleColor(ImGuiCol_Text, timeActive ? ImVec4(0.94f, 0.94f, 0.94f, 1.f) : colGray);
+        doStart |= ImGui::InputText("##time", m_autostop_time, sizeof(m_autostop_time), ImGuiInputTextFlags_EnterReturnsTrue);
+        ImGui::PopStyleColor();
+        drawInputFrame();
 
         ImGui::PopStyleVar(2);
-        ImGui::PopStyleColor(3);
+        ImGui::PopStyleColor();
 
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Spacing();
+        // Start Race button (Help-style gold)
+        if (m_fontUBold) ImGui::PushFont(m_fontUBold);
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 0.0f);
+        ImGui::PushStyleColor(ImGuiCol_Button,        colGold);
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(238.f/255.f, 185.f/255.f, 84.f/255.f, 1.f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(198.f/255.f, 145.f/255.f, 44.f/255.f, 1.f));
+        ImGui::PushStyleColor(ImGuiCol_Text,          ImVec4(0.07f, 0.07f, 0.07f, 1.f));
+        ImGui::SetCursorPos(ImVec2(padX, mH - padY - btnH));
+        doStart |= ImGui::Button("Start Race", ImVec2(fieldW, btnH));
+        ImGui::PopStyleColor(4);
+        ImGui::PopStyleVar();
+        if (m_fontUBold) ImGui::PopFont();
 
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0xDA / 255.0f, 0xA5 / 255.0f, 0x40 / 255.0f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0xDA / 255.0f, 0xA5 / 255.0f, 0x40 / 255.0f, 0.85f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0xDA / 255.0f, 0xA5 / 255.0f, 0x40 / 255.0f, 0.75f));
-        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 8.0f); // More rounded edges
-        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0.0f, 10.0f)); // Taller button
-
-        // Slightly bigger button based on the prompt width
-        float btnW = 180.0f;
-        float btnH = 45.0f; // Adjusted below with frame padding anyway
-        ImGui::SetCursorPosX((windowWidth - btnW) * 0.5f);
-        if (ImGui::Button("Start Race", ImVec2(btnW, btnH)))
+        if (doStart)
         {
             // Parse HH:MM:SS
             int h = 0, m = 0, s = 0;
@@ -3013,9 +3214,6 @@ void UI::RenderAutoStopModal()
             g_show_autostop_modal = false;
         }
 
-        ImGui::PopStyleVar(2);
-        ImGui::PopStyleColor(3);
-
         ImGui::PopFont();
     }
     ImGui::End();
@@ -3023,6 +3221,6 @@ void UI::RenderAutoStopModal()
     if (!modal_open)
         g_show_autostop_modal = false;
 
-    ImGui::PopStyleColor(4);
+    ImGui::PopStyleColor(2);
     ImGui::PopStyleVar(3);
 }

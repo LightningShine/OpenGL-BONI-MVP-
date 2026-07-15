@@ -143,8 +143,10 @@ int32_t generateVehicleID();
 std::vector<glm::vec2> generateCircle(float radius, int segments = 16);
 std::vector<glm::vec2> generateTriangle(float size); // ✅ Треугольник для лидера
 
+// camera_zoom: the marker is scaled by 1/zoom so it keeps a constant
+// on-screen size instead of growing when the user zooms into the track.
 void renderVehicle(GLuint shader_program, GLuint vao, GLuint vbo,
-	const Vehicle& vehicle, const glm::mat4& projection);
+	const Vehicle& vehicle, const glm::mat4& projection, float camera_zoom = 1.0f);
 
 void renderAllVehicles(GLuint shader_program, GLuint vao, GLuint vbo,
 	const glm::mat4& projection,

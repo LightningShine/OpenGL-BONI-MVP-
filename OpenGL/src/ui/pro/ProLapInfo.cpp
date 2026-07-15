@@ -1,4 +1,5 @@
 #include "ProLapInfo.h"
+#include "ProTrackMap.h"
 #include "../../racing/RaceManager.h"
 #include "../../vehicle/Vehicle.h"
 #include <imgui.h>
@@ -17,7 +18,7 @@ namespace Pro {
 static void SectorRow(const ProContext& ctx, float w,
                        const char* lbl, const char* time,
                        const char* delta, ImU32 timeCol, ImU32 deltaCol) {
-    ImGui::SetCursorPosX(PAD);
+    ImGui::SetCursorPosX(pad_px());
     if (ctx.russo) ImGui::PushFont(ctx.russo);
     ImGui::PushStyleColor(ImGuiCol_Text, (ImVec4)ImColor(COL_LABEL));
     ImGui::TextUnformatted(lbl);
@@ -34,7 +35,7 @@ static void SectorRow(const ProContext& ctx, float w,
     ImGui::PopStyleColor();
     // Delta: right-aligned at right edge
     float dw = ImGui::CalcTextSize(delta).x;
-    ImGui::SameLine(w - PAD - dw);
+    ImGui::SameLine(w - pad_px() - dw);
     ImGui::PushStyleColor(ImGuiCol_Text, (ImVec4)ImColor(deltaCol));
     ImGui::TextUnformatted(delta);
     ImGui::PopStyleColor();
@@ -43,9 +44,10 @@ static void SectorRow(const ProContext& ctx, float w,
 
 void RenderLapInfoWindow(const ProContext& ctx, int32_t vehicleId,
                           ImVec2 vpSz, float topH) {
-    ImGui::SetNextWindowPos ({0.f,   topH + 550.f}, ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize({210.f, 160.f},         ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSizeConstraints({140.f, 80.f}, {vpSz.x, vpSz.y});
+    const float ui = ui_scale::get();
+    ImGui::SetNextWindowPos ({0.f,   topH + 550.f * ui},      ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize({210.f * ui, 160.f * ui},        ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSizeConstraints({140.f * ui, 80.f * ui}, {vpSz.x, vpSz.y});
 
     if (!ImGui::Begin("##LapInfo", nullptr,
         PanelFlags() | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse |
@@ -79,9 +81,33 @@ void RenderLapInfoWindow(const ProContext& ctx, int32_t vehicleId,
 
     ImGui::Dummy(ImVec2(0, 2.f));
 
-    SectorRow(ctx, w, "S1", "--:--.---", "---", COL_LABEL, COL_LABEL);
-    SectorRow(ctx, w, "S2", "--:--.---", "---", COL_LABEL, COL_LABEL);
-    SectorRow(ctx, w, "S3", "--:--.---", "---", COL_LABEL, COL_LABEL);
+    // Live/frozen sector times (same source as the Track Map widgets)
+    SectorSnapshot ss = GetSectorSnapshot(vehicleId);
+    const char* sLbl[3] = { "S1", "S2", "S3" };
+    for (int i = 0; i < 3; ++i) {
+        char tbuf[16], dbuf[16];
+        ImU32 tCol, dCol;
+        if (ss.t[i] >= 0.f) {
+            int m = (int)(ss.t[i] / 60.f); float r = ss.t[i] - m * 60.f;
+            if (m > 0) snprintf(tbuf, sizeof(tbuf), "%d:%06.3f", m, r);
+            else       snprintf(tbuf, sizeof(tbuf), "%.3f", r);
+            tCol = ss.live[i] ? COL_DIM : COL_WHITE;
+        } else {
+            snprintf(tbuf, sizeof(tbuf), "--.---");
+            tCol = COL_LABEL;
+        }
+        if (!ss.live[i] && ss.hasDelta[i] && ss.delta[i] > 0.001f) {
+            fmtDelta(ss.delta[i], dbuf, sizeof(dbuf));
+            dCol = COL_RED;
+        } else if (!ss.live[i] && ss.hasDelta[i]) {
+            snprintf(dbuf, sizeof(dbuf), "BEST");
+            dCol = COL_GREEN;
+        } else {
+            snprintf(dbuf, sizeof(dbuf), "---");
+            dCol = COL_LABEL;
+        }
+        SectorRow(ctx, w, sLbl[i], tbuf, dbuf, tCol, dCol);
+    }
 
     ImGui::Dummy(ImVec2(0, 2.f));
 
@@ -95,9 +121,10 @@ void RenderLapInfoWindow(const ProContext& ctx, int32_t vehicleId,
 
 void RenderSessionInfoWindow(const ProContext& ctx, int32_t vehicleId,
                               ImVec2 vpSz, float topH) {
-    ImGui::SetNextWindowPos ({0.f,   topH + 710.f}, ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize({210.f, 140.f},         ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSizeConstraints({140.f, 80.f}, {vpSz.x, vpSz.y});
+    const float ui = ui_scale::get();
+    ImGui::SetNextWindowPos ({0.f,   topH + 710.f * ui},      ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize({210.f * ui, 140.f * ui},        ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSizeConstraints({140.f * ui, 80.f * ui}, {vpSz.x, vpSz.y});
 
     if (!ImGui::Begin("##SessionInfo", nullptr,
         PanelFlags() | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse |

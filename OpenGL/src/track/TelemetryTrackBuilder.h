@@ -15,7 +15,14 @@ using TelemetryPacket = rajagp::TelemetryPacket;
 struct SplinePoint;
 class MapOrigin;
 
-enum class EdgePhase { Idle, Left, Right, Done };
+// Dual-edge recording walks through these phases:
+//   Idle -> Left -> Transit -> Right -> Review -> Done
+//   Left / Right — points of that edge are being recorded
+//   Transit      — the rider drives from the left edge to the right edge
+//                  start; NO points are recorded
+//   Review       — both edges captured; the review screen cleans/edits them
+//   Done         — reviewed track is finalized and goes to the save dialog
+enum class EdgePhase { Idle, Left, Transit, Right, Review, Done };
 
 namespace TelemetryTrackBuilder
 {
@@ -40,13 +47,25 @@ namespace TelemetryTrackBuilder
 	bool SaveFinalizedAsTxt(const std::string& userNameOrPath);
 
 	// ── Dual-edge mode ──────────────────────────────────────────────────────
+	// Phase flow: StartLeftEdge → FinishLeftEdge → StartRightEdge →
+	//             FinishRightEdge → (review screen) → SubmitReviewedEdges
 	void StartLeftEdge(const Settings& settings = Settings{});
-	bool SwitchToRightEdge();   // false if left edge has too few points
-	bool FinalizeEdges();       // false if right edge has too few points
+	bool FinishLeftEdge();      // Left → Transit  (false: too few points)
+	bool StartRightEdge();      // Transit → Right
+	bool FinishRightEdge();     // Right → Review  (false: too few points)
+
+	// The review screen hands the cleaned/edited edges back. The builder
+	// resamples them, rebuilds the centre line and requests the save dialog.
+	bool SubmitReviewedEdges(std::vector<glm::vec2> left, std::vector<glm::vec2> right);
 
 	EdgePhase GetPhase();
 	std::vector<glm::vec2> GetLeftEdgeSnapshot();  // stored left edge
 	// GetRawPointsSnapshot() returns the active recording (left during Left, right during Right)
+
+	// ── Recording HUD info ──────────────────────────────────────────────────
+	size_t PointCount();    // points in the edge being recorded right now
+	float  LengthMeters();  // length of the edge being recorded right now
+	int    LastFixType();   // GPS fix type from the latest packet (4+ = RTK)
 
 	// Feed synthetic edges directly (no GPS needed — for testing)
 	bool InjectSyntheticEdges(std::vector<glm::vec2> left, std::vector<glm::vec2> right);

@@ -67,14 +67,15 @@ static void zoneTimes(const std::vector<LapInfo>& s,
 
 void RenderSectorsWindow(const ProContext& ctx, int32_t vehicleId,
                           ImVec2 vpSz, float topH) {
-    ImGui::SetNextWindowPos ({635.f, topH + 600.f}, ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize({550.f, 225.f},         ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSizeConstraints({140.f, 100.f}, {vpSz.x, vpSz.y});
+    const float ui = ui_scale::get();
+    ImGui::SetNextWindowPos ({635.f * ui, topH + 600.f * ui}, ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize({550.f * ui, 225.f * ui},        ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSizeConstraints({140.f * ui, 100.f * ui}, {vpSz.x, vpSz.y});
 
     ImGui::PushStyleColor(ImGuiCol_WindowBg, (ImVec4)ImColor(COL_BG_WIDGET));
     if (!ImGui::Begin("##Sectors", nullptr,
         PanelFlags() | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse |
-        ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoSavedSettings)) {
+        ImGuiWindowFlags_NoBringToFrontOnFocus)) {
         ImGui::End(); ImGui::PopStyleColor(); return;
     }
 
@@ -89,7 +90,7 @@ void RenderSectorsWindow(const ProContext& ctx, int32_t vehicleId,
     // Reserved for the color legend at the bottom
     const float labelH = 18.f * z;
     float mapW = w;
-    float mapH = h - HDR_H - 2.f - labelH;
+    float mapH = h - header_h() - 2.f - labelH;
 
     dl->AddRectFilled(base, {base.x + mapW, base.y + mapH}, COL_BG);
 
@@ -234,8 +235,8 @@ void RenderSectorsWindow(const ProContext& ctx, int32_t vehicleId,
         float sw    = 11.f * z;
         float fSz   = (ctx.russo ? ctx.russo->FontSize : 11.f) * 0.85f * z;
         float legY  = base.y + mapH + (labelH - sw) * 0.5f;
-        float x     = base.x + PAD * z;
-        float colW  = (mapW - PAD * 2.f * z) / 4.f;
+        float x     = base.x + pad_px() * z;
+        float colW  = (mapW - pad_px() * 2.f * z) / 4.f;
         for (auto& k : key) {
             dl->AddRectFilled({x, legY}, {x + sw, legY + sw}, k.c, 2.f);
             dl->AddText(ctx.russo, fSz, {x + sw + 4.f * z, legY + (sw - fSz) * 0.5f}, COL_DIM, k.t);

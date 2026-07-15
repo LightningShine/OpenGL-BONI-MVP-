@@ -328,8 +328,11 @@ std::vector<glm::vec2> generateTriangle(float size)
 }
 
 void renderVehicle(GLuint shader_program, GLuint vao, GLuint vbo,
-    const Vehicle& vehicle, const glm::mat4& projection)
+    const Vehicle& vehicle, const glm::mat4& projection, float camera_zoom)
 {
+    // Constant on-screen size: world-space vertices shrink as the camera
+    // zooms in, so the marker never covers the track at high zoom.
+    const float markerScale = 1.0f / (camera_zoom > 0.01f ? camera_zoom : 0.01f);
     // ✅ Статические геометрии (генерируются один раз для производительности)
     static std::vector<glm::vec2> circleOutline = generateCircle(
         VehicleConstants::VEHICLE_OUTLINE_RADIUS, 
@@ -399,10 +402,11 @@ void renderVehicle(GLuint shader_program, GLuint vao, GLuint vbo,
     outlineVertices.reserve(outlineShape.size());
     for (const auto& vertex : outlineShape) {
         // ✅ Применяем матрицу поворота (экономит вычисления cos/sin)
-        glm::vec2 transformedVertex = (vehicle.m_is_leader) 
-            ? rotationMatrix * vertex 
+        glm::vec2 transformedVertex = (vehicle.m_is_leader)
+            ? rotationMatrix * vertex
             : vertex;
-        
+        transformedVertex *= markerScale;
+
         outlineVertices.push_back(glm::vec2(
            transformedVertex.x + baseX,
             transformedVertex.y + baseY
@@ -427,10 +431,11 @@ void renderVehicle(GLuint shader_program, GLuint vao, GLuint vbo,
     bodyVertices.reserve(bodyShape.size());
     for (const auto& vertex : bodyShape) {
         // ✅ Применяем матрицу поворота (экономит вычисления cos/sin)
-        glm::vec2 transformedVertex = (vehicle.m_is_leader) 
-            ? rotationMatrix * vertex 
+        glm::vec2 transformedVertex = (vehicle.m_is_leader)
+            ? rotationMatrix * vertex
             : vertex;
-        
+        transformedVertex *= markerScale;
+
         bodyVertices.push_back(glm::vec2(
            transformedVertex.x + baseX,
             transformedVertex.y + baseY
@@ -523,7 +528,7 @@ void renderAllVehicles(GLuint shader_program, GLuint vao, GLuint vbo,
 
     // ✅ Рендеринг БЕЗ блокировки (может занять 10-20ms)
     for (const RenderData& data : vehiclesToRender) {
-        renderVehicle(shader_program, vao, vbo, data.vehicle, projection);
+        renderVehicle(shader_program, vao, vbo, data.vehicle, projection, camera_zoom);
     }
 
     // Draw TLA names above each vehicle if enabled.

@@ -37,6 +37,7 @@
 // === PROJECTS FILES ===
 #include "../Config.h"
 #include "../ui/UI_Config.h"
+#include "../ui/ui_scale.hpp"
 #include "../input/Input.h"
 #include "../rendering/Interpolation.h"
 #include "../rendering/Render.h"          
@@ -557,35 +558,40 @@ int window_width, int window_height, float horizontalBound, float verticalBound)
 
 int main()
 {
-
-	// Platform and feature detection
-	std::cout << "==========================================" << std::endl;
-	std::cout << "   OpenGL Telemetry System" << std::endl;
-	std::cout << "==========================================" << std::endl;
-	
-#if NETWORKING_ENABLED
-	std::cout << "[PLATFORM] Running on x64 architecture" << std::endl;
-	std::cout << "[FEATURES] All features available:" << std::endl;
-	std::cout << "  + GameNetworkingSockets (Server/Client)" << std::endl;
-	std::cout << "  + UPnP Port Forwarding" << std::endl;
-	std::cout << "  + Network Telemetry Streaming" << std::endl;
-	std::cout << "  + Full OpenGL Rendering" << std::endl;
-#else
-	std::cout << "[PLATFORM] Running on ARM64 architecture" << std::endl;
-	std::cout << "[WARNING] Limited functionality mode!" << std::endl;
-	std::cout << std::endl;
-	std::cout << "Disabled features on ARM64:" << std::endl;
-	std::cout << "  - GameNetworkingSockets (Not supported on ARM64 Windows)" << std::endl;
-	std::cout << "  - Network Server/Client functionality" << std::endl;
-	std::cout << "  - UPnP Port Forwarding" << std::endl;
-	std::cout << std::endl;
-	std::cout << "Available features:" << std::endl;
-	std::cout << "  + Local telemetry simulation" << std::endl;
-	std::cout << "  + OpenGL Rendering" << std::endl;
-	std::cout << "  + Serial COM port support" << std::endl;
-	std::cout << std::endl;
-	std::cout << "=> For full networking features, please use x64 build!" << std::endl;
+#ifdef _WIN32
+	// Console in UTF-8, otherwise Cyrillic (track/driver names, paths) prints as '?'
+	SetConsoleOutputCP(CP_UTF8);
+	SetConsoleCP(CP_UTF8);
+	// Explicit TrueType font: UTF-8 needs one, and conhost resets to a tiny
+	// raster font when the codepage changes
+	{
+		HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
+		CONSOLE_FONT_INFOEX cf{};
+		cf.cbSize = sizeof(cf);
+		if (GetCurrentConsoleFontEx(hOut, FALSE, &cf))
+		{
+			wcscpy_s(cf.FaceName, L"Consolas");
+			cf.dwFontSize.X = 0;
+			cf.dwFontSize.Y = 16;
+			SetCurrentConsoleFontEx(hOut, FALSE, &cf);
+		}
+	}
 #endif
+
+	// Стартовый баннер. Сетевой стек — WebSocket-клиент Track Server, он
+	// работает на всех архитектурах (старый GNS удалён, см. Server.h).
+	std::cout << "==========================================" << std::endl;
+	std::cout << "   " << UIConfig::APP_NAME << " Telemetry System" << std::endl;
+	std::cout << "==========================================" << std::endl;
+#if defined(_M_ARM64)
+	std::cout << "[PLATFORM] Windows ARM64" << std::endl;
+#elif defined(_M_X64)
+	std::cout << "[PLATFORM] Windows x64" << std::endl;
+#else
+	std::cout << "[PLATFORM] Windows (unknown arch)" << std::endl;
+#endif
+	std::cout << "[FEATURES] Track Server client (WebSocket), COM telemetry, "
+	             "simulation, OpenGL rendering" << std::endl;
 	std::cout << "==========================================" << std::endl;
 	std::cout << std::endl;
 
@@ -658,7 +664,10 @@ int main()
     // Use NULL for monitor to create a windowed mode (borderless because of GLFW_DECORATED = FALSE)
     // This fixes the black screen issue on capture and cursor visibility
 	glfwWindowHint(GLFW_SAMPLES, 4);
-	
+	// DPI: окно само меняет размер при переносе на монитор с другим масштабом,
+	// а ui_scale получает колбэк и пересобирает шрифты (см. src/ui/ui_scale.hpp)
+	glfwWindowHint(GLFW_SCALE_TO_MONITOR, GLFW_TRUE);
+
 	std::cout << "[MAIN] Creating window " << Width << "x" << Height << "..." << std::endl;
 	GLFWwindow* window = glfwCreateWindow(Width, Height, UIConfig::APP_NAME, NULL, NULL);
 	
@@ -694,6 +703,7 @@ int main()
 	}
 	
 	std::cout << "[MAIN] Window created successfully" << std::endl;
+	ui_scale::init(window);
 
 
 

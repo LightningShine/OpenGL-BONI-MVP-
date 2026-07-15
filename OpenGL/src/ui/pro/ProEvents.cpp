@@ -208,13 +208,14 @@ static void detectEvents() {
 void RenderEventsWindow(const ProContext& ctx, ImVec2 vpSz, float topH) {
     detectEvents();
 
-    ImGui::SetNextWindowPos ({210.f, topH + 600.f}, ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize({200.f, 225.f},         ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSizeConstraints({120.f, 80.f}, {vpSz.x, vpSz.y});
+    const float ui = ui_scale::get();
+    ImGui::SetNextWindowPos ({210.f * ui, topH + 600.f * ui}, ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize({200.f * ui, 225.f * ui},        ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSizeConstraints({120.f * ui, 80.f * ui}, {vpSz.x, vpSz.y});
 
     if (!ImGui::Begin("##Events", nullptr,
         PanelFlags() | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse |
-        ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoSavedSettings)) {
+        ImGuiWindowFlags_NoBringToFrontOnFocus)) {
         ImGui::End(); return;
     }
 
@@ -227,7 +228,7 @@ void RenderEventsWindow(const ProContext& ctx, ImVec2 vpSz, float topH) {
 
     float fSz  = (ctx.russo   ? ctx.russo->FontSize   : ImGui::GetFontSize()) * z;
     float fReg = (ctx.regular ? ctx.regular->FontSize : ImGui::GetFontSize()) * z;
-    float pad  = PAD * z;
+    float pad  = pad_px() * z;
     ImDrawList* dl = ImGui::GetWindowDrawList();
 
     if (s_log.empty()) {

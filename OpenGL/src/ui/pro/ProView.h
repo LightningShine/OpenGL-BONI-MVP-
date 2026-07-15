@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <cmath>
 #include <cstdint>
+#include "../ui_scale.hpp"
 
 struct ProContext {
     ImFont* regular;   // Ubuntu Regular ~12px (menu size)
@@ -10,6 +11,7 @@ struct ProContext {
     ImFont* title;     // Russo One ~32px (large lap time)
     ImFont* mono;      // Roboto Mono
     ImFont* russo;     // Russo One small ~13px (panel labels/numbers)
+    ImFont* jb;        // JetBrains Mono Bold ~32px (sector labels/times)
     void*   logoTex;
 };
 
@@ -48,8 +50,9 @@ static constexpr ImU32 COL_S2         = IM_COL32(165,  85, 210, 255);
 static constexpr ImU32 COL_S3         = IM_COL32(220,  70,  70, 255);
 
 // ── Layout constants ─────────────────────────────────────────────────────────
-static constexpr float PAD   = 10.f;  // horizontal content padding
-static constexpr float HDR_H = 26.f;  // panel header height
+// Пункты × DPI (ui_scale): панели держат физический размер на любом мониторе
+inline float pad_px()    { return ui_scale::points(10.f); } // horizontal content padding
+inline float header_h()  { return ui_scale::points(26.f); } // panel header height
 
 // Layout lock — toggled from View menu; persists per session
 extern bool g_pro_layout_locked;
@@ -73,38 +76,50 @@ inline ImGuiWindowFlags PanelFlags() {
 inline void DrawPanelHeader(const ProContext& ctx, const char* label,
                              bool showGear = false, ImFont* labelFont = nullptr,
                              float scale = 1.f) {
+    // Keep every PRO panel on-screen: saved positions from another monitor or a
+    // resolution change must not leave windows (half) outside the viewport.
+    {
+        const ImGuiViewport* v = ImGui::GetMainViewport();
+        ImVec2 ws = ImGui::GetWindowSize(), wp = ImGui::GetWindowPos();
+        ImVec2 ns = {fminf(ws.x, v->WorkSize.x), fminf(ws.y, v->WorkSize.y)};
+        ImVec2 np = {fminf(fmaxf(wp.x, v->WorkPos.x), v->WorkPos.x + v->WorkSize.x - ns.x),
+                     fminf(fmaxf(wp.y, v->WorkPos.y), v->WorkPos.y + v->WorkSize.y - ns.y)};
+        if (ns.x != ws.x || ns.y != ws.y) ImGui::SetWindowSize(ns);
+        if (np.x != wp.x || np.y != wp.y) ImGui::SetWindowPos(np);
+    }
     float       w  = ImGui::GetWindowWidth();
     ImDrawList* dl = ImGui::GetWindowDrawList();
     ImVec2      p  = ImGui::GetCursorScreenPos();
 
-    dl->AddRectFilled(p, {p.x + w, p.y + HDR_H}, COL_HDR_BG);
-    dl->AddLine({p.x, p.y + HDR_H}, {p.x + w, p.y + HDR_H}, COL_GOLD_DIM, 1.f);
+    const float hdrH = header_h();
+    dl->AddRectFilled(p, {p.x + w, p.y + hdrH}, COL_HDR_BG);
+    dl->AddLine({p.x, p.y + hdrH}, {p.x + w, p.y + hdrH}, COL_GOLD_DIM, 1.f);
 
-    // Header bar height stays HDR_H (panel layout depends on it); only the label
-    // font scales with the panel zoom, clamped so it still fits the bar.
+    // Header bar height is fixed per DPI (panel layout depends on it); only the
+    // label font scales with the panel zoom, clamped so it still fits the bar.
     ImFont* lf  = labelFont ? labelFont : ctx.russo;
     float   fSz = (lf ? lf->FontSize : ImGui::GetFontSize()) * scale;
-    if (fSz > HDR_H - 6.f) fSz = HDR_H - 6.f;
-    float   ty  = p.y + (HDR_H - fSz) * 0.5f;
+    if (fSz > hdrH - 6.f) fSz = hdrH - 6.f;
+    float   ty  = p.y + (hdrH - fSz) * 0.5f;
     dl->AddText(lf, fSz, {p.x + 8.f, ty}, IM_COL32(210, 210, 210, 255), label);
 
     if (showGear) {
-        ImVec2 gc = {p.x + w - 14.f, p.y + HDR_H * 0.5f};
+        ImVec2 gc = {p.x + w - 14.f, p.y + hdrH * 0.5f};
         dl->AddCircle(gc, 6.f, COL_DIM, 8, 1.5f);
         dl->AddCircleFilled(gc, 2.2f, COL_DIM);
     }
 
     // Advance cursor past header (always a Dummy — avoids InvisibleButton
     // item-state side-effects that can break subsequent content rendering)
-    ImGui::Dummy(ImVec2(w, HDR_H + 2.f));
+    ImGui::Dummy(ImVec2(w, hdrH + 2.f));
 
     // Drag: raw rect check so we never touch the ImGui item stack
     if (!g_pro_layout_locked) {
         ImVec2 wp    = ImGui::GetWindowPos();
-        ImVec2 hMax  = {wp.x + w, wp.y + HDR_H};
+        ImVec2 hMax  = {wp.x + w, wp.y + hdrH};
         ImVec2 click = ImGui::GetIO().MouseClickedPos[0]; // where LMB was pressed
         bool   startedInHdr = click.x >= wp.x && click.x <= wp.x + w &&
-                              click.y >= wp.y && click.y <= wp.y + HDR_H;
+                              click.y >= wp.y && click.y <= wp.y + hdrH;
         if (ImGui::IsMouseHoveringRect(wp, hMax, false))
             ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
         if (startedInHdr && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
@@ -127,9 +142,9 @@ inline void DrawSep(float alpha = 1.f) {
 // Call from inside a Begin/End window.
 inline void LabelValue(const ProContext& ctx, const char* lbl, const char* val,
                         ImU32 valCol = COL_WHITE) {
-    float rightX = ImGui::GetContentRegionMax().x - PAD;
+    float rightX = ImGui::GetContentRegionMax().x - pad_px();
 
-    ImGui::SetCursorPosX(PAD);
+    ImGui::SetCursorPosX(pad_px());
     if (ctx.russo) ImGui::PushFont(ctx.russo);
     ImGui::PushStyleColor(ImGuiCol_Text, (ImVec4)ImColor(COL_LABEL));
     ImGui::TextUnformatted(lbl);

@@ -684,8 +684,15 @@ void processIncomingTelemetry(const TelemetryPacket& packet, bool count_pps)
                     << std::endl;
             }
 
-            // Update track progress (needed for consistent leader + lap logic on clients)
-            vehicle.m_track_progress = calculateTrackProgressFromPosition(vehicle.m_normalized_x, vehicle.m_normalized_y);
+            // Update track progress (needed for consistent leader + lap logic on clients).
+            // Track points live in the centered frame; GPS coords are raw, so
+            // shift by the render offset before matching against the track.
+            {
+                const glm::vec2 off = vehicle.m_apply_track_render_offset
+                                        ? getTrackRenderOffset() : glm::vec2(0.0f, 0.0f);
+                vehicle.m_track_progress = calculateTrackProgressFromPosition(
+                    vehicle.m_normalized_x + off.x, vehicle.m_normalized_y + off.y);
+            }
 
             vehicle.m_last_update_time = std::chrono::steady_clock::now();
             vehicle.m_has_authoritative_state = false;
@@ -765,8 +772,14 @@ void processIncomingTelemetry(const TelemetryPacket& packet, bool count_pps)
                     << std::endl;
             }
 
-            // Compute initial track progress (needed for correct leader/standings immediately)
-            new_vehicle.m_track_progress = calculateTrackProgressFromPosition(new_vehicle.m_normalized_x, new_vehicle.m_normalized_y);
+            // Compute initial track progress (needed for correct leader/standings
+            // immediately). Same frame shift as in the update path above.
+            {
+                const glm::vec2 off = new_vehicle.m_apply_track_render_offset
+                                        ? getTrackRenderOffset() : glm::vec2(0.0f, 0.0f);
+                new_vehicle.m_track_progress = calculateTrackProgressFromPosition(
+                    new_vehicle.m_normalized_x + off.x, new_vehicle.m_normalized_y + off.y);
+            }
 
             TrackRecorder::OnTelemetryPosition(raceID, glm::vec2(static_cast<float>(new_vehicle.m_normalized_x), static_cast<float>(new_vehicle.m_normalized_y)));
 
@@ -1177,6 +1190,9 @@ static void simulationThreadWorker(int vehicle_id, std::vector<SplinePoint> smoo
                 new_vehicle.m_has_authoritative_state = false;
                 new_vehicle.m_last_update_time = std::chrono::steady_clock::now();
                 new_vehicle.name = "CAR" + std::to_string(vehicle_id);
+                // Sim positions come straight from the recentered track points, so
+                // the render offset (meant for raw-GPS vehicles) must not be added.
+                new_vehicle.m_apply_track_render_offset = false;
                 auto [insertedIt, inserted] = g_vehicles.emplace(vehicle_id, std::move(new_vehicle));
                 it = insertedIt;
             }
@@ -1193,6 +1209,7 @@ static void simulationThreadWorker(int vehicle_id, std::vector<SplinePoint> smoo
                 vehicle.m_track_progress = track_progress;
                 vehicle.m_has_authoritative_state = false;
                 vehicle.m_last_update_time = std::chrono::steady_clock::now();
+                vehicle.m_apply_track_render_offset = false;  // track-frame coords
             }
 
             fillPacketRaceStateFromVehicle(packet, it->second);

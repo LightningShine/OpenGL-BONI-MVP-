@@ -38,9 +38,10 @@ static constexpr float REF_W    = 200.f;
 
 void RenderLapListWindow(const ProContext& ctx, int32_t vehicleId,
                           ImVec2 vpSz, float topH) {
-    ImGui::SetNextWindowPos ({0.f,   topH},          ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize({210.f, 380.f},          ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSizeConstraints({150.f, 100.f}, {vpSz.x, vpSz.y});
+    const float ui = ui_scale::get();
+    ImGui::SetNextWindowPos ({0.f,   topH},                   ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize({210.f * ui, 380.f * ui},        ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSizeConstraints({150.f * ui, 100.f * ui}, {vpSz.x, vpSz.y});
 
     if (!ImGui::Begin("##LapList", nullptr,
         PanelFlags() | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse |

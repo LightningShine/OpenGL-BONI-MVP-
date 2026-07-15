@@ -30,11 +30,12 @@ namespace
 	EdgePhase g_phase = EdgePhase::Idle;
 
 	std::vector<glm::vec2> g_points;       // active recording buffer
-	std::vector<glm::vec2> g_left_points;  // stored after SwitchToRightEdge
+	std::vector<glm::vec2> g_left_points;  // stored after FinishLeftEdge
 	std::vector<SplinePoint> g_smooth;
 	glm::vec2 g_sf_p1(0.0f), g_sf_p2(0.0f);
 	glm::vec2 g_start(0.0f), g_last(0.0f);
 	float g_len_m = 0.0f;
+	int g_last_fix_type = 0;               // fix type of the latest GPS packet
 
 	// ── helpers ─────────────────────────────────────────────────────────────
 
@@ -276,6 +277,12 @@ namespace TelemetryTrackBuilder
 		if (!g_active || g_finalized) return;
 		if (packet.MagicMarker != PACKET_MAGIC_DATA && packet.MagicMarker != PacketMagic::DATA) return;
 
+		g_last_fix_type = packet.fixtype;
+
+		// During Transit the rider is only driving over to the other edge —
+		// those positions are not part of the track.
+		if (g_phase == EdgePhase::Transit || g_phase == EdgePhase::Review) return;
+
 		const double lat = (double)packet.lat / 1e7;
 		const double lon = (double)packet.lon / 1e7;
 		ensureOriginLocked(lat, lon);
@@ -334,26 +341,55 @@ namespace TelemetryTrackBuilder
 		g_sf_p1 = g_sf_p2 = glm::vec2(0.0f);
 		g_start = g_last = glm::vec2(0.0f);
 		g_len_m = 0.0f;
+		g_last_fix_type = 0;
 	}
 
-	bool SwitchToRightEdge()
+	bool FinishLeftEdge()
 	{
 		std::lock_guard<std::mutex> lock(g_mutex);
 		if (g_phase != EdgePhase::Left || g_points.size() < g_settings.minPointsToClose) return false;
+		// Store the left edge and pause: points are ignored until the rider
+		// reaches the right edge start and presses "Start Right Edge".
 		g_left_points = std::move(g_points);
 		g_points.clear();
+		g_phase = EdgePhase::Transit;
+		return true;
+	}
+
+	bool StartRightEdge()
+	{
+		std::lock_guard<std::mutex> lock(g_mutex);
+		if (g_phase != EdgePhase::Transit) return false;
 		g_start = g_last = glm::vec2(0.0f);
 		g_len_m = 0.0f;
 		g_phase = EdgePhase::Right;
 		return true;
 	}
 
-	bool FinalizeEdges()
+	bool FinishRightEdge()
 	{
 		std::lock_guard<std::mutex> lock(g_mutex);
 		if (g_phase != EdgePhase::Right || g_points.size() < g_settings.minPointsToClose) return false;
+		// Recording is over; both raw edges stay in the buffers for the
+		// review screen. Nothing is finalized or saved yet.
+		g_active = false;
+		g_phase = EdgePhase::Review;
+		return true;
+	}
+
+	bool SubmitReviewedEdges(std::vector<glm::vec2> left, std::vector<glm::vec2> right)
+	{
+		std::lock_guard<std::mutex> lock(g_mutex);
+		if (g_phase != EdgePhase::Review) return false;
+		if (left.size() < 2 || right.size() < 2) return false;
+		g_left_points = std::move(left);
+		g_points      = std::move(right);
 		return finalizeEdgesLocked();
 	}
+
+	size_t PointCount()   { std::lock_guard<std::mutex> l(g_mutex); return g_points.size(); }
+	float  LengthMeters() { std::lock_guard<std::mutex> l(g_mutex); return g_len_m; }
+	int    LastFixType()  { std::lock_guard<std::mutex> l(g_mutex); return g_last_fix_type; }
 
 	bool InjectSyntheticEdges(std::vector<glm::vec2> left, std::vector<glm::vec2> right)
 	{

@@ -1,4 +1,5 @@
 #include "ProTrackMap.h"
+#include "../ui_scale.hpp"
 #include "../../racing/RaceManager.h"
 #include "../../rendering/Interpolation.h"
 #include "../../vehicle/Vehicle.h"
@@ -10,6 +11,7 @@
 #include <map>
 #include <chrono>
 #include <climits>
+#include <cfloat>
 #include <algorithm>
 #include <cstdio>
 #include <cmath>
@@ -25,15 +27,13 @@ namespace Pro {
 struct SecStyle { ImU32 bg, text, accent; };
 static constexpr SecStyle SEC_PURPLE = { IM_COL32(0x1B,0x03,0x6F,255), IM_COL32(0xBB,0x8E,0xF9,255), IM_COL32(0xBB,0x8E,0xF9,255) }; // fastest in session
 static constexpr SecStyle SEC_GREEN  = { IM_COL32(0x03,0x4F,0x1B,255), IM_COL32(0x6E,0xF9,0x8E,255), IM_COL32(0x6E,0xF9,0x8E,255) }; // beats own best sector
-static constexpr SecStyle SEC_YELLOW = { IM_COL32(0x6F,0x64,0x03,255), IM_COL32(0xDA,0xA5,0x40,255), IM_COL32(0xDA,0xA5,0x40,255) }; // < 1s off best sector
-static constexpr SecStyle SEC_RED    = { IM_COL32(0x6E,0x00,0x00,255), IM_COL32(0xCE,0x2B,0x2B,255), IM_COL32(0xCE,0x2B,0x2B,255) }; // > 1s off best sector
+static constexpr SecStyle SEC_YELLOW = { IM_COL32(0x6F,0x64,0x03,255), IM_COL32(0xDA,0xA5,0x40,255), IM_COL32(0xDA,0xA5,0x40,255) }; // worse than own best
+static constexpr SecStyle SEC_RED    = { IM_COL32(0x6E,0x00,0x00,255), IM_COL32(0xCE,0x2B,0x2B,255), IM_COL32(0xCE,0x2B,0x2B,255) }; // slowest of all cars
 static constexpr SecStyle SEC_NONE   = { IM_COL32(0x20,0x20,0x20,255), IM_COL32(0xF0,0xF0,0xF0,255), IM_COL32(0xB3,0xB3,0xB3,255) }; // no data / running
 
 static constexpr ImU32 SEC_MARK  = IM_COL32(0xCE,0x2B,0x2B,255); // red boundary line
 static constexpr float SEC_EPS   = 0.005f;
 static constexpr int   HOLD_SECS = 10;        // keep finished-lap sectors after the finish
-// Reference cell proportions from the SVG mockups (value 147 × total 68).
-static constexpr float CELL_RATIO = 147.f / 68.f;
 
 // Sector time format: "23.231" under a minute, "1:05.402" over.
 static void fmtSector(float s, char* b, size_t n) {
@@ -81,15 +81,26 @@ static void accMin(float dst[3], bool dv[3], const float z[3], const bool zv[3])
     for (int k = 0; k < 3; ++k)
         if (zv[k] && (!dv[k] || z[k] < dst[k])) { dst[k] = z[k]; dv[k] = true; }
 }
+static void accMax(float dst[3], bool dv[3], const float z[3], const bool zv[3]) {
+    for (int k = 0; k < 3; ++k)
+        if (zv[k] && (!dv[k] || z[k] > dst[k])) { dst[k] = z[k]; dv[k] = true; }
+}
 
-// Color a sector vs the driver's best-ever time for THAT sector (bestS) and the
-// overall session best for that sector (sessS).
-static SecStyle colorFor(float secT, const float bestS[3], const bool bestV[3],
-                         const float sessS[3], const bool sessV[3], int i) {
-    if (sessV[i] && secT <= sessS[i] + SEC_EPS)    return SEC_PURPLE;
-    if (bestV[i] && secT - bestS[i] <= SEC_EPS)    return SEC_GREEN;
-    if (bestV[i] && secT - bestS[i] <  1.0f)       return SEC_YELLOW;
-    if (bestV[i])                                  return SEC_RED;
+// All sector-time comparisons for one vehicle, so colorFor stays short.
+struct SecCmp {
+    float bestS[3]; bool bestV[3] = { false };   // own best PER SECTOR (all laps)
+    float sessS[3]; bool sessV[3] = { false };   // fastest PER SECTOR (all cars)
+    float sessW[3]; bool sessWV[3] = { false };  // slowest PER SECTOR (all cars)
+};
+
+// Purple: fastest of every run of this sector by any car. Red: the slowest.
+// Green: matches/beats own best for the sector. Yellow: worse than own best.
+static SecStyle colorFor(float secT, const SecCmp& c, int i) {
+    if (c.sessV[i]  && secT <= c.sessS[i] + SEC_EPS)  return SEC_PURPLE;
+    if (c.sessWV[i] && secT >= c.sessW[i] - SEC_EPS
+                    && c.sessW[i] > c.sessS[i] + SEC_EPS) return SEC_RED;
+    if (c.bestV[i]  && secT <= c.bestS[i] + SEC_EPS)  return SEC_GREEN;
+    if (c.bestV[i])                                   return SEC_YELLOW;
     return SEC_NONE;
 }
 
@@ -102,6 +113,51 @@ struct SecHold {
     std::chrono::steady_clock::time_point holdUntil;
 };
 static std::map<int32_t, SecHold> s_hold;
+
+// Shared with LAP INFO — same freeze/live logic as the map's sector widgets.
+SectorSnapshot GetSectorSnapshot(int32_t vehicleId) {
+    SectorSnapshot s;
+    for (int i = 0; i < 3; ++i) { s.t[i] = -1.f; s.live[i] = false; s.delta[i] = 0.f; s.hasDelta[i] = false; }
+
+    float curBt[4] = { -1.f, -1.f, -1.f, -1.f };
+    float bestS[3]; bool bestV[3] = { false };
+    float lastS[3]; bool lastV[3] = { false };
+
+    std::lock_guard<std::mutex> lk(g_vehicles_mutex);
+    auto it = g_vehicles.find(vehicleId);
+    if (it == g_vehicles.end()) return s;
+    Vehicle& v = it->second;
+    auto lapTimeOf = [&](int ln) -> float {
+        auto m = v.m_laps.find(ln);
+        return (m != v.m_laps.end()) ? m->second.lapTime : -1.f;
+    };
+    int   curLap   = v.m_current_lap_number;
+    float curTimer = v.m_current_lap_timer;
+
+    auto cit = v.laps.find(curLap);
+    if (cit != v.laps.end()) crossTimes(cit->second.samples, curBt);
+    for (auto& [ln, sess] : v.laps) {
+        float z[3]; bool zv[3]; secCompleted(sess.samples, lapTimeOf(ln), z, zv);
+        accMin(bestS, bestV, z, zv);
+    }
+    auto lit = v.laps.find(curLap - 1);
+    if (lit != v.laps.end()) secCompleted(lit->second.samples, lapTimeOf(curLap - 1), lastS, lastV);
+
+    for (int i = 0; i < 3; ++i) {
+        if (curBt[i] >= 0.f && curBt[i + 1] >= 0.f) {
+            s.t[i] = curBt[i + 1] - curBt[i];
+            if (bestV[i]) { s.delta[i] = s.t[i] - bestS[i]; s.hasDelta[i] = true; }
+        } else if (curBt[i] >= 0.f) {
+            float lt = curTimer - curBt[i];
+            s.t[i] = lt < 0.f ? 0.f : lt;
+            s.live[i] = true;
+        } else if (lastV[i]) {
+            s.t[i] = lastS[i];
+            if (bestV[i]) { s.delta[i] = s.t[i] - bestS[i]; s.hasDelta[i] = true; }
+        }
+    }
+    return s;
+}
 
 // Small checkered start/finish flag with a short pole (p = top of pole).
 static void DrawFlag(ImDrawList* dl, ImVec2 p, float sz) {
@@ -116,73 +172,69 @@ static void DrawFlag(ImDrawList* dl, ImVec2 p, float sz) {
                                   IM_COL32(220,220,220,255));
 }
 
-// Strip geometry, sized from available width/height with a max cell size so the
-// cells keep the reference aspect ratio instead of stretching.
-struct StripLayout { float carW, nameW, cellW, cellGap, contentW; };
-static StripLayout computeStrip(float availW, float cellH, float ux) {
-    StripLayout L;
-    L.carW    = fmaxf(38.f * ux, 32.f);
-    L.nameW   = fmaxf(120.f * ux, 92.f);
-    L.cellGap = 4.f;
-    float fixed    = L.carW + 2.f + L.nameW + 8.f;
-    float maxCellW = cellH * CELL_RATIO;
-    float share    = (availW - fixed - L.cellGap * 3.f) / 4.f;
-    L.cellW    = fminf(share, maxCellW); if (L.cellW < 40.f) L.cellW = 40.f;
-    L.contentW = fixed + 4.f * L.cellW + L.cellGap * 3.f;
-    return L;
-}
-
-// Bottom strip: car number + name + 3 colored sector cells + LAP TIME cell.
+// Bottom strip: Rassens.svg geometry (pos 39 | name 148 | 4 cells 147, height 68,
+// header 23 + 7 gap) at a single scale `ss` — same system as the mini widgets, so
+// it shrinks uniformly with the window. Name box grows to fit long names.
 static void DrawStatusStrip(ImDrawList* dl, const ProContext& ctx,
-                             ImVec2 base, float stripH, const StripLayout& L,
+                             float cx, float topY, float ss,
                              const char* driverNum, const char* driverName,
                              const char* secTime[3], const SecStyle secStyle[3],
-                             const char* lapTime, float scale) {
-    float fSz  = (ctx.russo ? ctx.russo->FontSize : 12.f) * scale;
-    float hdrH = fmaxf(stripH * 0.34f, 16.f);
-    float gap  = 3.f;
-    float valY = base.y + hdrH + gap;
-    float valH = stripH - hdrH - gap;
-    float x = base.x;
+                             const char* lapTime) {
+    ImFont* fRusso = ctx.title ? ctx.title : ctx.russo;
+    ImFont* fMono  = ctx.jb ? ctx.jb : (ctx.bold ? ctx.bold : ctx.russo);
+    float posW = 39.f * ss, cellW = 147.f * ss, hdrH = 23.f * ss, boxH = 38.f * ss;
+    float vGap = 7.f * ss, gapS = 6.f * ss, gapC = 8.f * ss;
+    float nameFsz = boxH * 0.50f;
+    float nameW = fmaxf(148.f * ss,
+                        fRusso->CalcTextSizeA(nameFsz, FLT_MAX, 0.f, driverName).x + 24.f * ss);
+    float totalW = posW + gapS + nameW + gapC + 4.f * cellW + 3.f * gapC;
+    float x    = cx - totalW * 0.5f;
+    float boxY = topY + hdrH + vGap;
 
-    dl->AddRectFilled({x, valY}, {x + L.carW, valY + valH}, IM_COL32(0x18,0x18,0x18,255));
-    float nW = ImGui::CalcTextSize(driverNum).x;
-    dl->AddText(ctx.bold ? ctx.bold : ctx.russo, fSz * 1.2f,
-                {x + (L.carW - nW) * 0.5f, valY + (valH - fSz * 1.2f) * 0.5f}, COL_WHITE, driverNum);
-    x += L.carW + 2.f;
+    auto centered = [&](ImFont* f, float sz, float x0, float w0, float y0, float h0,
+                        ImU32 col, const char* txt) {
+        float tw = f->CalcTextSizeA(sz, FLT_MAX, 0.f, txt).x;
+        dl->AddText(f, sz, {x0 + (w0 - tw) * 0.5f, y0 + (h0 - sz) * 0.5f}, col, txt);
+    };
 
-    dl->AddRectFilled({x, valY}, {x + L.nameW, valY + valH}, IM_COL32(0x20,0x20,0x20,255));
-    dl->AddText(ctx.bold ? ctx.bold : ctx.russo, fSz,
-                {x + 8.f, valY + (valH - fSz) * 0.5f}, COL_WHITE, driverName);
-    x += L.nameW + 8.f;
+    dl->AddRectFilled({x, boxY}, {x + posW, boxY + boxH}, IM_COL32(0x18,0x18,0x18,255));
+    centered(fRusso, boxH * 0.55f, x, posW, boxY, boxH, COL_WHITE, driverNum);
+    x += posW + gapS;
+
+    dl->AddRectFilled({x, boxY}, {x + nameW, boxY + boxH}, IM_COL32(0x20,0x20,0x20,255));
+    centered(fRusso, nameFsz, x, nameW, boxY, boxH, COL_WHITE, driverName);
+    x += nameW + gapC;
 
     const char* labels[4] = { "SECTOR 1", "SECTOR 2", "SECTOR 3", "LAP TIME" };
     for (int i = 0; i < 4; ++i) {
         SecStyle st = (i < 3) ? secStyle[i] : SEC_NONE;
         const char* val = (i < 3) ? secTime[i] : lapTime;
 
-        dl->AddRectFilled({x, base.y}, {x + L.cellW, base.y + hdrH}, IM_COL32(0x29,0x29,0x29,255));
-        dl->AddText(ctx.russo, fSz * 0.8f, {x + 8.f, base.y + (hdrH - fSz * 0.8f) * 0.5f},
-                    COL_WHITE, labels[i]);
+        dl->AddRectFilled({x, topY}, {x + cellW, topY + hdrH}, IM_COL32(0x29,0x29,0x29,255));
+        centered(fMono, hdrH * 0.70f, x, cellW, topY, hdrH, st.text, labels[i]);
 
-        dl->AddRectFilled({x, valY}, {x + L.cellW, valY + valH}, st.bg);
-        dl->AddRectFilled({x, valY}, {x + 4.f, valY + valH}, st.accent);
-        dl->AddText(ctx.bold ? ctx.bold : ctx.russo, fSz * 1.15f,
-                    {x + 12.f, valY + (valH - fSz * 1.15f) * 0.5f}, st.text, val);
-        x += L.cellW + L.cellGap;
+        dl->AddRectFilled({x, boxY}, {x + cellW, boxY + boxH}, st.bg);
+        dl->AddRectFilled({x, boxY}, {x + 5.f * ss, boxY + boxH}, st.accent);
+        centered(fMono, boxH * 0.60f, x + 5.f * ss, cellW - 5.f * ss, boxY, boxH, st.text, val);
+        x += cellW + gapC;
     }
 }
 
 void RenderTrackMapWindow(const ProContext& ctx, int32_t vehicleId,
                            ImVec2 vpSz, float topH) {
-    ImGui::SetNextWindowPos ({210.f, topH},           ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize({970.f, 600.f},           ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSizeConstraints({200.f, 150.f}, {vpSz.x, vpSz.y});
+    // Default/min sizes in points × DPI so the panel keeps its physical size
+    // on any monitor (see src/ui/ui_scale.hpp).
+    const float ui = ui_scale::get();
+    ImGui::SetNextWindowPos ({210.f * ui, topH},          ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize({970.f * ui, 600.f * ui},    ImGuiCond_FirstUseEver);
+    // Min size keeps the map + sector widgets legible for both wide and tall tracks.
+    ImGui::SetNextWindowSizeConstraints({fminf(640.f * ui, vpSz.x), fminf(480.f * ui, vpSz.y)},
+                                        {vpSz.x, vpSz.y});
 
     ImGui::PushStyleColor(ImGuiCol_WindowBg, (ImVec4)ImColor(COL_BG));
     if (!ImGui::Begin("##TrackMap", nullptr,
         PanelFlags() | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse |
-        ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoSavedSettings)) {
+        ImGuiWindowFlags_NoBringToFrontOnFocus)) {
         ImGui::End(); ImGui::PopStyleColor(); return;
     }
 
@@ -197,28 +249,49 @@ void RenderTrackMapWindow(const ProContext& ctx, int32_t vehicleId,
     ImDrawList* dl   = ImGui::GetWindowDrawList();
     ImVec2      base = ImGui::GetCursorScreenPos();
 
-    // Floating strip: capped height, margins on every side, off the bottom edge.
-    const float STRIP_H    = fminf(fmaxf(66.f * uy, 58.f), 80.f) * z;
+    // ROTATE (header, right): turns the loaded track by 90° per click.
+    static int s_map_rot = 0;
+    if (!g_smooth_track_points.empty()) {
+        const char* rotLbl = "ROTATE";
+        ImVec2 wp = ImGui::GetWindowPos();
+        ImFont* rf = ctx.russo ? ctx.russo : ImGui::GetFont();
+        float rsz = rf->FontSize;
+        float tw  = rf->CalcTextSizeA(rsz, FLT_MAX, 0.f, rotLbl).x;
+        ImVec2 bmin = {wp.x + w - tw - 20.f, wp.y}, bmax = {wp.x + w - 4.f, wp.y + header_h()};
+        bool hov = ImGui::IsMouseHoveringRect(bmin, bmax, false);
+        dl->AddText(rf, rsz, {wp.x + w - tw - 12.f, wp.y + (header_h() - rsz) * 0.5f},
+                    hov ? COL_WHITE : COL_LABEL, rotLbl);
+        if (hov && ImGui::IsMouseClicked(0))
+            s_map_rot = (s_map_rot + 1) & 3;
+    }
+
+    // Strip scale — same reference system (Rassens.svg) as the mini sector
+    // widgets, so the whole bottom row shrinks uniformly with the window.
+    const float ss = fminf(fmaxf(fminf(w / 1039.f, h / 550.f), 0.5f), 1.f) * 0.85f * z;
+    const float STRIP_H    = 68.f * ss;
     const float TOP_GAP    = fmaxf(10.f * uy, 8.f);
     const float BOT_MARGIN = fmaxf(14.f * uy, 12.f);
-    const float SIDE_MARGIN= fmaxf(w * 0.035f, 16.f);
-    const float STRIP_PAD  = 6.f;
-    float mapH = h - HDR_H - 2.f - STRIP_H - TOP_GAP - BOT_MARGIN;
+    float mapH = h - header_h() - 2.f - STRIP_H - TOP_GAP - BOT_MARGIN;
     float mapW = w;
 
     dl->AddRectFilled(base, {base.x + mapW, base.y + mapH}, COL_BG);
 
     // ── Gather lap/sector data under the vehicles lock ─────────────────────────
     float curBt[4]; for (int i = 0; i < 4; ++i) curBt[i] = -1.f;
-    float bestS[3]; bool bestV[3] = { false };   // personal best PER SECTOR (all laps)
-    float sessS[3]; bool sessV[3] = { false };   // overall best PER SECTOR (all cars)
+    SecCmp cmp;
     float lastS[3]; bool lastV[3] = { false };
     int   curLapNum = 0;
     double curProg  = 0.0;
     float curTimer  = 0.f;
     std::string dname = "---";
-    char  dnum[8] = "?";
+    char  dnum[8] = "-";
     float lapPrev = g_race_manager ? g_race_manager->GetVehiclePreviousLapTime(vehicleId) : -1.f;
+    if (g_race_manager)
+        for (auto& st : g_race_manager->GetStandings())
+            if (st.vehicleID == vehicleId && st.position > 0) {
+                snprintf(dnum, sizeof(dnum), "%d", st.position);
+                break;
+            }
     {
         std::lock_guard<std::mutex> lk(g_vehicles_mutex);
         auto lapTimeOf = [](Vehicle& v, int ln) -> float {
@@ -229,7 +302,6 @@ void RenderTrackMapWindow(const ProContext& ctx, int32_t vehicleId,
         if (it != g_vehicles.end()) {
             Vehicle& v = it->second;
             dname     = v.name;
-            snprintf(dnum, sizeof(dnum), "%d", vehicleId);
             curLapNum = v.m_current_lap_number;
             curProg   = v.m_track_progress;
             curTimer  = v.m_current_lap_timer;
@@ -242,15 +314,17 @@ void RenderTrackMapWindow(const ProContext& ctx, int32_t vehicleId,
             // that sector has ever been driven.
             for (auto& [ln, sess] : v.laps) {
                 float z[3]; bool zv[3]; secCompleted(sess.samples, lapTimeOf(v, ln), z, zv);
-                accMin(bestS, bestV, z, zv);
+                accMin(cmp.bestS, cmp.bestV, z, zv);
             }
             auto lit = v.laps.find(curLapNum - 1);
             if (lit != v.laps.end()) secCompleted(lit->second.samples, lapTimeOf(v, curLapNum - 1), lastS, lastV);
         }
+        // Fastest AND slowest run of each sector across every lap of every car.
         for (auto& [id, v] : g_vehicles)
             for (auto& [ln, sess] : v.laps) {
                 float z[3]; bool zv[3]; secCompleted(sess.samples, lapTimeOf(v, ln), z, zv);
-                accMin(sessS, sessV, z, zv);
+                accMin(cmp.sessS, cmp.sessV, z, zv);
+                accMax(cmp.sessW, cmp.sessWV, z, zv);
             }
     }
 
@@ -265,7 +339,7 @@ void RenderTrackMapWindow(const ProContext& ctx, int32_t vehicleId,
             if (lastV[0] || lastV[1] || lastV[2]) {
                 for (int i = 0; i < 3; ++i) {
                     if (lastV[i]) { fmtSector(lastS[i], H.tstr[i], sizeof(H.tstr[i]));
-                                    H.sty[i] = colorFor(lastS[i], bestS, bestV, sessS, sessV, i); }
+                                    H.sty[i] = colorFor(lastS[i], cmp, i); }
                     else { snprintf(H.tstr[i], sizeof(H.tstr[i]), "--.---"); H.sty[i] = SEC_NONE; }
                 }
                 H.holdUntil = now + std::chrono::seconds(HOLD_SECS);
@@ -286,7 +360,7 @@ void RenderTrackMapWindow(const ProContext& ctx, int32_t vehicleId,
             for (int i = 0; i < 3; ++i) {
                 if (sv[i]) {
                     fmtSector(sc[i], secBuf[i], sizeof(secBuf[i]));
-                    secSty[i] = colorFor(sc[i], bestS, bestV, sessS, sessV, i);
+                    secSty[i] = colorFor(sc[i], cmp, i);
                 } else if (i == active && curBt[i] >= 0.f) {
                     float lt = curTimer - curBt[i]; if (lt < 0.f) lt = 0.f;
                     fmtSector(lt, secBuf[i], sizeof(secBuf[i]));
@@ -302,6 +376,28 @@ void RenderTrackMapWindow(const ProContext& ctx, int32_t vehicleId,
     if (lapPrev > 0.f) fmtTime(lapPrev, lapBuf, sizeof(lapBuf));
     else               snprintf(lapBuf, sizeof(lapBuf), "--:--.---");
 
+    // ── Mini sector widgets: live while their sector runs, then frozen until the
+    //    same sector starts again on the next lap ────────────────────────────────
+    char     cardBuf[3][16];
+    SecStyle cardSty[3];
+    for (int i = 0; i < 3; ++i) {
+        if (curBt[i] >= 0.f && curBt[i + 1] >= 0.f) {          // done this lap → frozen
+            float t = curBt[i + 1] - curBt[i];
+            fmtSector(t, cardBuf[i], sizeof(cardBuf[i]));
+            cardSty[i] = colorFor(t, cmp, i);
+        } else if (curBt[i] >= 0.f) {                          // running now → live
+            float lt = curTimer - curBt[i]; if (lt < 0.f) lt = 0.f;
+            fmtSector(lt, cardBuf[i], sizeof(cardBuf[i]));
+            cardSty[i] = SEC_NONE;
+        } else if (lastV[i]) {                                 // holds previous lap
+            fmtSector(lastS[i], cardBuf[i], sizeof(cardBuf[i]));
+            cardSty[i] = colorFor(lastS[i], cmp, i);
+        } else {
+            snprintf(cardBuf[i], sizeof(cardBuf[i]), "--.---");
+            cardSty[i] = SEC_NONE;
+        }
+    }
+
     // ── Track drawing ──────────────────────────────────────────────────────────
     if (g_smooth_track_points.empty()) {
         const char* msg = "No track loaded — drag a .trk2 file here";
@@ -312,24 +408,33 @@ void RenderTrackMapWindow(const ProContext& ctx, int32_t vehicleId,
         ImGui::PopStyleColor();
     } else {
         const size_t n = g_smooth_track_points.size();
-        glm::vec2 lo = g_smooth_track_points[0].position, hi = lo;
+        // 90°-step rotation applied to normalized coords before fitting
+        auto rotPt = [&](glm::vec2 p) -> glm::vec2 {
+            switch (s_map_rot & 3) {
+                case 1:  return { p.y, -p.x };
+                case 2:  return { -p.x, -p.y };
+                case 3:  return { -p.y, p.x };
+                default: return p;
+            }
+        };
+        glm::vec2 lo = rotPt(g_smooth_track_points[0].position), hi = lo;
         for (auto& sp : g_smooth_track_points) {
-            lo.x = lo.x < sp.position.x ? lo.x : sp.position.x;
-            lo.y = lo.y < sp.position.y ? lo.y : sp.position.y;
-            hi.x = hi.x > sp.position.x ? hi.x : sp.position.x;
-            hi.y = hi.y > sp.position.y ? hi.y : sp.position.y;
+            glm::vec2 q = rotPt(sp.position);
+            lo.x = lo.x < q.x ? lo.x : q.x;
+            lo.y = lo.y < q.y ? lo.y : q.y;
+            hi.x = hi.x > q.x ? hi.x : q.x;
+            hi.y = hi.y > q.y ? hi.y : q.y;
         }
         float rX = hi.x - lo.x; if (rX < 1e-6f) rX = 1.f;
         float rY = hi.y - lo.y; if (rY < 1e-6f) rY = 1.f;
-        float pad = fmaxf(80.f * ux, 64.f);   // room for off-track sector cards
-        float scale = fminf((mapW - pad*2) / rX, (mapH - pad*2) / rY);
-        float offX  = base.x + (mapW - rX*scale) * 0.5f;
-        float offY  = base.y + (mapH - rY*scale) * 0.5f;
-        ImVec2 mapCenter = {base.x + mapW * 0.5f, base.y + mapH * 0.5f};
+        float roadTh = fmaxf(mapH * 0.018f, 8.f);
 
-        auto toScreen = [&](glm::vec2 p) -> ImVec2 {
-            return {offX + (p.x - lo.x)*scale, offY + (rY - (p.y - lo.y))*scale};
-        };
+        // Sector widget geometry — Sector 1.svg (346×68: pos 39 | name 148 | cell
+        // 147 with 23px header) at the reduced in-map scale used in Track.svg.
+        float cs      = fminf(fmaxf(fminf(mapW / 1039.f, mapH / 550.f), 0.55f), 1.f) * 0.72f * z;
+        float cPosW   = 39.f * cs, cNameW = 148.f * cs, cCellW = 147.f * cs, cGap = 6.f * cs;
+        float cCardH  = 68.f * cs, cHdrH = 23.f * cs, cBoxH = 38.f * cs;
+        float cTotalW = cPosW + cGap + cNameW + cGap + cCellW;
 
         // Cumulative arc length → so visual boundaries match the arc-length-based
         // lap progress used for timing (point indices are NOT evenly spaced).
@@ -345,9 +450,37 @@ void RenderTrackMapWindow(const ProContext& ctx, int32_t vehicleId,
             for (size_t i = 0; i < n; ++i) if (cum[i] >= target) return i;
             return n - 1;
         };
+        size_t bIdx[3] = { idxAtProg(1.0 / 3.0), idxAtProg(2.0 / 3.0), 0 };
+
+        // Each widget sits on the map side its boundary faces (0 L, 1 R, 2 T, 3 B).
+        // Margins are reserved only on sides that actually hold a widget, so the
+        // track itself takes all the remaining space.
+        int bSide[3];
+        for (int i = 0; i < 3; ++i) {
+            glm::vec2 q = rotPt(g_smooth_track_points[bIdx[i]].position);
+            float nx = (q.x - (lo.x + hi.x) * 0.5f) / (rX * 0.5f);
+            float ny = (q.y - (lo.y + hi.y) * 0.5f) / (rY * 0.5f);
+            bSide[i] = fabsf(nx) >= fabsf(ny) ? (nx >= 0.f ? 1 : 0)
+                                              : (ny >= 0.f ? 2 : 3); // +y = screen top
+        }
+        float mL = 26.f, mR = 26.f, mT = 26.f, mB = 26.f;
+        for (int i = 0; i < 3; ++i) {
+            if (bSide[i] == 0) mL = cTotalW + 30.f;
+            if (bSide[i] == 1) mR = cTotalW + 30.f;
+            if (bSide[i] == 2) mT = cCardH  + 30.f;
+            if (bSide[i] == 3) mB = cCardH  + 30.f;
+        }
+        float scale = fminf((mapW - mL - mR) / rX, (mapH - mT - mB) / rY);
+        if (scale < 1e-3f) scale = 1e-3f;
+        float offX  = base.x + mL + (mapW - mL - mR - rX*scale) * 0.5f;
+        float offY  = base.y + mT + (mapH - mT - mB - rY*scale) * 0.5f;
+
+        auto toScreen = [&](glm::vec2 p) -> ImVec2 {
+            p = rotPt(p);
+            return {offX + (p.x - lo.x)*scale, offY + (rY - (p.y - lo.y))*scale};
+        };
 
         // Road: white center line + thin white edge lines (dark gaps between).
-        float roadTh  = fmaxf(mapH * 0.018f, 8.f);
         float outerTh = roadTh;            // outer white (forms the two edge lines)
         float midTh   = roadTh * 0.66f;    // dark gap
         float innerTh = roadTh * 0.30f;    // white center line
@@ -378,41 +511,72 @@ void RenderTrackMapWindow(const ProContext& ctx, int32_t vehicleId,
                         {c.x + perp.x*hl, c.y + perp.y*hl}, SEC_MARK, 2.f);
         };
 
-        // Neutral, upright sector indicator card placed fully off the track, sized
-        // to the reference aspect ratio with a max size so it does not stretch.
-        auto drawSectorCard = [&](size_t idx, const char* label, const char* timeStr) {
+        // Sector widget (Sector 1.svg): position + driver name + sector cell.
+        // Sits right next to the track's bounding box on its boundary's side —
+        // close to the track but never on it — and is nudged along that side
+        // when two widgets would overlap each other.
+        ImFont* fRusso = ctx.title ? ctx.title : ctx.russo;
+        ImFont* fMono  = ctx.jb ? ctx.jb : (ctx.bold ? ctx.bold : ctx.russo);
+        ImVec4 placed[3]; int nPlaced = 0;
+        auto drawSectorCard = [&](size_t idx, int side, const char* label,
+                                  const char* timeStr, const SecStyle& st) {
             ImVec2 c = toScreen(g_smooth_track_points[idx].position);
-            ImVec2 dir = {c.x - mapCenter.x, c.y - mapCenter.y};
-            float L = sqrtf(dir.x*dir.x + dir.y*dir.y); if (L < 1e-3f) { dir = {0,-1}; L = 1; }
-            dir = {dir.x / L, dir.y / L};
+            float trackL = offX,              trackR = offX + rX * scale;
+            float trackT = offY,              trackB = offY + rY * scale;
+            float gapPx  = roadTh * 0.5f + 10.f;
+            bool sideLR = side <= 1;
+            ImVec2 p;
+            switch (side) {
+                case 0:  p = {trackL - gapPx - cTotalW, c.y - cCardH * 0.5f}; break;
+                case 1:  p = {trackR + gapPx,           c.y - cCardH * 0.5f}; break;
+                case 2:  p = {c.x - cTotalW * 0.5f, trackT - gapPx - cCardH}; break;
+                default: p = {c.x - cTotalW * 0.5f, trackB + gapPx};          break;
+            }
+            for (int k = 0; k < nPlaced; ++k) {
+                const ImVec4& r = placed[k];
+                if (p.x >= r.z || p.x + cTotalW <= r.x || p.y >= r.w || p.y + cCardH <= r.y)
+                    continue;
+                if (sideLR) p.y = (c.y < (r.y + r.w) * 0.5f) ? r.y - cCardH - 6.f : r.w + 6.f;
+                else        p.x = (c.x < (r.x + r.z) * 0.5f) ? r.x - cTotalW - 6.f : r.z + 6.f;
+            }
+            p.x = fminf(fmaxf(p.x, base.x + 6.f), base.x + mapW - cTotalW - 6.f);
+            p.y = fminf(fmaxf(p.y, base.y + 6.f), base.y + mapH - cCardH - 6.f);
+            placed[nPlaced++] = {p.x, p.y, p.x + cTotalW, p.y + cCardH};
 
-            float cardW = fminf(fmaxf(175.f * ux, 120.f), 156.f) * z;
-            float cardH = cardW / CELL_RATIO;
-            float hdrH  = cardH * (23.f / 68.f);
-            float valH  = cardH - hdrH;
-            float hdrFsz = fminf(fmaxf(hdrH * 0.78f, 11.f), 17.f);
-            float valFsz = fminf(fmaxf(valH * 0.70f, 16.f), 30.f);
+            // Connector: boundary point → nearest point of the widget
+            ImVec2 nPt = {fminf(fmaxf(c.x, p.x), p.x + cTotalW),
+                          fminf(fmaxf(c.y, p.y), p.y + cCardH)};
+            dl->AddLine(c, nPt, IM_COL32(0xB3,0xB3,0xB3,150), 1.f);
 
-            float off = outerTh + 8.f + 0.5f * sqrtf(cardW*cardW + cardH*cardH);
-            ImVec2 ctr = {c.x + dir.x*off, c.y + dir.y*off};
-            ImVec2 p   = {ctr.x - cardW*0.5f, ctr.y - cardH*0.5f};
+            float boxY = p.y + cCardH - cBoxH;
+            auto centered = [&](ImFont* f, float sz, float x0, float w0, float y0,
+                                float h0, ImU32 col, const char* txt) {
+                float tw = f->CalcTextSizeA(sz, FLT_MAX, 0.f, txt).x;
+                dl->AddText(f, sz, {x0 + (w0 - tw)*0.5f, y0 + (h0 - sz)*0.5f}, col, txt);
+            };
 
-            dl->AddLine(c, {c.x + dir.x*(outerTh + 4.f), c.y + dir.y*(outerTh + 4.f)},
-                        IM_COL32(0xB3,0xB3,0xB3,150), 1.f);
-            dl->AddRectFilled(p, {p.x + cardW, p.y + hdrH}, IM_COL32(0x29,0x29,0x29,255));
-            dl->AddText(ctx.russo, hdrFsz, {p.x + 7.f, p.y + (hdrH - hdrFsz)*0.5f}, COL_WHITE, label);
-            ImVec2 v0 = {p.x, p.y + hdrH};
-            dl->AddRectFilled(v0, {p.x + cardW, p.y + cardH}, IM_COL32(0x20,0x20,0x20,255));
-            dl->AddRectFilled(v0, {v0.x + 4.f, p.y + cardH}, IM_COL32(0xB3,0xB3,0xB3,255));
-            dl->AddText(ctx.bold ? ctx.bold : ctx.russo, valFsz,
-                        {p.x + 11.f, v0.y + (valH - valFsz)*0.5f}, COL_WHITE, timeStr);
+            float x = p.x;   // position (Russo One)
+            dl->AddRectFilled({x, boxY}, {x + cPosW, boxY + cBoxH}, IM_COL32(0x18,0x18,0x18,255));
+            centered(fRusso, cBoxH * 0.55f, x, cPosW, boxY, cBoxH, COL_WHITE, dnum);
+            x += cPosW + cGap;
+                             // driver name (Russo One), clipped to its box
+            dl->AddRectFilled({x, boxY}, {x + cNameW, boxY + cBoxH}, IM_COL32(0x20,0x20,0x20,255));
+            dl->PushClipRect({x, boxY}, {x + cNameW, boxY + cBoxH}, true);
+            centered(fRusso, cBoxH * 0.50f, x, cNameW, boxY, cBoxH, COL_WHITE, dname.c_str());
+            dl->PopClipRect();
+            x += cNameW + cGap;
+                             // sector header + time (JetBrains Mono Bold)
+            dl->AddRectFilled({x, p.y}, {x + cCellW, p.y + cHdrH}, IM_COL32(0x29,0x29,0x29,255));
+            centered(fMono, cHdrH * 0.70f, x, cCellW, p.y, cHdrH, st.text, label);
+            dl->AddRectFilled({x, boxY}, {x + cCellW, boxY + cBoxH}, st.bg);
+            dl->AddRectFilled({x, boxY}, {x + 5.f * cs, boxY + cBoxH}, st.accent);
+            centered(fMono, cBoxH * 0.60f, x + 5.f * cs, cCellW - 5.f * cs, boxY, cBoxH,
+                     st.text, timeStr);
         };
 
-        size_t i1 = idxAtProg(1.0 / 3.0);
-        size_t i2 = idxAtProg(2.0 / 3.0);
-        drawCross(i1); drawSectorCard(i1, "SECTOR 1", secBuf[0]);
-        drawCross(i2); drawSectorCard(i2, "SECTOR 2", secBuf[1]);
-        drawCross(0);  drawSectorCard(0,  "SECTOR 3", secBuf[2]);
+        drawCross(bIdx[0]); drawSectorCard(bIdx[0], bSide[0], "SECTOR 1", cardBuf[0], cardSty[0]);
+        drawCross(bIdx[1]); drawSectorCard(bIdx[1], bSide[1], "SECTOR 2", cardBuf[1], cardSty[1]);
+        drawCross(bIdx[2]); drawSectorCard(bIdx[2], bSide[2], "SECTOR 3", cardBuf[2], cardSty[2]);
 
         // Start/finish checkered flag
         ImVec2 sf = toScreen(g_smooth_track_points.front().position);
@@ -436,14 +600,9 @@ void RenderTrackMapWindow(const ProContext& ctx, int32_t vehicleId,
             }
         }
         if (found) {
+            // Plain gold dot — the driver's name lives in the sector widgets.
             ImVec2 dot = toScreen({(float)vx, (float)vy});
             float  dr  = fmaxf(mapH * 0.013f, 6.f);
-            ImVec2 k1 = {dot.x + 18.f * ux, dot.y - 14.f * ux};
-            ImVec2 k2 = {k1.x + 60.f * ux,  k1.y};
-            dl->AddLine(dot, k1, IM_COL32(235,235,235,200), 1.f);
-            dl->AddLine(k1,  k2, IM_COL32(235,235,235,200), 1.f);
-            float fSz = (ctx.russo ? ctx.russo->FontSize : 12.f) * z;
-            dl->AddText(ctx.bold ? ctx.bold : ctx.russo, fSz, {k1.x + 2.f, k1.y - fSz - 2.f}, COL_WHITE, dname.c_str());
             dl->AddCircleFilled(dot, dr, IM_COL32(0xDA,0xA5,0x40,255));
             dl->AddCircle      (dot, dr, IM_COL32(0xDC,0xDC,0xDC,255), 20, 2.f);
         }
@@ -452,17 +611,10 @@ void RenderTrackMapWindow(const ProContext& ctx, int32_t vehicleId,
     ImGui::SetCursorScreenPos({base.x, base.y + mapH});
     ImGui::Dummy(ImVec2(mapW, 0.f));
 
-    // ── Bottom status strip — floating element, sized to content + centered ────
-    float cellH = STRIP_H - 2.f * STRIP_PAD;
-    StripLayout L = computeStrip(mapW - 2.f * SIDE_MARGIN - 2.f * STRIP_PAD, cellH, ux);
-    float containerW = L.contentW + 2.f * STRIP_PAD;
-    ImVec2 outP = {base.x + (mapW - containerW) * 0.5f, base.y + mapH + TOP_GAP};
-    dl->AddRectFilled(outP, {outP.x + containerW, outP.y + STRIP_H}, IM_COL32(0x12,0x12,0x12,255), 5.f);
-    dl->AddRect      (outP, {outP.x + containerW, outP.y + STRIP_H}, COL_GOLD_DIM, 5.f, 0, 1.f);
-
+    // ── Bottom status strip — bare cells (no container/border), centered ───────
     const char* secT[3] = { secBuf[0], secBuf[1], secBuf[2] };
-    DrawStatusStrip(dl, ctx, {outP.x + STRIP_PAD, outP.y + STRIP_PAD}, cellH, L,
-                    dnum, dname.c_str(), secT, secSty, lapBuf, z);
+    DrawStatusStrip(dl, ctx, base.x + mapW * 0.5f, base.y + mapH + TOP_GAP, ss,
+                    dnum, dname.c_str(), secT, secSty, lapBuf);
 
     ImGui::End();
     ImGui::PopStyleColor(); // WindowBg override

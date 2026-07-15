@@ -11,9 +11,10 @@ namespace Pro {
 
 void RenderChannelsWindow(const ProContext& ctx, int32_t vehicleId,
                            ImVec2 vpSz, float topH) {
-    ImGui::SetNextWindowPos ({0.f,   topH + 310.f},  ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize({210.f, 240.f},          ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSizeConstraints({140.f, 80.f}, {vpSz.x, vpSz.y});
+    const float ui = ui_scale::get();
+    ImGui::SetNextWindowPos ({0.f,   topH + 310.f * ui},      ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize({210.f * ui, 240.f * ui},        ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSizeConstraints({140.f * ui, 80.f * ui}, {vpSz.x, vpSz.y});
 
     if (!ImGui::Begin("##Channels", nullptr,
         PanelFlags() | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse |
@@ -101,7 +102,7 @@ void RenderChannelsWindow(const ProContext& ctx, int32_t vehicleId,
     ImDrawList* dl  = ImGui::GetWindowDrawList();
     ImVec2      wp  = ImGui::GetWindowPos();
     char        id[8];
-    const float eyeX = w - PAD - 4.f;
+    const float eyeX = w - pad_px() - 4.f;
 
     for (auto& ch : channels) {
         snprintf(id, sizeof(id), "%d", ch.id);

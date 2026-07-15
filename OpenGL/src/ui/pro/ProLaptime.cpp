@@ -19,13 +19,14 @@ static constexpr ImU32 LT_GOLD  = IM_COL32(0xDA, 0xA9, 0x40, 255); // #DAA940 so
 
 void RenderLaptimeWindow(const ProContext& ctx, int32_t vehicleId,
                           ImVec2 vpSz, float topH) {
-    ImGui::SetNextWindowPos ({1380.f, topH + 600.f}, ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize({240.f,  243.f},         ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSizeConstraints({170.f, 120.f}, {vpSz.x, vpSz.y});
+    const float ui = ui_scale::get();
+    ImGui::SetNextWindowPos ({1380.f * ui, topH + 600.f * ui}, ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize({240.f * ui,  243.f * ui},        ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSizeConstraints({170.f * ui, 120.f * ui}, {vpSz.x, vpSz.y});
 
     if (!ImGui::Begin("##Laptime", nullptr,
         PanelFlags() | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse |
-        ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoSavedSettings)) {
+        ImGuiWindowFlags_NoBringToFrontOnFocus)) {
         ImGui::End(); return;
     }
 
@@ -37,7 +38,7 @@ void RenderLaptimeWindow(const ProContext& ctx, int32_t vehicleId,
     float lblSz = (ctx.regular ? ctx.regular->FontSize : 12.f) * z;
     float valSz = (ctx.bold    ? ctx.bold->FontSize    : 16.f) * z;
     float ttlSz = (ctx.title   ? ctx.title->FontSize   : 32.f) * z;
-    float pad   = PAD * z;
+    float pad   = pad_px() * z;
     float valX  = pad + (w - 2.f * pad) * 0.42f; // left edge of the value column
 
     // Solid gold separator at the current cursor, with padding above/below.

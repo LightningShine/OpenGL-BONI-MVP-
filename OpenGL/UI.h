@@ -89,6 +89,7 @@ private:
     ImFont* m_fontOswald;       // Oswald - leaderboard data rows
     ImFont* m_fontOswaldBold;   // Oswald Bold - leaderboard data rows
     ImFont* m_fontJetBrainsMono; // JetBrains Mono - leaderboard POS/DRIVER/GAP
+    ImFont* m_fontJBMonoBold;   // JetBrains Mono Bold - PRO sector cells/times
     ImFont* m_fontRussoSmall;   // 13px Russo One - PRO view labels/numbers
     
     // Textures (using void* instead of ImTextureID to avoid forward declaration issues)
@@ -157,7 +158,12 @@ private:
     bool LoadTextureFromFile(const char* filename, void** out_texture, int* out_width, int* out_height);
     void LoadResources();
     void LoadRecentFiles();
-    
+
+    // DPI-масштабирование (см. src/ui/ui_scale.hpp)
+    void load_fonts();            // грузит атлас: пункты UIConfig × ui_scale
+    void apply_ui_scale_change(); // пересборка шрифтов/стиля при смене DPI
+    float m_appliedUiScale = 1.0f; // масштаб, под который собран атлас
+
 private:
     // Helper: Project 3D world position to 2D screen space
     glm::vec2 ProjectToScreen(const glm::vec3& world_pos, 
