@@ -154,6 +154,13 @@ void RaceManager::Update(float deltaTime)
         // lap/progress/timing values. Do not advance them locally on the client.
         if (vehicle.m_has_authoritative_state)
         {
+            // Сервер шлёт lap_time в state-сообщениях реже, чем идут кадры —
+            // без локального тика время на экране прыгало бы ступеньками.
+            // Тикаем сами, сервер каждым сообщением поправляет накопившийся
+            // дрейф (см. TrackServerClient: значение назад не откатывается).
+            if (vehicle.m_has_started_first_lap && !vehicle.m_is_finished)
+                vehicle.m_current_lap_timer += deltaTime;
+
             // Client-side: do not advance timing/lap counters locally.
             // Still keep derived fields consistent for standings/time-diff.
             // If server provides a valid best lap time, keep it visible in UI.

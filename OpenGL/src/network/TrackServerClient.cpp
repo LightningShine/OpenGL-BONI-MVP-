@@ -278,9 +278,14 @@ void handleState(const std::string& text)
             if (it != g_vehicles.end()) {
                 Vehicle& v = it->second;
                 v.m_has_authoritative_state = true;
+                // Между сообщениями сервера RaceManager тикает таймер сам —
+                // принимаем серверное значение только вперёд (или при смене
+                // круга), иначе время на экране дёргалось бы назад.
+                const bool lap_changed = (lap != v.m_current_lap_number);
+                if (lap_changed || lap_t > v.m_current_lap_timer)
+                    v.m_current_lap_timer = lap_t;
                 v.m_current_lap_number = lap;
                 v.m_completed_laps     = lap > 0 ? lap - 1 : 0;
-                v.m_current_lap_timer  = lap_t;
                 if (best > 0.0f) v.m_best_lap_time = best;
                 v.m_is_leader = (position == 1);
                 v.m_has_started_first_lap = lap > 0;

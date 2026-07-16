@@ -664,9 +664,10 @@ int main()
     // Use NULL for monitor to create a windowed mode (borderless because of GLFW_DECORATED = FALSE)
     // This fixes the black screen issue on capture and cursor visibility
 	glfwWindowHint(GLFW_SAMPLES, 4);
-	// DPI: окно само меняет размер при переносе на монитор с другим масштабом,
-	// а ui_scale получает колбэк и пересобирает шрифты (см. src/ui/ui_scale.hpp)
-	glfwWindowHint(GLFW_SCALE_TO_MONITOR, GLFW_TRUE);
+	// DPI: GLFW_SCALE_TO_MONITOR НЕ включаем — GLFW ресайзил бы окно только по
+	// системному DPI, а наш масштаб включает ещё и физическую плотность
+	// монитора. Окно пересчитывает UI::apply_ui_scale_change() сам, одним
+	// коэффициентом с контентом (см. src/ui/ui_scale.hpp).
 
 	std::cout << "[MAIN] Creating window " << Width << "x" << Height << "..." << std::endl;
 	GLFWwindow* window = glfwCreateWindow(Width, Height, UIConfig::APP_NAME, NULL, NULL);

@@ -4,6 +4,7 @@
 #include "src/input/Input.h"
 #include "src/rendering/Interpolation.h"  // For SplinePoint
 #include "src/racing/RaceManager.h"  // For RaceManager and VehicleStanding
+#include <algorithm>
 #include <cmath>
 #include <glm/glm.hpp>
 #include <glm/gtc/constants.hpp>
@@ -61,7 +62,7 @@ void UIElements::drawCompass(float camera_yaw, const MapOrigin& origin)
     
     // Position in bottom-left corner (above bottom menu)
     ImVec2 compass_pos = ImVec2(spacing, 
-                                display_size.y - compass_height - UIConfig::BOTTOM_MENU_HEIGHT * display_size.y - spacing);
+                                display_size.y - compass_height - UIConfig::bottom_bar_px() - spacing);
     
     ImGui::SetNextWindowPos(compass_pos);
     ImGui::SetNextWindowSize(ImVec2(compass_width, compass_height));
@@ -149,15 +150,25 @@ void UIElements::drawLapTimer(float current_lap_time, float last_lap_time,
     
     ImGuiIO& io = ImGui::GetIO();
     ImVec2 display_size = io.DisplaySize;
-    
-    // Calculate window size
-    const float window_width = display_size.x * UIElementsConfig::LapTimer::WIDTH_RATIO;
-    const float window_height = display_size.y * UIElementsConfig::LapTimer::HEIGHT_RATIO;
-    
+
+    // Размеры карточки в пунктах × DPI (референс 259×217 при 100%).
+    // На маленьких окнах карточка равномерно сжимается ЦЕЛИКОМ (один
+    // коэффициент на всё), как только перестаёт влезать в ~40% ширины
+    // или ~45% высоты окна.
+    const float full_width  = ui_scale::points(259.0f);
+    const float full_height = ui_scale::points(217.0f);
+    const float max_width   = display_size.x * 0.40f;
+    const float max_height  = display_size.y * 0.45f;
+    float shrink = 1.0f;
+    if (full_width > max_width)            shrink = max_width / full_width;
+    if (full_height * shrink > max_height) shrink = max_height / full_height;
+    auto pt = [shrink](float value_points) { return ui_scale::points(value_points) * shrink; };
+
+    const float window_width = pt(259.0f);
+    const float window_height = pt(217.0f);
+
     // Position: top-left, under top menu bar, no spacing
-    // TOP_MENU_HEIGHT is a ratio, need to multiply by display height
-    const float top_menu_height = UIConfig::TOP_MENU_HEIGHT * display_size.y;
-    ImVec2 window_pos = ImVec2(0, top_menu_height);
+    ImVec2 window_pos = ImVec2(0, UIConfig::top_bar_px());
     
     ImGui::SetNextWindowPos(window_pos);
     ImGui::SetNextWindowSize(ImVec2(window_width, window_height));
@@ -176,15 +187,26 @@ void UIElements::drawLapTimer(float current_lap_time, float last_lap_time,
     
     ImGui::PushFont(m_font_title);
     
-    // Calculate sizes
-    const float title_size = display_size.y * UIElementsConfig::LapTimer::TITLE_SIZE_RATIO;
-    const float main_time_size = display_size.y * UIElementsConfig::LapTimer::MAIN_TIME_SIZE_RATIO;
-    const float label_size = display_size.y * UIElementsConfig::LapTimer::LABEL_SIZE_RATIO;
-    const float time_size = display_size.y * UIElementsConfig::LapTimer::TIME_SIZE_RATIO;
-    const float left_padding = display_size.x * UIElementsConfig::LapTimer::LEFT_PADDING_RATIO;
-    const float top_spacing = display_size.y * UIElementsConfig::LapTimer::TOP_SPACING_RATIO;
-    const float element_spacing = display_size.y * UIElementsConfig::LapTimer::ELEMENT_SPACING_RATIO;
-    const float line_width = display_size.x * UIElementsConfig::LapTimer::LINE_WIDTH_RATIO;
+    // Размеры контента в пунктах × DPI × shrink (пиксели референса = пункты)
+    const float title_size = pt(18.0f);
+    const float main_time_size = pt(44.0f);
+    const float label_size = pt(16.0f);
+    const float time_size = pt(22.0f);
+    const float left_padding = pt(28.0f);
+    const float top_spacing = pt(24.0f);
+    const float element_spacing = pt(10.0f);
+    const float line_width = pt(176.0f);
+
+    // Колонка значений начинается после самого длинного лейбла — значения
+    // не могут налезть на текст ни при каком шрифте (раньше было 0.35 ширины)
+    const float label_scale = label_size / ImGui::GetFontSize();
+    float max_label_w = 0.0f;
+    for (const char* label : { "LAST LAP", "BEST LAP", "TIME DIFF" })
+    {
+        const float label_w = ImGui::CalcTextSize(label).x * label_scale;
+        if (label_w > max_label_w) max_label_w = label_w;
+    }
+    const float value_column_x = left_padding + max_label_w + pt(14.0f);
     
     // Colors
     ImVec4 label_color = ImVec4(UIElementsConfig::LapTimer::LABEL_COLOR_R,
@@ -236,7 +258,7 @@ void UIElements::drawLapTimer(float current_lap_time, float last_lap_time,
     current_y += main_time_size + element_spacing;
     
     // === Separator line ===
-    drawSeparatorLine(window_width * 0.5f, current_y, line_width, display_size.y);
+    drawSeparatorLine(left_padding, current_y, line_width, display_size.y);
     
     current_y += element_spacing;
     
@@ -250,7 +272,7 @@ void UIElements::drawLapTimer(float current_lap_time, float last_lap_time,
     ImGui::SetWindowFontScale(1.0f);
     
     // Time (aligned to same baseline)
-    ImGui::SetCursorPos(ImVec2(left_padding + window_width * 0.35f, row_start_y));
+    ImGui::SetCursorPos(ImVec2(value_column_x, row_start_y));
     ImGui::SetWindowFontScale(time_size / ImGui::GetFontSize());
     
     if (last_lap_time >= 0.0f)  // Check if data exists (-1 = no data)
@@ -289,7 +311,7 @@ void UIElements::drawLapTimer(float current_lap_time, float last_lap_time,
     ImGui::SetWindowFontScale(1.0f);
     
     // Time (baseline aligned)
-    ImGui::SetCursorPos(ImVec2(left_padding + window_width * 0.35f, current_y));
+    ImGui::SetCursorPos(ImVec2(value_column_x, current_y));
     ImGui::SetWindowFontScale(time_size / ImGui::GetFontSize());
     
     if (best_lap_time >= 0.0f)  // Check if data exists (-1 = no data)
@@ -314,7 +336,7 @@ void UIElements::drawLapTimer(float current_lap_time, float last_lap_time,
     current_y += row_height + element_spacing;
     
     // === Separator line ===
-    drawSeparatorLine(window_width * 0.5f, current_y, line_width, display_size.y);
+    drawSeparatorLine(left_padding, current_y, line_width, display_size.y);
     
     current_y += element_spacing;
     
@@ -329,7 +351,7 @@ void UIElements::drawLapTimer(float current_lap_time, float last_lap_time,
     ImGui::SetWindowFontScale(1.0f);
     
     // Time difference (baseline aligned)
-    ImGui::SetCursorPos(ImVec2(left_padding + window_width * 0.35f, current_y));
+    ImGui::SetCursorPos(ImVec2(value_column_x, current_y));
     ImGui::SetWindowFontScale(time_size / ImGui::GetFontSize());
     
     if (time_diff != 0.0f)
@@ -354,15 +376,14 @@ void UIElements::drawLapTimer(float current_lap_time, float last_lap_time,
 // HELPER METHODS
 // ============================================================================
 
-void UIElements::drawSeparatorLine(float center_x, float y_position, 
-                                   float line_width, float display_height)
+void UIElements::drawSeparatorLine(float left_x, float y_position,
+                                   float line_width, float /*display_height*/)
 {
     ImDrawList* draw_list = ImGui::GetWindowDrawList();
     ImVec2 window_pos = ImGui::GetWindowPos();
-    
-    // Line starts from left padding (40px at 1600x900)
-    float left_padding = (40.0f / 1600.0f) * display_height * (16.0f / 9.0f); // Convert height to width scale
-    float line_start_x = window_pos.x + left_padding;
+
+    // left_x приходит от вызывающего (тот же отступ, что у текста карточки)
+    float line_start_x = window_pos.x + left_x;
     float line_end_x = line_start_x + line_width;
     float line_y = window_pos.y + y_position;
     

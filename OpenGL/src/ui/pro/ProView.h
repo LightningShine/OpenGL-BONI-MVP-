@@ -57,6 +57,13 @@ inline float header_h()  { return ui_scale::points(26.f); } // panel header heig
 // Layout lock — toggled from View menu; persists per session
 extern bool g_pro_layout_locked;
 
+// Заморозка раскладки на переходные кадры смены DPI-масштаба: пока окно ОС
+// догоняет новый размер, клэмп панелей и перенос позиций НЕ работают —
+// иначе они «чинят» раскладку по рассинхронённому состоянию и панели
+// навсегда уезжают (порча за 2 переезда между мониторами).
+// Выставляет UI::apply_ui_scale_change, декрементирует UI::BeginFrame.
+extern int g_layout_freeze_frames;
+
 // Per-panel text zoom. Call once just after a panel's Begin() — handles
 // Ctrl+wheel / Ctrl +/- on the focused/hovered window, persists the level to
 // disk, and returns the scale factor the panel should multiply its fonts and
@@ -78,6 +85,8 @@ inline void DrawPanelHeader(const ProContext& ctx, const char* label,
                              float scale = 1.f) {
     // Keep every PRO panel on-screen: saved positions from another monitor or a
     // resolution change must not leave windows (half) outside the viewport.
+    // Во время DPI-перехода клэмп выключен (см. g_layout_freeze_frames).
+    if (g_layout_freeze_frames <= 0)
     {
         const ImGuiViewport* v = ImGui::GetMainViewport();
         ImVec2 ws = ImGui::GetWindowSize(), wp = ImGui::GetWindowPos();

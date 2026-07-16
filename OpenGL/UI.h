@@ -163,6 +163,11 @@ private:
     void load_fonts();            // грузит атлас: пункты UIConfig × ui_scale
     void apply_ui_scale_change(); // пересборка шрифтов/стиля при смене DPI
     float m_appliedUiScale = 1.0f; // масштаб, под который собран атлас
+    float m_appliedMonitorScale = 1.0f; // мониторная часть — для ресайза окна
+    float m_prevWinW = 0.0f;       // размер окна прошлого кадра — для
+    float m_prevWinH = 0.0f;       // пропорционального переноса позиций окон
+    float m_menuRightEdgeX = 0.0f; // конец пунктов меню — левый предел пилюли
+    float m_proButtonLeftX = 0.0f; // кнопка PRO — правый предел пилюли
 
 private:
     // Helper: Project 3D world position to 2D screen space

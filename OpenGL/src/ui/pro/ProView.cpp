@@ -27,6 +27,7 @@ extern int g_focused_vehicle_id;
 namespace Pro {
 
 bool g_pro_layout_locked = false;
+int  g_layout_freeze_frames = 0;
 
 // ── Per-panel text zoom (persisted to pro_scales.ini) ───────────────────────
 static std::unordered_map<std::string, float> g_panelScale;
@@ -89,8 +90,8 @@ static int32_t getDisplayVehicleId() {
 void Render(const ProContext& ctx, float swipeAnim) {
     ImGuiViewport* vp   = ImGui::GetMainViewport();
     const ImVec2   sz   = vp->Size;
-    const float    topH = UIConfig::TOP_MENU_HEIGHT    * sz.y;
-    const float    botH = UIConfig::BOTTOM_MENU_HEIGHT * sz.y;
+    const float    topH = UIConfig::top_bar_px();
+    const float    botH = UIConfig::bottom_bar_px();
 
     // Swipe-in animation — solid dark panel slides from left, panels hidden
     if (swipeAnim < 0.99f) {

@@ -1,5 +1,7 @@
 ﻿#pragma once
 
+#include "ui_scale.hpp"
+
 // ============================================================================
 // UI CONFIGURATION
 // All user interface related constants and settings
@@ -71,6 +73,13 @@ static constexpr const char* FONT_PATH_JETBRAINS_MONO_BOLD = "styles/fonts/JetBr
 // ============================================================================
 static constexpr float TOP_MENU_HEIGHT = 30.0f / BASE_HEIGHT;      // 0.033333 (3.33%)
 static constexpr float BOTTOM_MENU_HEIGHT = 22.0f / BASE_HEIGHT;   // 0.024444 (2.44%)
+
+// Высоты баров как в Blender: контент-высота в пунктах × DPI. Полоса всегда
+// вмещает свой шрифт и не зависит от размера окна — при уменьшении окна
+// меню не сжимается и ничего на него не налезает. Ratio-константы выше
+// оставлены для legacy-мест.
+inline float top_bar_px()    { return ui_scale::points(30.0f); }
+inline float bottom_bar_px() { return ui_scale::points(22.0f); }
 
 // Menu spacing (as ratios)
 static constexpr float MENU_ITEM_SPACING = 0.0f;

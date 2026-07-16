@@ -446,7 +446,7 @@ void UI::RenderPrototypeToast()
     // A uniform scale derived from the window height ratio, for pixel-like offsets.
     const float s = win_size.y / 150.0f;
 
-    const float bottom_menu_h = UIConfig::BOTTOM_MENU_HEIGHT * display_size.y;
+    const float bottom_menu_h = UIConfig::bottom_bar_px();
     const float margin = 14.0f * s;
     ImVec2 win_pos((display_size.x - win_size.x) * 0.5f,
                   display_size.y - bottom_menu_h - win_size.y - margin);
@@ -836,7 +836,30 @@ void UI::apply_ui_scale_change()
             win->Size     = ImVec2(win->Size.x * ratio,     win->Size.y * ratio);
             win->SizeFull = ImVec2(win->SizeFull.x * ratio, win->SizeFull.y * ratio);
         }
+
+        // Переезд на монитор с другой плотностью: окно сохраняет ФИЗИЧЕСКИЙ
+        // размер — его пиксели пересчитываются тем же коэффициентом, что и
+        // контент (на большом редком мониторе окно в пикселях уменьшится).
+        // При смене множителя в View → UI Scale монитор тот же — окно не трогаем.
+        const bool monitor_changed = (ui_scale::monitor_scale() != m_appliedMonitorScale);
+        const bool window_is_free  = !glfwGetWindowAttrib(m_window, GLFW_MAXIMIZED) &&
+                                     !glfwGetWindowMonitor(m_window); // не fullscreen
+        if (monitor_changed && window_is_free)
+        {
+            int win_w = 0, win_h = 0;
+            glfwGetWindowSize(m_window, &win_w, &win_h);
+            glfwSetWindowSize(m_window,
+                              (int)(win_w * ratio + 0.5f),
+                              (int)(win_h * ratio + 0.5f));
+        }
+
+        // Переходные кадры: окно ОС меняет размер асинхронно. Замораживаем
+        // клэмп PRO-панелей и пропорциональный перенос позиций, пока всё не
+        // устаканится — иначе они правят раскладку по рассинхронённому
+        // состоянию и панели необратимо уезжают.
+        Pro::g_layout_freeze_frames = 3;
     }
+    m_appliedMonitorScale = ui_scale::monitor_scale();
     m_appliedUiScale = new_scale;
 
     // Старая GL-текстура атласа удаляется; бэкенд создаст новую в NewFrame
@@ -886,6 +909,7 @@ bool UI::Initialize(GLFWwindow* window)
     
     load_fonts();
     m_appliedUiScale = ui_scale::get();
+    m_appliedMonitorScale = ui_scale::monitor_scale();
 
     // Setup ImGui style - Blender-like
     ImGuiStyle& style = ImGui::GetStyle();
@@ -991,11 +1015,46 @@ void UI::Shutdown()
 
 void UI::BeginFrame()
 {
-    // Окно перетащили на монитор с другим DPI — пересобираем шрифты до
-    // начала кадра, чтобы текст остался резким, а элементы — того же
-    // физического размера.
+    // Следим за монитором/разрешением (дешёво: полный пересчёт раз в
+    // секунду внутри). Смена масштаба коммитится с дебаунсом — см. ui_scale.
+    ui_scale::poll(m_window);
+
+    // Масштаб устоялся и изменился — пересобираем шрифты до начала кадра,
+    // чтобы текст остался резким, а элементы — того же физического размера.
     if (ui_scale::consume_scale_changed())
         apply_ui_scale_change();
+
+    // Размер окна приложения изменился (смена разрешения, ресайз, переезд):
+    // переносим ПОЗИЦИИ окон пропорционально, чтобы раскладка не сбивалась
+    // в угол при уменьшении и возвращалась на место при увеличении.
+    // Размеры не трогаем — физический размер панелей держит DPI-масштаб.
+    {
+        int win_w = 0, win_h = 0;
+        glfwGetWindowSize(m_window, &win_w, &win_h);
+        if (win_w > 0 && win_h > 0)
+        {
+            if (Pro::g_layout_freeze_frames > 0)
+            {
+                // DPI-переход: окно ОС ещё догоняет заказанный размер.
+                // Никаких поправок — только синхронизируем слежение, иначе
+                // поправка по переходному размеру навсегда сдвинет панели.
+                --Pro::g_layout_freeze_frames;
+            }
+            else if (m_prevWinW > 0.0f && ((float)win_w != m_prevWinW || (float)win_h != m_prevWinH))
+            {
+                const float rx = (float)win_w / m_prevWinW;
+                const float ry = (float)win_h / m_prevWinH;
+                ImGuiContext* ctx = ImGui::GetCurrentContext();
+                for (int i = 0; i < ctx->Windows.Size; ++i)
+                {
+                    ImGuiWindow* win = ctx->Windows[i];
+                    win->Pos = ImVec2(win->Pos.x * rx, win->Pos.y * ry);
+                }
+            }
+            m_prevWinW = (float)win_w;
+            m_prevWinH = (float)win_h;
+        }
+    }
 
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplGlfw_NewFrame();
@@ -1550,26 +1609,46 @@ void UI::RenderRaceStatusBar(ModeManager* modeManager)
     const ImVec2 session_size = ImGui::CalcTextSize(session_time.c_str());
     const ImVec2 phase_size = ImGui::CalcTextSize(phase_label);
 
-    const float flag_size = bar_h * 0.6f;
-    const float flag_y = bar_y + (bar_h - flag_size) * 0.5f;
+    // Геометрия в пунктах × DPI. Пилюля живёт в одной строке с меню и, как
+    // в Blender, при нехватке места сжимается / прячет часы / исчезает —
+    // но никогда не налезает на пункты меню (слева) и кнопку PRO (справа).
+    const float gap         = ui_scale::points(14.f);
+    const float left_limit  = m_menuRightEdgeX + gap;
+    const float right_limit = (m_proButtonLeftX > 0.f ? m_proButtonLeftX
+                                                      : io.DisplaySize.x - ui_scale::points(70.f)) - gap;
+
+    const float pill_h = ui_scale::points(24.f);
+    const float pill_y = (UIConfig::top_bar_px() - pill_h) * 0.5f;
+    const float flag_size = pill_h * 0.6f;
     const float flag_rounding = flag_size * 0.15f;
+    const float pill_pad_x = ui_scale::points(12.f);
 
-    const float pill_pad_x = bar_h * 0.4f;
-    const float flag_to_text = bar_h * 5.0f; 
+    // Ширина: хотим широкую (как в референсе), ужимаемся до доступного места
+    const float pill_min_w = 2.f * pill_pad_x + 2.f * flag_size + phase_size.x + 2.f * ui_scale::points(10.f);
+    float pill_w = ui_scale::points(440.f);
+    const float avail = right_limit - left_limit;
+    if (pill_w > avail) pill_w = avail;
+    if (pill_w < pill_min_w)
+    {
+        ImGui::PopFont();
+        return; // места нет совсем — прячем пилюлю целиком
+    }
 
-    const float pill_w = pill_pad_x + flag_size + flag_to_text + phase_size.x + flag_to_text + flag_size + pill_pad_x;
-    const float pill_h = bar_h;
-    const float pill_x = bar_x + (bar_w - pill_w) * 0.5f;
-    const float pill_y = bar_y;
+    float pill_x = (io.DisplaySize.x - pill_w) * 0.5f;   // по центру окна
+    pill_x = std::max(pill_x, left_limit);               // но не по меню
+    pill_x = std::min(pill_x, right_limit - pill_w);     // и не по кнопке PRO
     const float pill_rounding = pill_h * 0.25f;
 
-    const float left_flag_x = pill_x + pill_pad_x;
-    const float text_x = left_flag_x + flag_size + flag_to_text;
-    const float right_flag_x = text_x + phase_size.x + flag_to_text;
+    const float flag_y = pill_y + (pill_h - flag_size) * 0.5f;
+    const float left_flag_x  = pill_x + pill_pad_x;
+    const float right_flag_x = pill_x + pill_w - pill_pad_x - flag_size;
+    const float text_x = pill_x + (pill_w - phase_size.x) * 0.5f;
 
-    const float time_margin = bar_h * 1.2f;
-    const float system_x = pill_x - time_margin - system_size.x;
-    const float session_x = pill_x + pill_w + time_margin;
+    // Часы по бокам рисуем только если они помещаются между границами
+    const float system_x = pill_x - gap - system_size.x;
+    const float session_x = pill_x + pill_w + gap;
+    const bool show_system  = system_x >= left_limit;
+    const bool show_session = session_x + session_size.x <= right_limit;
 
     const ImU32 pill_bg = IM_COL32(24, 24, 24, 255);
     const ImU32 pill_border = IM_COL32(160, 160, 160, 180);
@@ -1617,13 +1696,15 @@ void UI::RenderRaceStatusBar(ModeManager* modeManager)
     drawFlagSquare(left_flag_x);
     drawFlagSquare(right_flag_x);
 
-    const float text_y_sys = bar_y + (bar_h - system_size.y) * 0.5f;
-    const float text_y_ses = bar_y + (bar_h - session_size.y) * 0.5f;
-    const float text_y_phase = bar_y + (bar_h - phase_size.y) * 0.5f;
+    const float text_y_sys = pill_y + (pill_h - system_size.y) * 0.5f;
+    const float text_y_ses = pill_y + (pill_h - session_size.y) * 0.5f;
+    const float text_y_phase = pill_y + (pill_h - phase_size.y) * 0.5f;
 
-    draw_list->AddText(ImVec2(system_x, text_y_sys), text_color, system_time.c_str());
+    if (show_system)
+        draw_list->AddText(ImVec2(system_x, text_y_sys), text_color, system_time.c_str());
     draw_list->AddText(ImVec2(text_x, text_y_phase), text_color, phase_label);
-    draw_list->AddText(ImVec2(session_x, text_y_ses), text_color, session_time.c_str());
+    if (show_session)
+        draw_list->AddText(ImVec2(session_x, text_y_ses), text_color, session_time.c_str());
 
     ImGui::PopFont();
 }
@@ -2227,7 +2308,7 @@ void UI::RenderTopMenu()
     ImVec2 display_size = viewport->Size;
     
     ImGui::SetNextWindowPos(viewport->Pos);
-    ImGui::SetNextWindowSize(ImVec2(display_size.x, UIConfig::TOP_MENU_HEIGHT * display_size.y));
+    ImGui::SetNextWindowSize(ImVec2(display_size.x, UIConfig::top_bar_px()));
     
     ImGuiWindowFlags window_flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | 
                                     ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar | 
@@ -2238,18 +2319,16 @@ void UI::RenderTopMenu()
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
-	ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(
-        UIConfig::MENU_FRAME_PADDING_X * display_size.x, 
-        UIConfig::MENU_FRAME_PADDING_Y * display_size.y
-    ));
+    // Паддинги меню в пунктах × DPI, а не в долях окна: пункты меню держат
+    // физический размер и не разъезжаются при малом/большом окне.
+	ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,
+        ImVec2(ui_scale::points(8.0f), ui_scale::points(6.0f)));
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(
-        UIConfig::MENU_ITEM_SPACING, 
+        UIConfig::MENU_ITEM_SPACING,
         0
     ));
-	ImGui::PushStyleVar(ImGuiStyleVar_ItemInnerSpacing, ImVec2(
-        8.0f / 1600.0f * display_size.x, 
-        4.0f / 900.0f * display_size.y
-    ));
+	ImGui::PushStyleVar(ImGuiStyleVar_ItemInnerSpacing,
+        ImVec2(ui_scale::points(8.0f), ui_scale::points(4.0f)));
 
 
     // Top menu bar colors
@@ -2277,7 +2356,7 @@ void UI::RenderTopMenu()
         
         // Logo + PRO badge live in the Windows title bar (glfwSetWindowIcon /
         // glfwSetWindowTitle) — the navbar only gets the left padding.
-        ImGui::SetCursorPosX(UIConfig::MENU_LEFT_PADDING * display_size.x);
+        ImGui::SetCursorPosX(ui_scale::points(10.0f));
         
         // === DROPDOWN MENU ITEM STYLING (применяем настройки для пунктов меню) ===
         // Временно изменяем глобальные стили для dropdown меню
@@ -2594,6 +2673,20 @@ void UI::RenderTopMenu()
                 TelemetryTrackBuilder::Stop();
             }
             ImGui::Separator();
+            // Пользовательский множитель поверх автоматического DPI-масштаба;
+            // сохраняется между запусками (ui_scale.ini).
+            if (ImGui::BeginMenu("UI Scale"))
+            {
+                static constexpr float scale_options[] = { 0.75f, 1.0f, 1.25f, 1.5f, 1.75f, 2.0f };
+                static constexpr const char* scale_labels[] = { "75%", "100% (Auto)", "125%", "150%", "175%", "200%" };
+                const float current = ui_scale::user_scale();
+                for (int i = 0; i < 6; ++i)
+                    if (ImGui::MenuItem(scale_labels[i], nullptr,
+                                        fabsf(current - scale_options[i]) < 0.01f))
+                        ui_scale::set_user_scale(scale_options[i]);
+                ImGui::EndMenu();
+            }
+            ImGui::Separator();
            ImGui::MenuItem("Prototype panel", nullptr, &m_allowPrototypeToast);
             ImGui::MenuItem("Vehicle names", nullptr, &g_show_vehicle_names);
             if (ImGui::MenuItem("Toggle Fullscreen", "F11", false, false)) {}
@@ -2664,17 +2757,20 @@ void UI::RenderTopMenu()
         
         ImGui::PopStyleVar(3); // Pop DROPDOWN_ITEM styles (ItemSpacing, ItemInnerSpacing, FramePadding)
 
+        // Конец пунктов меню — левая граница для пилюли статуса (см.
+        // RenderRaceStatusBar): она не имеет права налезать на меню.
+        m_menuRightEdgeX = ImGui::GetCursorScreenPos().x;
+
         // === PRO / LITE TOGGLE BUTTON (right side of navbar) ===
         {
-            // Explicit button size: the default (font + 2*MENU_FRAME_PADDING_Y)
-            // is taller than the 30px bar and gets clipped at the bottom edge.
             const float barH    = ImGui::GetWindowHeight();
-            const float btnH    = barH - 8.f;
-            const float btnW    = 52.f / UIConfig::BASE_WIDTH * display_size.x < 46.f
-                                ? 46.f : 52.f / UIConfig::BASE_WIDTH * display_size.x;
-            const float marginR = UIConfig::MENU_LEFT_PADDING * display_size.x;
+            const float btnH    = barH - ui_scale::points(8.f);
+            const float btnW    = ui_scale::points(52.f);
+            const float marginR = ui_scale::points(10.f);
             ImGui::SetCursorPosX(ImGui::GetWindowWidth() - btnW - marginR);
             ImGui::SetCursorPosY((barH - btnH) * 0.5f);
+            // Левая граница кнопки — правый предел для пилюли/таймеров
+            m_proButtonLeftX = ImGui::GetWindowPos().x + ImGui::GetWindowWidth() - btnW - marginR;
 
             ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.f);
             if (m_proMode) {
@@ -2722,7 +2818,7 @@ void UI::RenderBottomMenu()
     ImGuiViewport* viewport = ImGui::GetMainViewport();
     ImVec2 display_size = viewport->Size;
     
-    float bottom_height = UIConfig::BOTTOM_MENU_HEIGHT * display_size.y;
+    float bottom_height = UIConfig::bottom_bar_px();
     ImVec2 bottom_pos = ImVec2(viewport->Pos.x, viewport->Pos.y + display_size.y - bottom_height);
     
     ImGui::SetNextWindowPos(bottom_pos);
