@@ -692,6 +692,14 @@ void UI::LoadResources()
     if (!LoadTextureFromFile("styles/icons/PNG/circle-x.png", &m_iconClose, nullptr, nullptr)) std::cerr << "Failed to load circle-x.png\n";
     if (!LoadTextureFromFile("styles/icons/PNG/DragAndDrop.png", &m_iconDragDrop, nullptr, nullptr)) std::cerr << "Failed to load DragAndDrop.png\n";
     if (!LoadTextureFromFile("styles/icons/PNG/Icon.png",       &m_logoTexture,   nullptr, nullptr)) std::cerr << "Failed to load Icon.png\n";
+
+    // Иконки-цифры 1..9 для боковых групп PRO-вида (512×512 PNG).
+    for (int i = 0; i < 9; ++i) {
+        char path[64];
+        snprintf(path, sizeof(path), "styles/icons/PNG/%d PNG.png", i + 1);
+        if (!LoadTextureFromFile(path, &m_numIcons[i], nullptr, nullptr))
+            std::cerr << "Failed to load " << path << "\n";
+    }
     
     // Load Compass texture
     if (!LoadTextureFromFile("styles/images/Compas scaled.png", &m_compassTexture, nullptr, nullptr)) 
@@ -2162,7 +2170,9 @@ void UI::RenderProView()
         m_fontRobotoMono,
         m_fontRussoSmall,
         m_fontJBMonoBold,
-        m_logoTexture
+        m_logoTexture,
+        { m_numIcons[0], m_numIcons[1], m_numIcons[2], m_numIcons[3], m_numIcons[4],
+          m_numIcons[5], m_numIcons[6], m_numIcons[7], m_numIcons[8] }
     };
     Pro::Render(ctx, m_swipeAnim);
 }

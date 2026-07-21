@@ -53,7 +53,7 @@ void RenderLapListWindow(const ProContext& ctx, int32_t vehicleId,
     float z = PanelZoom("LapList");
 
     // Panel title — Ubuntu Bold
-    DrawPanelHeader(ctx, "LAP LIST", false, ctx.bold, z);
+    DrawPanelHeader(ctx, "LAP LIST", false, ctx.bold, z, "LapList");
 
     float regSz   = (ctx.regular ? ctx.regular->FontSize : ImGui::GetFontSize()) * z;
     float russoSz = (ctx.russo   ? ctx.russo->FontSize   : ImGui::GetFontSize()) * z;

@@ -273,6 +273,8 @@
     <ClCompile Include="src\ui\pro\ProLaptime.cpp" />
     <ClCompile Include="src\ui\pro\ProEvents.cpp" />
     <ClCompile Include="src\ui\pro\ProSectors.cpp" />
+    <ClCompile Include="src\ui\pro\ProSidebar.cpp" />
+    <ClCompile Include="src\ui\pro\ProRelative.cpp" />
     <ClCompile Include="src\ui\Accounts.cpp" />
     <ClCompile Include="src\vehicle\Vehicle.cpp" />
     <ClCompile Include="src\thirdparty\glad.c" />
@@ -322,6 +324,7 @@
     <ClInclude Include="src\ui\pro\ProLaptime.h" />
     <ClInclude Include="src\ui\pro\ProEvents.h" />
     <ClInclude Include="src\ui\pro\ProSectors.h" />
+    <ClInclude Include="src\ui\pro\ProRelative.h" />
     <ClInclude Include="src\ui\UI_Config.h" />
     <ClInclude Include="src\ui\UI_Elements_Config.h" />
     <ClInclude Include="src\vehicle\Vehicle.h" />

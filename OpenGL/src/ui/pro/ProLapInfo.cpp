@@ -57,7 +57,7 @@ void RenderLapInfoWindow(const ProContext& ctx, int32_t vehicleId,
 
     float w = ImGui::GetWindowWidth();
     float z = PanelZoom("LapInfo");
-    DrawPanelHeader(ctx, "LAP INFO", false, nullptr, z);
+    DrawPanelHeader(ctx, "LAP INFO", false, nullptr, z, "LapInfo");
     ImGui::SetWindowFontScale(z);
 
     if (!g_race_manager) { ImGui::SetWindowFontScale(1.f); ImGui::End(); return; }
@@ -133,7 +133,7 @@ void RenderSessionInfoWindow(const ProContext& ctx, int32_t vehicleId,
     }
 
     float z = PanelZoom("SessionInfo");
-    DrawPanelHeader(ctx, "SESSION INFO", false, nullptr, z);
+    DrawPanelHeader(ctx, "SESSION INFO", false, nullptr, z, "SessionInfo");
     ImGui::SetWindowFontScale(z);
 
     std::string driverName = "---";

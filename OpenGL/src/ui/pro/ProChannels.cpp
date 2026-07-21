@@ -24,7 +24,7 @@ void RenderChannelsWindow(const ProContext& ctx, int32_t vehicleId,
 
     float w = ImGui::GetWindowWidth();
     float z = PanelZoom("Channels");
-    DrawPanelHeader(ctx, "CHANELS", false, nullptr, z);
+    DrawPanelHeader(ctx, "CHANELS", false, nullptr, z, "Channels");
     ImGui::SetWindowFontScale(z);
 
     // Live GPS data

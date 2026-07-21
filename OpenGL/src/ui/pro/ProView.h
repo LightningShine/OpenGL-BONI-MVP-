@@ -13,6 +13,7 @@ struct ProContext {
     ImFont* russo;     // Russo One small ~13px (panel labels/numbers)
     ImFont* jb;        // JetBrains Mono Bold ~32px (sector labels/times)
     void*   logoTex;
+    void*   numTex[9]; // styles/icons/PNG/1..9 PNG.png — иконки групп бокового меню
 };
 
 namespace Pro {
@@ -76,13 +77,23 @@ inline ImGuiWindowFlags PanelFlags() {
            (g_pro_layout_locked ? (ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize) : 0);
 }
 
+// ── Panel visibility (боковое меню в стиле McLaren) ──────────────────────────
+// Видимость каждой плавающей панели — переключатель, персистится в
+// pro_panels.ini. Ключ совпадает с ключом PanelZoom (напр. "TrackMap").
+// Реализация — в ProSidebar.cpp.
+bool PanelVisible(const char* key);
+void SetPanelVisible(const char* key, bool v);
+void TogglePanel(const char* key);
+
 // ── Panel header ─────────────────────────────────────────────────────────────
 // Draws a dark header bar at the current cursor position using DrawList
 // (does not affect ImGui cursor). Then advances cursor via Dummy.
 // labelFont overrides the default russo font for the header label (e.g. pass ctx.bold)
+// closeKey != nullptr рисует крестик закрытия справа в шапке; клик по нему
+// прячет панель (SetPanelVisible(closeKey, false)) — так окно можно «убрать».
 inline void DrawPanelHeader(const ProContext& ctx, const char* label,
                              bool showGear = false, ImFont* labelFont = nullptr,
-                             float scale = 1.f) {
+                             float scale = 1.f, const char* closeKey = nullptr) {
     // Keep every PRO panel on-screen: saved positions from another monitor or a
     // resolution change must not leave windows (half) outside the viewport.
     // Во время DPI-перехода клэмп выключен (см. g_layout_freeze_frames).
@@ -112,10 +123,23 @@ inline void DrawPanelHeader(const ProContext& ctx, const char* label,
     float   ty  = p.y + (hdrH - fSz) * 0.5f;
     dl->AddText(lf, fSz, {p.x + 8.f, ty}, IM_COL32(210, 210, 210, 255), label);
 
+    // Крестик закрытия у правого края; шестерёнка (если есть) уходит левее него.
+    const float closeX = closeKey ? 14.f : 0.f;
     if (showGear) {
-        ImVec2 gc = {p.x + w - 14.f, p.y + hdrH * 0.5f};
+        ImVec2 gc = {p.x + w - 14.f - closeX * 2.f, p.y + hdrH * 0.5f};
         dl->AddCircle(gc, 6.f, COL_DIM, 8, 1.5f);
         dl->AddCircleFilled(gc, 2.2f, COL_DIM);
+    }
+    if (closeKey) {
+        ImVec2 wp = ImGui::GetWindowPos();
+        ImVec2 cc = {wp.x + w - 13.f, p.y + hdrH * 0.5f};
+        const float r = 4.5f;
+        bool hov = ImGui::IsMouseHoveringRect({cc.x - r - 3.f, cc.y - r - 3.f},
+                                              {cc.x + r + 3.f, cc.y + r + 3.f}, false);
+        ImU32 xcol = hov ? COL_WHITE : COL_DIM;
+        dl->AddLine({cc.x - r, cc.y - r}, {cc.x + r, cc.y + r}, xcol, 1.6f);
+        dl->AddLine({cc.x - r, cc.y + r}, {cc.x + r, cc.y - r}, xcol, 1.6f);
+        if (hov && ImGui::IsMouseClicked(0)) SetPanelVisible(closeKey, false);
     }
 
     // Advance cursor past header (always a Dummy — avoids InvisibleButton
@@ -169,6 +193,14 @@ inline void LabelValue(const ProContext& ctx, const char* lbl, const char* val,
     ImGui::PopStyleColor();
     if (ctx.regular) ImGui::PopFont();
 }
+
+// Боковое меню групп с fly-out (правый край). Рисуется поверх панелей и сам
+// управляет видимостью. Реализация — ProSidebar.cpp.
+void RenderSidebar(const ProContext& ctx, ImVec2 vpSz, float topH, float botH);
+
+// F1-подобная «релативная карта»: гонщики на кольце + относительное время.
+// Реализация — ProRelative.cpp.
+void RenderRelativeWindow(const ProContext& ctx, int32_t vehicleId, ImVec2 vpSz, float topH);
 
 // Main entry — called from UI::RenderProView()
 void Render(const ProContext& ctx, float swipeAnim);

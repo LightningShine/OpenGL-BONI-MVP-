@@ -64,6 +64,9 @@
     <Filter Include="src\ui\UIRaceManager\RaceDisplay">
       <UniqueIdentifier>{43d8300f-40e4-4e5d-a151-f7f540b1ca94}</UniqueIdentifier>
     </Filter>
+    <Filter Include="src\ui\ProUI">
+      <UniqueIdentifier>{e09232f1-2563-41d6-8cba-865adc964aea}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\core\main.cpp">
@@ -71,9 +74,6 @@
     </ClCompile>
     <ClCompile Include="src\input\Input.cpp">
       <Filter>src\input</Filter>
-    </ClCompile>
-    <ClCompile Include="src\network\Server.cpp">
-      <Filter>src\network</Filter>
     </ClCompile>
     <ClCompile Include="src\rendering\Interpolation.cpp">
       <Filter>src\rendering</Filter>
@@ -135,9 +135,6 @@
     <ClCompile Include="libraries\include\imgui\imgui.cpp">
       <Filter>imgui</Filter>
     </ClCompile>
-    <ClCompile Include="Client.cpp">
-      <Filter>src\network</Filter>
-    </ClCompile>
     <ClCompile Include="src\track\TrackRecorder.cpp">
       <Filter>src\rendering\Render</Filter>
     </ClCompile>
@@ -150,6 +147,25 @@
     <ClCompile Include="src\ui\UIRaceManager\RaceDisplay\RaceStatusBar.cpp" />
     <ClCompile Include="src\ui\UIRaceManager\RaceDisplay\RaceDisplay.cpp" />
     <ClCompile Include="src\rendering\VehicleNameRenderer.cpp" />
+    <ClCompile Include="..\..\RAJAGP Server\core\src\Crc.cpp" />
+    <ClCompile Include="..\..\RAJAGP Server\core\src\RajaParser.cpp" />
+    <ClCompile Include="src\network\TrackServerClient.cpp" />
+    <ClCompile Include="src\network\NetworkCompat.cpp" />
+    <ClCompile Include="src\track\TrackEditor.cpp" />
+    <ClCompile Include="src\ui\TrackReviewPanel.cpp" />
+    <ClCompile Include="src\ui\ui_scale.cpp" />
+    <ClCompile Include="src\ui\pro\ProView.cpp" />
+    <ClCompile Include="src\ui\pro\ProLapList.cpp" />
+    <ClCompile Include="src\ui\pro\ProChannels.cpp" />
+    <ClCompile Include="src\ui\pro\ProLapInfo.cpp" />
+    <ClCompile Include="src\ui\pro\ProGForce.cpp" />
+    <ClCompile Include="src\ui\pro\ProTrackMap.cpp" />
+    <ClCompile Include="src\ui\pro\ProLaptime.cpp" />
+    <ClCompile Include="src\ui\pro\ProEvents.cpp" />
+    <ClCompile Include="src\ui\pro\ProSectors.cpp" />
+    <ClCompile Include="src\ui\pro\ProSidebar.cpp" />
+    <ClCompile Include="src\ui\pro\ProRelative.cpp" />
+    <ClCompile Include="src\ui\Accounts.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\input\Input.h">
@@ -168,9 +184,6 @@
       <Filter>src\network</Filter>
     </ClInclude>
     <ClInclude Include="src\network\SimulationServer.h">
-      <Filter>src\network</Filter>
-    </ClInclude>
-    <ClInclude Include="src\network\Client.h">
       <Filter>src\network</Filter>
     </ClInclude>
     <ClInclude Include="UI.h">
@@ -224,6 +237,21 @@
     <ClInclude Include="src\ui\UIRaceManager\RaceDisplay\RaceFlags.h" />
     <ClInclude Include="src\ui\UIRaceManager\RaceDisplay\RaceStatusBar.h" />
     <ClInclude Include="src\rendering\VehicleNameRenderer.h" />
+    <ClInclude Include="src\network\TrackServerClient.h" />
+    <ClInclude Include="src\ui\Accounts.h" />
+    <ClInclude Include="src\track\TrackEditor.h" />
+    <ClInclude Include="src\ui\TrackReviewPanel.h" />
+    <ClInclude Include="src\ui\ui_scale.hpp" />
+    <ClInclude Include="src\ui\pro\ProView.h" />
+    <ClInclude Include="src\ui\pro\ProLapList.h" />
+    <ClInclude Include="src\ui\pro\ProChannels.h" />
+    <ClInclude Include="src\ui\pro\ProLapInfo.h" />
+    <ClInclude Include="src\ui\pro\ProGForce.h" />
+    <ClInclude Include="src\ui\pro\ProTrackMap.h" />
+    <ClInclude Include="src\ui\pro\ProLaptime.h" />
+    <ClInclude Include="src\ui\pro\ProEvents.h" />
+    <ClInclude Include="src\ui\pro\ProSectors.h" />
+    <ClInclude Include="src\ui\pro\ProRelative.h" />
   </ItemGroup>
   <ItemGroup>
     <None Include="..\code_writing_guide.md" />

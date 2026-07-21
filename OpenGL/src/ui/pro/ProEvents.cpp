@@ -221,7 +221,7 @@ void RenderEventsWindow(const ProContext& ctx, ImVec2 vpSz, float topH) {
 
     float w = ImGui::GetWindowWidth();
     float z = PanelZoom("Events");
-    DrawPanelHeader(ctx, "EVENTS", false, nullptr, z);
+    DrawPanelHeader(ctx, "EVENTS", false, nullptr, z, "Events");
 
     float scrollH = ImGui::GetContentRegionAvail().y;
     ImGui::BeginChild("##evScroll", {w, scrollH}, false);

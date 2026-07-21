@@ -32,7 +32,7 @@ void RenderLaptimeWindow(const ProContext& ctx, int32_t vehicleId,
 
     float       w  = ImGui::GetWindowWidth();
     float       z  = PanelZoom("Laptime");
-    DrawPanelHeader(ctx, "LAPTIME", true, nullptr, z); // gear icon
+    DrawPanelHeader(ctx, "LAPTIME", true, nullptr, z, "Laptime"); // gear icon
     ImDrawList* dl = ImGui::GetWindowDrawList();
 
     float lblSz = (ctx.regular ? ctx.regular->FontSize : 12.f) * z;

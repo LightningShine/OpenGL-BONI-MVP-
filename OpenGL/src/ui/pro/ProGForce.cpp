@@ -26,7 +26,7 @@ void RenderGForceWindow(const ProContext& ctx, int32_t vehicleId,
     float w = ImGui::GetWindowWidth();
     float h = ImGui::GetWindowHeight();
     float z = PanelZoom("GForce");
-    DrawPanelHeader(ctx, "G-FORCE", false, nullptr, z);
+    DrawPanelHeader(ctx, "G-FORCE", false, nullptr, z, "GForce");
 
     // Live data
     double gx = 0, gy = 0;

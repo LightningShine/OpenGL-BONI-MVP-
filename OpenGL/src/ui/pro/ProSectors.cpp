@@ -82,7 +82,7 @@ void RenderSectorsWindow(const ProContext& ctx, int32_t vehicleId,
     float w = ImGui::GetWindowWidth();
     float h = ImGui::GetWindowHeight();
     float z = PanelZoom("Sectors");
-    DrawPanelHeader(ctx, "SECTORS", false, nullptr, z);
+    DrawPanelHeader(ctx, "SECTORS", false, nullptr, z, "Sectors");
 
     ImDrawList* dl   = ImGui::GetWindowDrawList();
     ImVec2      base = ImGui::GetCursorScreenPos();

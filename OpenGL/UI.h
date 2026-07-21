@@ -104,6 +104,7 @@ private:
     void* m_protoBatteryIconTexture;
     void* m_protoPhotoTexture;
     void* m_logoTexture;       // Icon.png — helmet icon used in the navbar
+    void* m_numIcons[9] = {};  // styles/icons/PNG/1..9 PNG.png — иконки групп PRO-сайдбара
 
     // Pro mode swipe
     bool  m_proMode;

@@ -244,7 +244,7 @@ void RenderTrackMapWindow(const ProContext& ctx, int32_t vehicleId,
     float uy = h / UIConfig::BASE_HEIGHT;
 
     float z = PanelZoom("TrackMap");
-    DrawPanelHeader(ctx, "TRACK MAP", false, nullptr, z);
+    DrawPanelHeader(ctx, "TRACK MAP", false, nullptr, z, "TrackMap");
 
     ImDrawList* dl   = ImGui::GetWindowDrawList();
     ImVec2      base = ImGui::GetCursorScreenPos();
@@ -257,9 +257,10 @@ void RenderTrackMapWindow(const ProContext& ctx, int32_t vehicleId,
         ImFont* rf = ctx.russo ? ctx.russo : ImGui::GetFont();
         float rsz = rf->FontSize;
         float tw  = rf->CalcTextSizeA(rsz, FLT_MAX, 0.f, rotLbl).x;
-        ImVec2 bmin = {wp.x + w - tw - 20.f, wp.y}, bmax = {wp.x + w - 4.f, wp.y + header_h()};
+        // Сдвинут левее крестика закрытия (≈22px), чтобы не перекрывались.
+        ImVec2 bmin = {wp.x + w - tw - 42.f, wp.y}, bmax = {wp.x + w - 26.f, wp.y + header_h()};
         bool hov = ImGui::IsMouseHoveringRect(bmin, bmax, false);
-        dl->AddText(rf, rsz, {wp.x + w - tw - 12.f, wp.y + (header_h() - rsz) * 0.5f},
+        dl->AddText(rf, rsz, {wp.x + w - tw - 34.f, wp.y + (header_h() - rsz) * 0.5f},
                     hov ? COL_WHITE : COL_LABEL, rotLbl);
         if (hov && ImGui::IsMouseClicked(0))
             s_map_rot = (s_map_rot + 1) & 3;
