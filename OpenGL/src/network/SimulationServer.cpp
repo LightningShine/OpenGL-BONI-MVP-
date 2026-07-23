@@ -9,6 +9,7 @@
 #include "../racing/RaceManager.h"
 #include "../track/TrackRecorder.h"
 #include "../track/TelemetryTrackBuilder.h"
+#include "../core/DeviceRegistry.h"
 #include <random>
 #include <chrono>
 #include <unordered_map>
@@ -470,6 +471,10 @@ void processIncomingTelemetry(const TelemetryPacket& packet, bool count_pps)
         return;
     }
 
+    // Регистрируем устройство как «на связи» ещё до загрузки трека — оператор
+    // должен видеть подключённые/ранее виденные трекеры в настройках сразу.
+    DeviceRegistry::instance().mark_seen(packet.ID);
+
     // Map prototype/device IDs (coming from hardware) to race vehicle IDs (1..99).
     // This decouples device identity from race identity and keeps IDs UI-friendly.
 
@@ -794,9 +799,11 @@ void processIncomingTelemetry(const TelemetryPacket& packet, bool count_pps)
 
             new_vehicle.m_has_authoritative_state = false;
 
-            // Assign display name: simulation vehicles get "CAR<ID>", real prototypes "Unknown"
-            // (Real prototype name lookup will be added when PilotDatabase is implemented.)
-            new_vehicle.name = "CAR" + std::to_string(raceID);
+            // Имя из реестра устройств по аппаратному ID; если не задано —
+            // fallback "CAR<raceID>". Реестр — источник имён (DeviceRegistry).
+            new_vehicle.name = DeviceRegistry::instance()
+                                   .name_of(packet.ID)
+                                   .value_or("CAR" + std::to_string(raceID));
 
             // ? Use emplace to avoid default constructor call!
             auto [insertIt, inserted] = g_vehicles.emplace(raceID, std::move(new_vehicle));

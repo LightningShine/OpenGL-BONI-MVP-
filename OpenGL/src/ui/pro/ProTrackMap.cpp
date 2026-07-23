@@ -218,6 +218,7 @@ static void DrawStatusStrip(ImDrawList* dl, const ProContext& ctx,
         centered(fMono, boxH * 0.60f, x + 5.f * ss, cellW - 5.f * ss, boxY, boxH, st.text, val);
         x += cellW + gapC;
     }
+
 }
 
 void RenderTrackMapWindow(const ProContext& ctx, int32_t vehicleId,

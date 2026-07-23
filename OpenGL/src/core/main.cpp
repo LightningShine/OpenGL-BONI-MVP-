@@ -38,6 +38,7 @@
 #include "../Config.h"
 #include "../ui/UI_Config.h"
 #include "../ui/ui_scale.hpp"
+#include "DeviceRegistry.h"
 #include "../input/Input.h"
 #include "../rendering/Interpolation.h"
 #include "../rendering/Render.h"          
@@ -921,6 +922,10 @@ int main()
 
 	std::cout << "vehicleLoop thread started" << std::endl;
 	
+	// ========================== DEVICE REGISTRY (имена/группы трекеров) ==========================
+	// Локальная SQLite-база рядом с exe: помнит ID устройств и заданные имена.
+	DeviceRegistry::instance().open("devices.db");
+
 	// ========================== RACE MANAGER INITIALIZATION ==========================
 	g_race_manager = new RaceManager();
 	std::cout << "[MAIN] Race Manager initialized" << std::endl;

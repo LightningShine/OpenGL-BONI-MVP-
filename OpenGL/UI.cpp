@@ -30,6 +30,7 @@
 
 #include "src/network/TrackServerClient.h"
 #include "src/ui/Accounts.h"
+#include "src/ui/SettingsPanel.h"
 #include "src/ui/pro/ProView.h"
 #include "src/network/Server.h"
 #include "src/network/ESP32_Code.h"
@@ -1523,6 +1524,7 @@ void UI::Render()
     RenderPrototypeToast();
     RenderNetworkingModal();
     AccountsPanel::Render(m_fontUI, m_fontUBold);
+    SettingsPanel::Render(m_fontRegular, m_fontUBold);
     RenderAutoStopModal();
 
     // Render help modal if open
@@ -2583,7 +2585,8 @@ void UI::RenderTopMenu()
         if (ImGui::BeginMenu("Settings"))
         {
             if (ImGui::MenuItem("Preferences", nullptr, false, false)) {}
-            if (ImGui::MenuItem("Configuration", nullptr, false, false)) {}
+            if (ImGui::MenuItem("Configuration", nullptr, SettingsPanel::IsOpen()))
+                SettingsPanel::Toggle();
             ImGui::Separator();
 
             // COM port selection (auto-discovered in background thread)

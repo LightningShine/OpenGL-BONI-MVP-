@@ -72,6 +72,9 @@
     <ClCompile Include="src\core\main.cpp">
       <Filter>src\core</Filter>
     </ClCompile>
+    <ClCompile Include="src\core\DeviceRegistry.cpp">
+      <Filter>src\core</Filter>
+    </ClCompile>
     <ClCompile Include="src\input\Input.cpp">
       <Filter>src\input</Filter>
     </ClCompile>
@@ -166,6 +169,7 @@
     <ClCompile Include="src\ui\pro\ProSidebar.cpp" />
     <ClCompile Include="src\ui\pro\ProRelative.cpp" />
     <ClCompile Include="src\ui\Accounts.cpp" />
+    <ClCompile Include="src\ui\SettingsPanel.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\input\Input.h">
@@ -239,6 +243,10 @@
     <ClInclude Include="src\rendering\VehicleNameRenderer.h" />
     <ClInclude Include="src\network\TrackServerClient.h" />
     <ClInclude Include="src\ui\Accounts.h" />
+    <ClInclude Include="src\ui\SettingsPanel.h" />
+    <ClInclude Include="src\core\DeviceRegistry.h">
+      <Filter>src\core</Filter>
+    </ClInclude>
     <ClInclude Include="src\track\TrackEditor.h" />
     <ClInclude Include="src\ui\TrackReviewPanel.h" />
     <ClInclude Include="src\ui\ui_scale.hpp" />
