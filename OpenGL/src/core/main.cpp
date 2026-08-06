@@ -39,6 +39,7 @@
 #include "../ui/UI_Config.h"
 #include "../ui/ui_scale.hpp"
 #include "DeviceRegistry.h"
+#include "../logging/ConsoleLog.h"
 #include "../input/Input.h"
 #include "../rendering/Interpolation.h"
 #include "../rendering/Render.h"          
@@ -579,6 +580,12 @@ int main()
 	}
 #endif
 
+	// Журнал консоли. Объявлен здесь, чтобы жить до конца main: всё, что
+	// печатается ниже, попадает и в консоль, и в файл. Разбор «что сломалось
+	// на гонке» перестаёт зависеть от того, сохранил ли оператор вывод.
+	const logging::ConsoleLogSession console_log(
+		LoggingConstants::LOG_DIRECTORY, LoggingConstants::KEEP_CONSOLE_LOG_FILES);
+
 	// Стартовый баннер. Сетевой стек — WebSocket-клиент Track Server, он
 	// работает на всех архитектурах (старый GNS удалён, см. Server.h).
 	std::cout << "==========================================" << std::endl;
@@ -593,6 +600,8 @@ int main()
 #endif
 	std::cout << "[FEATURES] Track Server client (WebSocket), COM telemetry, "
 	             "simulation, OpenGL rendering" << std::endl;
+	if (console_log.is_active())
+		std::cout << "[LOG] Console log: " << console_log.file_path().string() << std::endl;
 	std::cout << "==========================================" << std::endl;
 	std::cout << std::endl;
 

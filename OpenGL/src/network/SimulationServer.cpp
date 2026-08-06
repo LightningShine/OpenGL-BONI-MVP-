@@ -255,48 +255,6 @@ double getSynchronizedSnapshotTimeSeconds(int32_t vehicleID, uint32_t sourceTime
 namespace {
     // Returns true if (x,y) is within `radius_meters` of the track polyline.
     // NOTE: x,y are in normalized coordinates; we convert radius to normalized units.
-    static bool isPositionNearCurrentTrack(double x, double y, double radius_meters)
-    {
-        if (!g_is_map_loaded) {
-            return false;
-        }
-
-        std::vector<SplinePoint> trackCopy;
-        {
-            std::lock_guard<std::mutex> lock(g_track_mutex);
-            trackCopy = g_smooth_track_points;
-        }
-
-        if (trackCopy.size() < 2) {
-            return false;
-        }
-
-        const double radius_norm = radius_meters / MapConstants::MAP_SIZE;
-        const double radius_sq = radius_norm * radius_norm;
-
-        const glm::vec2 p(static_cast<float>(x), static_cast<float>(y));
-
-        const size_t segmentCount = trackCopy.size() - 1;
-        for (size_t i = 0; i < segmentCount; ++i)
-        {
-            const glm::vec2 a = trackCopy[i].position;
-            const glm::vec2 b = trackCopy[i + 1].position;
-
-            const glm::vec2 ab = b - a;
-            const float abLenSq = glm::dot(ab, ab);
-            if (abLenSq <= 1e-12f)
-                continue;
-
-            const float t = glm::clamp(glm::dot(p - a, ab) / abLenSq, 0.0f, 1.0f);
-            const glm::vec2 closest = a + ab * t;
-            const glm::vec2 d = p - closest;
-            const double distSq = static_cast<double>(glm::dot(d, d));
-            if (distSq <= radius_sq)
-                return true;
-        }
-
-        return false;
-    }
 }
 
 namespace {
@@ -304,103 +262,193 @@ namespace {
     // Track progress: compute 0..1 progress from current normalized position by
     // projecting onto the closest track segment (server and client will match
     // as long as they share the same `g_smooth_track_points`).
+    //
+    // Функции ниже вызываются ПО РАЗУ НА КАЖДЫЙ ПАКЕТ телеметрии, то есть до
+    // тысячи раз в секунду на полном поле машин. Поэтому здесь два правила:
+    //   1) никакого копирования трека на вызов — держим снимок и обновляем его
+    //      только при смене версии геометрии;
+    //   2) никакого полного прохода по треку, когда его можно избежать, —
+    //      ищем от сегмента, найденного в прошлый раз.
     // ------------------------------------------------------------------------
-    struct TrackProgressCache {
-        size_t pointCount = 0;
-        std::vector<float> cumulativeDistances;
-        float totalLength = 0.0f;
+
+    // Полуокно поиска вокруг подсказки в сегментах сглаженного трека. Между
+    // пакетами машина проезжает считанные метры, так что запас многократный.
+    constexpr size_t TRACK_SEGMENT_SEARCH_WINDOW = 24;
+
+    // Если ближайший сегмент в окне дальше этого расстояния, подсказка считается
+    // устаревшей и трек просматривается целиком. 25 м при MAP_SIZE = 100 м.
+    constexpr float TRACK_HINT_MAX_DISTANCE_NORM = 0.25f;
+
+    // Вырожденный сегмент (две совпавшие точки) пропускаем: направление из него
+    // не восстановить, а деление на его длину даст бесконечность.
+    constexpr float TRACK_MIN_SEGMENT_LENGTH_SQ = 1e-10f;
+
+    struct TrackGeometrySnapshot {
+        uint32_t generation = 0;                   // 0 = снимок ещё не брался
+        std::vector<SplinePoint> points;
+        std::vector<float> cumulative_distances;   // длина трека до точки i
+        float total_length = 0.0f;
     };
 
-    std::mutex g_track_progress_mutex;
-    TrackProgressCache g_track_progress_cache;
+    std::mutex g_track_geometry_mutex;
+    TrackGeometrySnapshot g_track_geometry;
 
-    void ensureTrackProgressCacheLocked(const std::vector<SplinePoint>& track)
+    // Результат проекции точки на сегмент трека.
+    struct SegmentProjection {
+        size_t index = 0;
+        float  along = 0.0f;                                        // положение внутри сегмента, 0..1
+        double distance_sq = std::numeric_limits<double>::infinity();
+    };
+
+    /// Обновляет снимок геометрии, если трек перезаписан. Вызывающий держит
+    /// g_track_geometry_mutex. Копирование происходит только при смене версии,
+    /// то есть один раз на загрузку трека, а не на пакет.
+    void refresh_track_geometry_locked()
     {
-        if (track.size() == g_track_progress_cache.pointCount && g_track_progress_cache.totalLength > 1e-6f) {
+        const uint32_t generation = track_geometry_generation();
+        if (generation == g_track_geometry.generation)
             return;
-        }
 
-        g_track_progress_cache.pointCount = track.size();
-        g_track_progress_cache.cumulativeDistances.clear();
-        g_track_progress_cache.totalLength = 0.0f;
-
-        if (track.size() < 2) {
-            return;
-        }
-
-        g_track_progress_cache.cumulativeDistances.reserve(track.size());
-        g_track_progress_cache.cumulativeDistances.push_back(0.0f);
-
-        float total = 0.0f;
-        for (size_t i = 1; i < track.size(); ++i)
-        {
-            const float seg = glm::distance(track[i - 1].position, track[i].position);
-            total += seg;
-            g_track_progress_cache.cumulativeDistances.push_back(total);
-        }
-
-        g_track_progress_cache.totalLength = total;
-    }
-
-    double calculateTrackProgressFromPosition(double x, double y)
-    {
-        if (!g_is_map_loaded) {
-            return 0.0;
-        }
-
-        std::vector<SplinePoint> trackCopy;
         {
             std::lock_guard<std::mutex> lock(g_track_mutex);
-            trackCopy = g_smooth_track_points;
+            g_track_geometry.points = g_smooth_track_points;
+        }
+        g_track_geometry.generation = generation;
+        g_track_geometry.cumulative_distances.clear();
+        g_track_geometry.total_length = 0.0f;
+
+        const std::vector<SplinePoint>& points = g_track_geometry.points;
+        if (points.size() < 2)
+            return;
+
+        g_track_geometry.cumulative_distances.reserve(points.size());
+        g_track_geometry.cumulative_distances.push_back(0.0f);
+
+        float total = 0.0f;
+        for (size_t i = 1; i < points.size(); ++i)
+        {
+            total += glm::distance(points[i - 1].position, points[i].position);
+            g_track_geometry.cumulative_distances.push_back(total);
+        }
+        g_track_geometry.total_length = total;
+    }
+
+    /// Проецирует точку на сегмент [index, index+1] снимка трека.
+    /// Вызывающий держит g_track_geometry_mutex и гарантирует валидность index.
+    SegmentProjection project_on_segment_locked(const glm::vec2& p, size_t index)
+    {
+        const glm::vec2 a = g_track_geometry.points[index].position;
+        const glm::vec2 b = g_track_geometry.points[index + 1].position;
+        const glm::vec2 ab = b - a;
+        const float length_sq = glm::dot(ab, ab);
+
+        SegmentProjection result;
+        result.index = index;
+        if (length_sq < TRACK_MIN_SEGMENT_LENGTH_SQ)
+            return result;  // distance_sq остаётся бесконечным — сегмент не выиграет
+
+        result.along = glm::clamp(glm::dot(p - a, ab) / length_sq, 0.0f, 1.0f);
+        const glm::vec2 delta = p - (a + ab * result.along);
+        result.distance_sq = static_cast<double>(glm::dot(delta, delta));
+        return result;
+    }
+
+    /// Лучшая проекция среди сегментов [begin, end). Вызывающий держит мьютекс.
+    SegmentProjection project_on_range_locked(const glm::vec2& p, size_t begin, size_t end)
+    {
+        SegmentProjection best;
+        for (size_t i = begin; i < end; ++i)
+        {
+            const SegmentProjection candidate = project_on_segment_locked(p, i);
+            if (candidate.distance_sq < best.distance_sq)
+                best = candidate;
+        }
+        return best;
+    }
+
+    /// Ищет ближайший сегмент, начиная с окрестности подсказки. Полный проход —
+    /// только если рядом с подсказкой ничего похожего нет: первый пакет машины,
+    /// скачок после потери связи или машина вне трассы.
+    /// Вызывающий держит g_track_geometry_mutex.
+    SegmentProjection find_nearest_segment_locked(const glm::vec2& p, size_t hint)
+    {
+        const size_t segment_count = g_track_geometry.points.size() - 1;
+
+        if (hint < segment_count)
+        {
+            const size_t begin = (hint > TRACK_SEGMENT_SEARCH_WINDOW)
+                                     ? hint - TRACK_SEGMENT_SEARCH_WINDOW : 0;
+            const size_t end = std::min(hint + TRACK_SEGMENT_SEARCH_WINDOW + 1, segment_count);
+
+            const SegmentProjection near_hint = project_on_range_locked(p, begin, end);
+            if (near_hint.distance_sq <=
+                static_cast<double>(TRACK_HINT_MAX_DISTANCE_NORM) * TRACK_HINT_MAX_DISTANCE_NORM)
+            {
+                return near_hint;
+            }
         }
 
-        if (trackCopy.size() < 2) {
+        return project_on_range_locked(p, 0, segment_count);
+    }
+
+    /// Прогресс 0..1 вдоль трека для позиции в системе координат трека.
+    /// segment_hint — сегмент, найденный для этой машины в прошлый раз; функция
+    /// его обновляет. Передавайте на каждую машину свой (см. Vehicle).
+    /// Возвращает 0.0, если трек не загружен.
+    double calculateTrackProgressFromPosition(double x, double y, size_t& segment_hint)
+    {
+        if (!g_is_map_loaded)
             return 0.0;
-        }
 
-        std::lock_guard<std::mutex> lock(g_track_progress_mutex);
-        ensureTrackProgressCacheLocked(trackCopy);
-
-        if (g_track_progress_cache.totalLength <= 1e-6f) {
-            return 0.0;
-        }
-
-        // Track points may be recentred and rendered with an offset. Vehicle positions are stored
-        // in raw normalized coordinates (relative to origin) and rendered with that same offset.
-        // To validate against the current recentered track geometry, compare in track space.
         const glm::vec2 p(static_cast<float>(x), static_cast<float>(y));
 
-        double bestDistSq = std::numeric_limits<double>::infinity();
-        double bestDistanceAlong = 0.0;
+        std::lock_guard<std::mutex> lock(g_track_geometry_mutex);
+        refresh_track_geometry_locked();
 
-        const size_t segmentCount = trackCopy.size() - 1;
-        for (size_t i = 0; i < segmentCount; ++i)
+        if (g_track_geometry.points.size() < 2 || g_track_geometry.total_length <= 1e-6f)
+            return 0.0;
+
+        const SegmentProjection nearest = find_nearest_segment_locked(p, segment_hint);
+        if (nearest.distance_sq == std::numeric_limits<double>::infinity())
+            return 0.0;  // весь трек вырожденный
+
+        segment_hint = nearest.index;
+
+        const glm::vec2 a = g_track_geometry.points[nearest.index].position;
+        const glm::vec2 b = g_track_geometry.points[nearest.index + 1].position;
+        const double distance_along =
+            static_cast<double>(g_track_geometry.cumulative_distances[nearest.index]) +
+            static_cast<double>(glm::distance(a, b) * nearest.along);
+
+        return std::clamp(distance_along / static_cast<double>(g_track_geometry.total_length), 0.0, 1.0);
+    }
+
+    /// Находится ли точка в пределах radius_meters от трассы.
+    /// Грубая проверка «свой ли это трек», без подсказки: машина на трассе
+    /// отсеивается первым же попавшим сегментом, полный проход остаётся только
+    /// для действительно далёких точек.
+    bool isPositionNearCurrentTrack(double x, double y, double radius_meters)
+    {
+        if (!g_is_map_loaded)
+            return false;
+
+        const glm::vec2 p(static_cast<float>(x), static_cast<float>(y));
+        const double radius_norm = radius_meters / MapConstants::MAP_SIZE;
+        const double radius_sq = radius_norm * radius_norm;
+
+        std::lock_guard<std::mutex> lock(g_track_geometry_mutex);
+        refresh_track_geometry_locked();
+
+        if (g_track_geometry.points.size() < 2)
+            return false;
+
+        const size_t segment_count = g_track_geometry.points.size() - 1;
+        for (size_t i = 0; i < segment_count; ++i)
         {
-            const glm::vec2 a = trackCopy[i].position;
-            const glm::vec2 b = trackCopy[i + 1].position;
-            const glm::vec2 ab = b - a;
-            const float abLenSq = glm::dot(ab, ab);
-            if (abLenSq < 1e-10f) {
-                continue;
-            }
-
-            const float t = glm::clamp(glm::dot(p - a, ab) / abLenSq, 0.0f, 1.0f);
-            const glm::vec2 proj = a + ab * t;
-            const glm::vec2 d = p - proj;
-            const double distSq = static_cast<double>(glm::dot(d, d));
-
-            if (distSq < bestDistSq)
-            {
-                bestDistSq = distSq;
-                const float segLen = std::sqrt(abLenSq);
-                bestDistanceAlong = static_cast<double>(g_track_progress_cache.cumulativeDistances[i]) + static_cast<double>(segLen * t);
-            }
+            if (project_on_segment_locked(p, i).distance_sq <= radius_sq)
+                return true;
         }
-
-
-        double progress = bestDistanceAlong / static_cast<double>(g_track_progress_cache.totalLength);
-        progress = std::clamp(progress, 0.0, 1.0);
-        return progress;
+        return false;
     }
 
     static bool isPositionOnCurrentTrack(double x, double y)
@@ -773,7 +821,8 @@ void processIncomingTelemetry(const TelemetryPacket& packet, bool count_pps)
                 const glm::vec2 off = vehicle.m_apply_track_render_offset
                                         ? getTrackRenderOffset() : glm::vec2(0.0f, 0.0f);
                 vehicle.m_track_progress = calculateTrackProgressFromPosition(
-                    vehicle.m_normalized_x + off.x, vehicle.m_normalized_y + off.y);
+                    vehicle.m_normalized_x + off.x, vehicle.m_normalized_y + off.y,
+                    vehicle.m_track_segment_hint);
             }
 
             vehicle.m_last_update_time = std::chrono::steady_clock::now();
@@ -788,7 +837,7 @@ void processIncomingTelemetry(const TelemetryPacket& packet, bool count_pps)
                 vehicle.m_signal_lost = false;
                 std::cout << "[SIGNAL] Vehicle #" << raceID
                           << " (device #" << vehicle.m_device_id
-                          << ") signal restored — lap timing continues" << std::endl;
+                          << ") signal restored, lap timing continues" << std::endl;
             }
 
             // Новые координаты — RaceManager проверит этот отрезок ровно один раз.
@@ -877,7 +926,8 @@ void processIncomingTelemetry(const TelemetryPacket& packet, bool count_pps)
                 const glm::vec2 off = new_vehicle.m_apply_track_render_offset
                                         ? getTrackRenderOffset() : glm::vec2(0.0f, 0.0f);
                 new_vehicle.m_track_progress = calculateTrackProgressFromPosition(
-                    new_vehicle.m_normalized_x + off.x, new_vehicle.m_normalized_y + off.y);
+                    new_vehicle.m_normalized_x + off.x, new_vehicle.m_normalized_y + off.y,
+                    new_vehicle.m_track_segment_hint);
             }
 
             TrackRecorder::OnTelemetryPosition(raceID, glm::vec2(static_cast<float>(new_vehicle.m_normalized_x), static_cast<float>(new_vehicle.m_normalized_y)));

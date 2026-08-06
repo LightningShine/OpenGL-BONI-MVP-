@@ -48,15 +48,15 @@ bool DeviceRegistry::open(const std::string& db_path) {
     if (db_) return true; // уже открыт
 
     if (sqlite3_open(db_path.c_str(), &db_) != SQLITE_OK) {
-        std::cerr << "[DeviceRegistry] Не удалось открыть БД " << db_path << ": "
-                  << (db_ ? sqlite3_errmsg(db_) : "нет памяти") << "\n";
+        std::cerr << "[DeviceRegistry] Cannot open database " << db_path << ": "
+                  << (db_ ? sqlite3_errmsg(db_) : "out of memory") << "\n";
         if (db_) { sqlite3_close(db_); db_ = nullptr; }
         return false;
     }
 
     char* err = nullptr;
     if (sqlite3_exec(db_, kCreateSql, nullptr, nullptr, &err) != SQLITE_OK) {
-        std::cerr << "[DeviceRegistry] Ошибка создания таблицы: " << (err ? err : "?") << "\n";
+        std::cerr << "[DeviceRegistry] Cannot create table: " << (err ? err : "unknown error") << "\n";
         sqlite3_free(err);
         sqlite3_close(db_);
         db_ = nullptr;
@@ -82,7 +82,7 @@ bool DeviceRegistry::open(const std::string& db_path) {
     }
     sqlite3_finalize(st);
 
-    std::cout << "[DeviceRegistry] Открыта БД " << db_path << ", записей: "
+    std::cout << "[DeviceRegistry] Database opened " << db_path << ", records: "
               << devices_.size() << "\n";
     return true;
 }

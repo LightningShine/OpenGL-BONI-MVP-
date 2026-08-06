@@ -309,7 +309,7 @@ void removeVehicles()
                     std::cout << "[SIGNAL] Vehicle #" << race_id
                               << " (device #" << vehicle.m_device_id
                               << ") lost signal after " << silence_ms
-                              << "ms — kept: session is running" << std::endl;
+                              << "ms, kept: session is running" << std::endl;
                     std::cout.flush();
                 }
                 ++it;

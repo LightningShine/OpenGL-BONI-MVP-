@@ -126,6 +126,11 @@ public:
 	// ========================================================================
 	double m_track_progress = 0.0;
 	double m_prev_track_progress = 0.0;
+
+	// Сегмент трека, на который спроецировалась машина в прошлый раз. Подсказка
+	// для поиска ближайшего сегмента: между пакетами машина смещается на метры,
+	// поэтому просматривать весь трек заново незачем.
+	size_t m_track_segment_hint = 0;
 	bool m_has_authoritative_state = false;
 	bool m_apply_track_render_offset = true;
 	// Race position computed by the Track Server (0 = none). When set, the

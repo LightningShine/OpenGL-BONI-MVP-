@@ -247,8 +247,8 @@ namespace TrackRenderer
         std::cout << "[CACHE]   Step 3: Interpolated to " << smoothPoints.size() << " smooth points" << std::endl;
         
         // ????????? ??? ????????? ?????
-        g_smooth_track_points = smoothPoints;
-        
+        publish_smooth_track_points(smoothPoints);
+
         std::cout << "[CACHE]   g_smooth_track_points filled with " << g_smooth_track_points.size() << " points" << std::endl;
         
         // ========================================================================
@@ -455,7 +455,7 @@ namespace TrackRenderer
         std::cout << "[CACHE] Rebuilding track cache from spline points (" << smoothPoints.size() << ")..." << std::endl;
 
         // Keep server-provided geometry/tangents as-is (important for consistent progress + start/finish line)
-        g_smooth_track_points = smoothPoints;
+        publish_smooth_track_points(smoothPoints);
 
         // ========================================================================
         // STEP 1: Initialize Start/Finish Line (ONCE per track load)
@@ -731,7 +731,7 @@ namespace TrackRenderer
         s_debug_line.clear();
         s_track_cache_valid = false;
         g_is_map_loaded = false;
-        g_smooth_track_points.clear();  // PRO Track Map draws from these
+        publish_smooth_track_points({});  // PRO Track Map draws from these
         
         // ??????? OpenGL ???????
         if (s_track_vao != 0)
@@ -946,7 +946,7 @@ namespace TrackRenderer
         s_cached_border_layer  = generateTriangleStripFromEdges(bL, bR);
         s_cached_asphalt_layer = generateTriangleStripFromEdges(left, right);
 
-        g_smooth_track_points = interpolatePointsWithTangents(centres, 6);
+        publish_smooth_track_points(interpolatePointsWithTangents(centres, 6));
 
         setupStartFinishFromEdgePoints(left[0], right[0]);
         uploadEdgeGeometry(s_cached_border_layer, s_cached_asphalt_layer, GL_STATIC_DRAW);

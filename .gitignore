@@ -361,3 +361,5 @@ MigrationBackup/
 
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
+# Журналы консоли приложения (logs/console_*.log) — локальная диагностика
+logs/

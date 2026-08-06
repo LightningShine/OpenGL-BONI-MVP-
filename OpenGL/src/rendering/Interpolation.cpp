@@ -2,6 +2,34 @@
 #include <cmath>
 #include <iostream>
 #include <algorithm>
+#include <atomic>
+#include <mutex>
+
+// Геометрия трека живёт в main.cpp; здесь — единственная точка её публикации.
+extern std::vector<SplinePoint> g_smooth_track_points;
+extern std::mutex g_track_mutex;
+
+namespace {
+    // Стартует с 1, чтобы нулевое значение в снимке потребителя гарантированно
+    // означало «снимок ещё не брался».
+    std::atomic<uint32_t> g_track_geometry_generation{ 1 };
+}
+
+void publish_smooth_track_points(std::vector<SplinePoint> points)
+{
+    {
+        std::lock_guard<std::mutex> lock(g_track_mutex);
+        g_smooth_track_points = std::move(points);
+    }
+    // Версию двигаем ПОСЛЕ записи: потребитель, увидевший новую версию, обязан
+    // застать под мьютексом уже новые точки, а не наоборот.
+    g_track_geometry_generation.fetch_add(1, std::memory_order_release);
+}
+
+uint32_t track_geometry_generation()
+{
+    return g_track_geometry_generation.load(std::memory_order_acquire);
+}
 
 glm::vec2 g_track_render_offset(0.0f, 0.0f);
 

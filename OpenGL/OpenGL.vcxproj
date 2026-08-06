@@ -248,6 +248,7 @@
     <ClCompile Include="libraries\include\serialib\serialib.cpp" />
     <ClCompile Include="src\core\main.cpp" />
     <ClCompile Include="src\core\DeviceRegistry.cpp" />
+    <ClCompile Include="src\logging\ConsoleLog.cpp" />
     <ClCompile Include="src\input\Input.cpp" />
     <ClCompile Include="src\network\ESP32_Code.cpp" />
     <ClCompile Include="src\network\SimulationServer.cpp" />
@@ -300,6 +301,7 @@
     <ClInclude Include="src\ui\Accounts.h" />
     <ClInclude Include="src\ui\SettingsPanel.h" />
     <ClInclude Include="src\core\DeviceRegistry.h" />
+    <ClInclude Include="src\logging\ConsoleLog.h" />
     <ClInclude Include="src\network\ESP32_Code.h" />
     <ClInclude Include="src\network\Server.h" />
     <ClInclude Include="src\network\SimulationServer.h" />

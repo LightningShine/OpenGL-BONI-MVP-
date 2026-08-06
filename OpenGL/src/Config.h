@@ -95,6 +95,15 @@ namespace SimulationConstants {
     static constexpr int PROGRESS_LOG_INTERVAL = 30;
 }
 
+// Diagnostics / logging
+namespace LoggingConstants {
+    // Каталог журналов рядом с рабочей папкой приложения (как devices.db).
+    static constexpr const char* LOG_DIRECTORY = "logs";
+    // Сколько последних журналов консоли хранить. Один запуск — один файл,
+    // объём мизерный, поэтому глубины в два десятка хватает с запасом.
+    static constexpr size_t KEEP_CONSOLE_LOG_FILES = 20;
+}
+
 // Race timing constants
 namespace RaceConstants {
     // ✅ Настраиваемая нумерация кругов:
