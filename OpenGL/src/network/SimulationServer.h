@@ -34,6 +34,15 @@ void telemetryResetPpsCounters();
 // Resets prototype->race vehicle ID mapping (used when changing data sources).
 void telemetryResetPrototypeIdMapping();
 
+// Releases the prototype->race mapping entries pointing at a race vehicle ID.
+// Принимает именно race ID (номер участника, он же ключ g_vehicles), не ID железки.
+void telemetryReleaseRaceIdMapping(int32_t raceID);
+
+// Единая точка «машины с этим race ID больше нет»: снимает привязку устройства,
+// буфер интерполяции, тайм-синк, сглаживание таймера и лимитер репликации.
+// Вызывать после удаления из g_vehicles и БЕЗ удерживаемого g_vehicles_mutex.
+void telemetryForgetVehicle(int32_t race_id);
+
 // Race vehicle ID assigned to a hardware/prototype device ID (-1 if the
 // device has not been seen yet). Used by TrackServerClient to write the
 // server-computed timings onto the right Vehicle in g_vehicles.

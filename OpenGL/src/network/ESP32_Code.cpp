@@ -322,17 +322,53 @@ static void realDataThreadWorker(const std::string& com_port)
     uint8_t window[4] = { 0, 0, 0, 0 };
     int windowCount = 0;
 
+    // Порт может «зависнуть» после долгой работы: на Windows при comm-ошибке
+    // (RX-overrun/framing или просадка/пересброс USB) ReadFile начинает
+    // возвращать ошибку (-2) или ноль, и порт остаётся мёртвым, пока его не
+    // переоткрыть — ровно то, что оператор делает вручную, повторно выбирая COM.
+    // Делаем это автоматически: следим за ошибками чтения и за «тишиной».
+    auto last_rx = std::chrono::steady_clock::now();
+    constexpr auto kStallReopenTimeout = std::chrono::seconds(3);
+
+    auto reopenPort = [&]() {
+        std::cerr << "[SERIAL] Link stalled on " << com_port << " — reopening..." << std::endl;
+        closeSerialNoThrow();
+        // Небольшая пауза, чтобы драйвер освободил ресурс перед повторным открытием.
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        if (openCOMPort(com_port))
+            std::cout << "[SERIAL] Reopened " << com_port << std::endl;
+        else
+            std::cerr << "[SERIAL] Failed to reopen " << com_port << ", will retry" << std::endl;
+        // Ресинхронизируемся на magic marker с чистого листа.
+        window[0] = window[1] = window[2] = window[3] = 0;
+        windowCount = 0;
+        last_rx = std::chrono::steady_clock::now();
+    };
+
     while (!g_capture_stop_requested.load())
     {
       const auto now = std::chrono::steady_clock::now();
         // Read stream byte-by-byte and scan for magic marker.
         uint8_t byte = 0;
-        if (serial.readBytes(&byte, 1, 100) <= 0)
+        const int rd = serial.readBytes(&byte, 1, 100);
+        if (rd < 0)
         {
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            // Явная ошибка чтения (ReadFile/SetCommTimeouts не удались) — порт в
+            // ошибочном состоянии, переоткрываем немедленно.
+            reopenPort();
+            continue;
+        }
+        else if (rd == 0)
+        {
+            // Таймаут без данных. Если тишина затянулась — порт завис, переоткрываем.
+            if (now - last_rx >= kStallReopenTimeout)
+                reopenPort();
+            else
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
         else
         {
+            last_rx = now;
             bytes_seen++;
 
             // shift window
@@ -362,11 +398,19 @@ static void realDataThreadWorker(const std::string& com_port)
                 const size_t payloadSize = rajagp::kRajaPayloadAfterMagic;
                 uint8_t payload[rajagp::kRajaPayloadAfterMagic];
                 size_t totalRead = 0;
+                // Ограничиваем ожидание payload, чтобы не крутиться вечно на
+                // мёртвом порте: при ошибке/затянувшемся таймауте бросаем пакет,
+                // внешний цикл сам переоткроет порт при следующем чтении.
+                const auto payloadDeadline = now + std::chrono::milliseconds(500);
                 while (totalRead < payloadSize && !g_capture_stop_requested.load())
                 {
                     const int r = serial.readBytes(reinterpret_cast<char*>(payload + totalRead), static_cast<int>(payloadSize - totalRead), 100);
-                    if (r > 0)
+                    if (r > 0) {
                         totalRead += static_cast<size_t>(r);
+                        last_rx = std::chrono::steady_clock::now();
+                    }
+                    else if (r < 0 || std::chrono::steady_clock::now() >= payloadDeadline)
+                        break;
                     else
                         std::this_thread::sleep_for(std::chrono::milliseconds(1));
                 }
@@ -467,7 +511,11 @@ bool selectAndOpenComPort(const std::string& port)
 
     // Avoid showing stale PPS from the previous source while the new port is opening.
     telemetryResetPpsCounters();
-    telemetryResetPrototypeIdMapping();
+    // НЕ сбрасываем prototype->race маппинг при смене порта: он привязан к
+    // статическому ID устройства из пакета и живёт ровно столько, сколько живёт
+    // машина (пруним в removeVehicles при таймауте). Иначе тот же трекер после
+    // возврата на порт считался бы новым прототипом и заводил дубль в лидерборде
+    // со сбросом таймингов, пока старая машина ещё не истекла по VEHICLE_TIMEOUT_MS.
     startRealDataCapture(port);
     return true;
 }

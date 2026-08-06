@@ -50,8 +50,11 @@ class Vehicle
 public:
 	Vehicle();
 	Vehicle(double normalized_x, double normalized_y);
-	Vehicle(int32_t id, double normalized_x, double normalized_y);  // ✅ New: with explicit ID
-	Vehicle(const TelemetryPacket& packet);
+	Vehicle(int32_t race_id, double normalized_x, double normalized_y);
+	// race_id передаётся явно: пакет несёт ID железки, а не номер в гонке.
+	// Раньше конструктор брал ID из пакета и машина ложилась в g_vehicles под
+	// другим ключом — отсюда чистились не те записи при удалении.
+	Vehicle(int32_t race_id, const TelemetryPacket& packet);
 	
 	double m_lat_dd;
 	double m_lon_dd;
@@ -64,7 +67,12 @@ public:
 	double m_g_force_x;
 	double m_g_force_y;
 	int16_t m_fix_type;
-	int32_t m_id;
+	// Номер участника в сессии (1..99). Он же — ключ в g_vehicles и во всех
+	// сопутствующих картах (интерполятор, тайм-синк). Другого смысла не имеет.
+	int32_t m_id = 0;
+	// ID железки из пакета телеметрии (0 = машина создана не из телеметрии).
+	// Реестр устройств и имена привязаны к нему, номер в гонке — к m_id.
+	int32_t m_device_id = 0;
 	std::string name = "Unknown";
 	std::chrono::steady_clock::time_point m_last_update_time = std::chrono::steady_clock::now();
 	glm::vec3 m_cached_color; 
@@ -88,6 +96,12 @@ public:
 	int bestlapID = -1;
 	bool m_is_finished = false;
 
+	// Круг засчитывается только если машина побывала на дальней половине трассы
+	// с момента прошлого зачёта. Защита от дублей по пространству, а не по
+	// времени: закрывает и дребезг у самой линии, и скачок прогресса там, где
+	// трасса подходит близко сама к себе.
+	bool m_lap_armed = false;
+
 
 	// ========================================================================
 	// POSITION TRACKING (for line crossing detection)
@@ -95,6 +109,17 @@ public:
 	double m_prev_x = 0.0;
 	double m_prev_y = 0.0;
 	double m_heading = 0.0;  // ✅ Current direction in radians
+
+	// Растёт на каждом обновлении координат источником данных. RaceManager
+	// проверяет отрезок prev->cur только при новом значении: при потере связи
+	// пара застывает, и без этого счётчика она пересчитывалась бы каждый кадр,
+	// давая фантомные пересечения старт/финиша и обнуляя таймер круга.
+	uint64_t m_telemetry_seq = 0;
+	uint64_t m_processed_seq = 0;
+
+	// Пакетов нет дольше таймаута. Во время сессии такую машину не удаляем:
+	// вместе с объектом умерли бы её круги (см. g_race_session_active).
+	bool m_signal_lost = false;
 
 	// ========================================================================
 	// TRACK PROGRESS (0.0 = start, 1.0 = full lap)
@@ -123,9 +148,14 @@ public:
 };
 
 
-extern std::map<int32_t, Vehicle> g_vehicles; 
-extern std::mutex g_vehicles_mutex;   
+extern std::map<int32_t, Vehicle> g_vehicles;
+extern std::mutex g_vehicles_mutex;
 extern std::atomic<bool> g_is_vehicles_active;
+
+// Сессия запущена (Active/Finishing/Ended). Пока true, removeVehicles() не
+// удаляет машины по таймауту — участник, потерявший связь, не должен терять
+// круги. Флаг пишет RaceManager, чтобы vehicle-модуль не зависел от racing.
+extern std::atomic<bool> g_race_session_active;
 
 
 

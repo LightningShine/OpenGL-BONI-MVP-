@@ -4,6 +4,7 @@
 #include "../Config.h"
 #include "../rendering/Interpolation.h"
 #include "../rendering/VehicleNameRenderer.h"
+#include "../network/SimulationServer.h"
 #include "../../UI.h"
 #include <cmath>
 #include <iostream>
@@ -17,6 +18,7 @@ extern UI* g_ui;
 std::map<int32_t, Vehicle> g_vehicles;
 std::mutex g_vehicles_mutex;
 std::atomic<bool> g_is_vehicles_active = false;
+std::atomic<bool> g_race_session_active = false;
 
 // ✅ Система выбора машины для отслеживания
 int g_focused_vehicle_id = -1;  // -1 = лидер (дефолт)
@@ -184,7 +186,7 @@ Vehicle::Vehicle(int32_t id, double normalized_x, double normalized_y)
     std::cout << "Vehicle #" << m_id << " created at START line (" << m_normalized_x << ", " << m_normalized_y << "), GPS: (" << m_lat_dd << ", " << m_lon_dd << ")" << std::endl;
 }
 
-Vehicle::Vehicle(const TelemetryPacket& packet)
+Vehicle::Vehicle(int32_t race_id, const TelemetryPacket& packet)
 {
     m_lat_dd = packet.lat / 1e7;
     m_lon_dd = packet.lon / 1e7;
@@ -193,10 +195,12 @@ Vehicle::Vehicle(const TelemetryPacket& packet)
     m_g_force_x = packet.gForceX / 100.0;
     m_g_force_y = packet.gForceY / 100.0;
     m_fix_type = packet.fixtype;
-    m_id = packet.ID;
+    m_id = race_id;
+    m_device_id = packet.ID;
 
     // ⚠️ CRITICAL DEBUG: Print stack trace to find who creates this
-    std::cout << "[VEHICLE CONSTRUCTOR] Creating vehicle #" << m_id 
+    std::cout << "[VEHICLE CONSTRUCTOR] Creating vehicle #" << m_id
+              << " (device #" << m_device_id << ")"
               << " from TelemetryPacket (this should only happen for NEW vehicles!)" << std::endl;
     std::cout.flush();
 
@@ -265,33 +269,67 @@ void vehicleLoop()
 void removeVehicles()
 {
     auto now = std::chrono::steady_clock::now();
+    // Собираем race ID удалённых машин под локом, а сопутствующее состояние
+    // (маппинг, интерполятор, тайм-синк) чистим ПОСЛЕ выхода из g_vehicles_mutex:
+    // allocate-путь берёт s_proto_map_mutex, затем g_vehicles_mutex, поэтому
+    // обратный порядок здесь привёл бы к дедлоку.
+    std::vector<int32_t> removed_race_ids;
     {
         std::lock_guard<std::mutex> lock(g_vehicles_mutex);
-        if (!g_vehicles.empty())
+        // Во время сессии участник, потерявший связь, помечается, но не удаляется:
+        // всё его гоночное состояние (круги, лучшее время) живёт внутри объекта и
+        // умерло бы вместе с ним, а после реконнекта машина начала бы гонку с нуля.
+        const bool keep_entrants = g_race_session_active.load(std::memory_order_relaxed);
+
+        for (auto it = g_vehicles.begin(); it != g_vehicles.end();)
         {
-            for (auto it = g_vehicles.begin(); it != g_vehicles.end();)
+            const int32_t race_id = it->first;
+            Vehicle& vehicle = it->second;
+
+            const auto silence_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                now - vehicle.m_last_update_time).count();
+            const int timeoutMs = vehicle.m_has_authoritative_state
+                ? VehicleConstants::AUTHORITATIVE_VEHICLE_TIMEOUT_MS
+                : VehicleConstants::VEHICLE_TIMEOUT_MS;
+
+            if (silence_ms < timeoutMs)
             {
-                auto timeSinceLastUpdate = std::chrono::duration_cast<std::chrono::milliseconds>(now - it->second.m_last_update_time).count();
-                const int timeoutMs = it->second.m_has_authoritative_state
-                    ? VehicleConstants::AUTHORITATIVE_VEHICLE_TIMEOUT_MS
-                    : VehicleConstants::VEHICLE_TIMEOUT_MS;
-
-                if (timeSinceLastUpdate >= timeoutMs)
-                {
-                    std::cout << "[TIMEOUT] Vehicle ID #" << it->second.m_id 
-                              << " removed due to timeout (" << timeSinceLastUpdate << "ms > " 
-                              << timeoutMs << "ms)" << std::endl;
-                    std::cout.flush();
-                    it = g_vehicles.erase(it); // ✅ erase возвращает следующий итератор
-                }
-                else
-                {
-                    ++it; // ✅ Инкремент ТОЛЬКО если НЕ удалили
-                }
+                vehicle.m_signal_lost = false;
+                ++it;
+                continue;
             }
-        }
 
+            // Машины с авторитетным состоянием считает сервер: их круги живут не
+            // здесь, сохранять объект незачем — пусть уходят быстро, как и раньше.
+            if (keep_entrants && !vehicle.m_has_authoritative_state)
+            {
+                if (!vehicle.m_signal_lost)
+                {
+                    vehicle.m_signal_lost = true;
+                    std::cout << "[SIGNAL] Vehicle #" << race_id
+                              << " (device #" << vehicle.m_device_id
+                              << ") lost signal after " << silence_ms
+                              << "ms — kept: session is running" << std::endl;
+                    std::cout.flush();
+                }
+                ++it;
+                continue;
+            }
+
+            std::cout << "[TIMEOUT] Vehicle #" << race_id
+                      << " (device #" << vehicle.m_device_id
+                      << ") removed due to timeout (" << silence_ms << "ms > "
+                      << timeoutMs << "ms)" << std::endl;
+            std::cout.flush();
+            removed_race_ids.push_back(race_id);
+            it = g_vehicles.erase(it); // ✅ erase возвращает следующий итератор
+        }
     }
+
+    // Машины ушли окончательно — единой точкой чистим всё, что заведено на их
+    // race ID (уже без g_vehicles_mutex).
+    for (int32_t race_id : removed_race_ids)
+        telemetryForgetVehicle(race_id);
 }
 
 
@@ -485,6 +523,12 @@ void renderAllVehicles(GLuint shader_program, GLuint vao, GLuint vbo,
         vehiclesToRender.reserve(g_vehicles.size());
 
         for (const auto& [id, vehicle] : g_vehicles) {
+            // Связи нет — координаты застыли. Точку не рисуем, чтобы оператор не
+            // принял её за едущую машину; в таблице участник остаётся со своими
+            // кругами (см. removeVehicles / g_race_session_active).
+            if (vehicle.m_signal_lost)
+                continue;
+
             RenderData data{ vehicle, 0.0, 0.0, 0.0, 0.0, false };
 
             // Try to get interpolated position

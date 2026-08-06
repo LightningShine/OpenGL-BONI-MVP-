@@ -194,20 +194,32 @@ void RaceManager::Update(float deltaTime)
         const glm::vec2 sfP1 = m_startFinishP1;
         const glm::vec2 sfP2 = m_startFinishP2;
 
+        // Отрезок prev->cur создаётся источником данных на каждый пакет, а этот
+        // цикл крутится каждый кадр. Проверяем только НОВЫЙ отрезок: иначе при
+        // потере связи застывшая пара пересчитывалась бы кадр за кадром, а если
+        // она пересекает линию — писала бы круг и обнуляла таймер бесконечно.
+        const bool hasFreshTelemetry = (vehicle.m_telemetry_seq != vehicle.m_processed_seq);
+        vehicle.m_processed_seq = vehicle.m_telemetry_seq;
+
         float intersectionRatio = 0.0f;
-        const bool crossed = CheckLineSegmentIntersection(prevPos, curPos, sfP1, sfP2, intersectionRatio);
-        
-        // Check for progress cycle (0.999 -> 0.001)
-        // Use this only for real GNSS telemetry (jitter/low-rate updates). Simulation and
-        // other non-GNSS sources should rely on strict line intersection to avoid false laps.
-        const bool isNonGnssSource = (vehicle.m_fix_type < 2);
-        bool progressCycled = false;
-        if (!isNonGnssSource)
-        {
-            progressCycled = (vehicle.m_prev_track_progress > 0.85 &&
-                              vehicle.m_track_progress < 0.15);
-        }
-        
+        const bool crossed = hasFreshTelemetry &&
+            CheckLineSegmentIntersection(prevPos, curPos, sfP1, sfP2, intersectionRatio);
+
+        // Резервная детекция по циклу прогресса (0.999 -> 0.001) для случаев, когда
+        // строгое пересечение промахнулось: редкие пакеты, или позиция уехала вбок
+        // и хорда прошла мимо концов линии. Симуляция даёт точный прогресс, реальная
+        // телеметрия — шумный, поэтому порог намеренно широкий.
+        const bool progressCycled = hasFreshTelemetry &&
+                                    vehicle.m_prev_track_progress > 0.85 &&
+                                    vehicle.m_track_progress < 0.15;
+
+        // Взводим машину на дальней половине круга. Пока не взведена, пересечение
+        // линии не считается кругом — это и позволяет держать обе детекции
+        // включёнными сразу, не боясь двойного зачёта.
+        if (vehicle.m_track_progress > 0.5)
+            vehicle.m_lap_armed = true;
+
+
         // ====================================================================
         // LAP COMPLETION DETECTION
         // ====================================================================
@@ -242,8 +254,10 @@ void RaceManager::Update(float deltaTime)
             continue;
         }
 
-        if (vehicle.m_has_started_first_lap && (crossed || progressCycled))
+        if (vehicle.m_has_started_first_lap && (crossed || progressCycled) && vehicle.m_lap_armed)
         {
+            vehicle.m_lap_armed = false;
+
             // Sub-frame accurate timing
             float crossingTime = vehicle.m_current_lap_timer + (deltaTime * intersectionRatio);
 

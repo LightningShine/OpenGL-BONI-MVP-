@@ -13,8 +13,8 @@ namespace VehicleConstants {
     static constexpr float VEHICLE_OUTLINE_WIDTH = 0.005f;   // ✅ Толщина обводки (белая рамка)
     static constexpr float VEHICLE_OUTLINE_RADIUS = VEHICLE_BODY_RADIUS + VEHICLE_OUTLINE_WIDTH;  // Автоматический расчёт
     static constexpr int VEHICLE_CIRCLE_SEGMENTS = 20;
-    static constexpr int VEHICLE_TIMEOUT_MS = 5000;         // 5 seconds (was 300ms - too short!)
-    static constexpr int AUTHORITATIVE_VEHICLE_TIMEOUT_MS = 750; // Remote processed-state vehicles disappear quickly after server stop
+    static constexpr int VEHICLE_TIMEOUT_MS = 60000;         // 60 seconds (was 300ms - too short!)
+    static constexpr int AUTHORITATIVE_VEHICLE_TIMEOUT_MS = 2500; // Remote processed-state vehicles disappear quickly after server stop
 
     // ✅ Цвет обводки (RGB)
     static constexpr float VEHICLE_OUTLINE_COLOR_R = 1.0f;
@@ -107,6 +107,11 @@ namespace RaceConstants {
     // 0 = сравнение с предыдущим кругом (previous lap)
     // N > 0 = сравнение с конкретным кругом номер N
     static constexpr int LAP_DELTA_COMPARE_MODE = -1;  // По умолчанию: сравнение с лучшим
+
+    // Верхняя граница номеров участников: race ID выдаётся из диапазона 1..N и
+    // служит ключом в g_vehicles. Держим двузначным, чтобы номер оставался
+    // читаемым на табло.
+    static constexpr int MAX_RACE_VEHICLE_ID = 99;
 }
 
 // Console colors

@@ -11,6 +11,9 @@ void RaceManager::StartSession() {
     m_raceStartTime = std::chrono::steady_clock::now();
     m_raceTimerRunning = true;
     m_raceElapsedSeconds = 0.0f;
+    // Пока сессия идёт, машины не удаляются по таймауту: потеря связи не должна
+    // стирать участника вместе с его кругами (см. removeVehicles).
+    g_race_session_active.store(true, std::memory_order_relaxed);
     std::cout << "[SESSION] Session Started!" << std::endl;
 }
 
@@ -64,6 +67,8 @@ void RaceManager::ResetSession() {
     m_leaderLapsAtStop = 0;
     m_leaderAtStop = -1;
     m_leadLapCarCount = 0;
+    // Сессии нет — машины снова живут по таймауту и уходят с карты сами.
+    g_race_session_active.store(false, std::memory_order_relaxed);
 
     std::lock_guard<std::mutex> lock(g_vehicles_mutex);
     for (auto& [id, vehicle] : g_vehicles) {
@@ -79,6 +84,8 @@ void RaceManager::ResetSession() {
         vehicle.m_prev_track_progress = 0.0;
         vehicle.m_is_finished = false;
         vehicle.m_telemetry_sample_timer = 0.0f;
+        vehicle.m_lap_armed = false;
+        vehicle.m_processed_seq = vehicle.m_telemetry_seq;
     }
     std::cout << "[SESSION] Session Reset! All lap data cleared." << std::endl;
 }

@@ -58,6 +58,13 @@ namespace {
     // Track mismatch debounce (per race vehicle id)
     std::mutex g_track_mismatch_mutex;
     std::unordered_map<int32_t, uint32_t> g_track_mismatch_start_ms;
+
+    // Replication rate limiter (per race vehicle id). Лежит на уровне файла, а не
+    // статиком внутри функции, чтобы telemetryForgetVehicle() мог его почистить:
+    // иначе запись переживала бы машину и новый участник в том же слоте
+    // наследовал бы чужой таймер отправки.
+    std::mutex s_send_rate_mutex;
+    std::unordered_map<int32_t, uint32_t> s_last_send_time_ms;
 }
 uint32_t telemetryGetPacketsPerSecond()
 {
@@ -85,6 +92,21 @@ void telemetryResetPrototypeIdMapping()
     s_proto_to_race_id.clear();
 }
 
+void telemetryReleaseRaceIdMapping(int32_t raceID)
+{
+    // Вызывается, когда машина реально удалена. Убираем запись прототип->race,
+    // чтобы освободившийся номер мог быть переиспользован.
+    // ВАЖНО: аргумент — именно race ID (значение в карте), а не ID железки.
+    std::lock_guard<std::mutex> lock(s_proto_map_mutex);
+    for (auto it = s_proto_to_race_id.begin(); it != s_proto_to_race_id.end();)
+    {
+        if (it->second == raceID)
+            it = s_proto_to_race_id.erase(it);
+        else
+            ++it;
+    }
+}
+
 int32_t telemetryGetRaceIdForPrototype(int32_t prototype_id)
 {
     std::lock_guard<std::mutex> lock(s_proto_map_mutex);
@@ -92,17 +114,29 @@ int32_t telemetryGetRaceIdForPrototype(int32_t prototype_id)
     return it != s_proto_to_race_id.end() ? it->second : -1;
 }
 
-static bool isRaceIdOccupiedLocked(int32_t raceId)
+// Номер занят, если на него ссылается либо живая машина, либо ещё не снятая
+// привязка устройства. Второе условие критично: без него номер удалённой (но не
+// отвязанной) машины выдавался бы второму устройству, и два передатчика писали
+// бы в один Vehicle — позиция скакала бы между двумя машинами, а пересечения
+// старт/финиша перестали бы определяться вовсе.
+static bool isRaceIdOccupiedLocked(int32_t race_id)
 {
-    return g_vehicles.find(raceId) != g_vehicles.end();
+    if (g_vehicles.find(race_id) != g_vehicles.end())
+        return true;
+
+    for (const auto& [device_id, mapped_race_id] : s_proto_to_race_id)
+    {
+        (void)device_id;
+        if (mapped_race_id == race_id)
+            return true;
+    }
+    return false;
 }
 
 static int32_t allocateRaceIdLocked()
 {
-    // g_vehicles_mutex MUST be held by caller.
-    // We intentionally derive availability from current authoritative vehicles instead of a
-    // separate registry to prevent leaks when vehicles time out and are erased.
-    for (int32_t id = 1; id <= 99; ++id)
+    // Вызывающий держит s_proto_map_mutex И g_vehicles_mutex (в этом порядке).
+    for (int32_t id = 1; id <= RaceConstants::MAX_RACE_VEHICLE_ID; ++id)
     {
         if (!isRaceIdOccupiedLocked(id))
             return id;
@@ -150,6 +184,34 @@ namespace {
 
     std::mutex g_time_sync_mutex;
     std::unordered_map<int32_t, VehicleTimeSync> g_time_sync;
+}
+
+void telemetryForgetVehicle(int32_t race_id)
+{
+    // Единственная точка «машины больше нет». Всё, что заведено на race ID,
+    // снимается здесь — иначе новый участник в том же слоте унаследует чужой
+    // буфер интерполяции, тайм-синк и сглаживание таймера круга.
+    // Вызывать БЕЗ удерживаемого g_vehicles_mutex: внутри берётся s_proto_map_mutex,
+    // а allocate-путь захватывает их в обратном порядке.
+    telemetryReleaseRaceIdMapping(race_id);
+    VehicleInterpolator::Get().RemoveVehicle(race_id);
+
+    {
+        std::lock_guard<std::mutex> lock(g_time_sync_mutex);
+        g_time_sync.erase(race_id);
+    }
+    {
+        std::lock_guard<std::mutex> lock(g_lap_smoother_mutex);
+        g_lap_smoother.erase(race_id);
+    }
+    {
+        std::lock_guard<std::mutex> lock(s_send_rate_mutex);
+        s_last_send_time_ms.erase(race_id);
+    }
+    {
+        std::lock_guard<std::mutex> lock(g_track_mismatch_mutex);
+        g_track_mismatch_start_ms.erase(race_id);
+    }
 }
 
 double getSynchronizedSnapshotTimeSeconds(int32_t vehicleID, uint32_t sourceTimeMs)
@@ -582,17 +644,27 @@ void processIncomingTelemetry(const TelemetryPacket& packet, bool count_pps)
 
             if ((now_ms - start_ms) >= kFarFromTrackGraceMs)
             {
-                std::lock_guard<std::mutex> lock(g_vehicles_mutex);
-                auto it = g_vehicles.find(raceID);
-                if (it != g_vehicles.end())
+                bool erased = false;
                 {
-                    g_vehicles.erase(it);
-                    VehicleInterpolator::Get().RemoveVehicle(raceID);
-                    std::cout << "[TELEMETRY] Vehicle #" << raceID << " removed: far from track (>" << kNearTrackRadiusMeters << "m)" << std::endl;
+                    std::lock_guard<std::mutex> lock(g_vehicles_mutex);
+                    auto it = g_vehicles.find(raceID);
+                    if (it != g_vehicles.end())
+                    {
+                        g_vehicles.erase(it);
+                        erased = true;
+                        std::cout << "[TELEMETRY] Vehicle #" << raceID << " removed: far from track (>" << kNearTrackRadiusMeters << "m)" << std::endl;
+                    }
                 }
 
-                std::lock_guard<std::mutex> mlock(g_track_mismatch_mutex);
-                g_track_mismatch_start_ms.erase(raceID);
+                // Чистим сопутствующее состояние тем же путём, что и таймаут, и
+                // обязательно вне g_vehicles_mutex — порядок захвата локов.
+                if (erased)
+                    telemetryForgetVehicle(raceID);
+                else
+                {
+                    std::lock_guard<std::mutex> mlock(g_track_mismatch_mutex);
+                    g_track_mismatch_start_ms.erase(raceID);
+                }
             }
 
             return;
@@ -635,8 +707,8 @@ void processIncomingTelemetry(const TelemetryPacket& packet, bool count_pps)
 
     // 1) Update authoritative server-side vehicle state from telemetry.
     // Also replicate at a bounded rate to avoid UI jitter from uneven serial packet timing.
-    static std::mutex s_send_rate_mutex;
-    static std::unordered_map<int32_t, uint32_t> s_last_send_time_ms;
+    // (s_send_rate_mutex / s_last_send_time_ms живут на уровне файла — их чистит
+    //  telemetryForgetVehicle вместе с остальным состоянием машины.)
     const uint32_t now_ms = getMonotonicTimeMs();
     constexpr uint32_t kMinSendIntervalMs = 16; // ~60 Hz
     {
@@ -654,6 +726,11 @@ void processIncomingTelemetry(const TelemetryPacket& packet, bool count_pps)
             vehicle.m_prev_x = vehicle.m_normalized_x;
             vehicle.m_prev_y = vehicle.m_normalized_y;
             vehicle.m_prev_track_progress = vehicle.m_track_progress;
+
+            // Связь была потеряна: отрезок prev->cur сейчас соединил бы точку
+            // до обрыва с текущей — хорду через полтрассы. Её нельзя проверять
+            // на пересечение старт/финиша, поэтому начинаем измерение заново.
+            const bool resumed_after_gap = vehicle.m_signal_lost;
 
             vehicle.m_lat_dd = packet.lat / 1e7;
             vehicle.m_lon_dd = packet.lon / 1e7;
@@ -701,6 +778,21 @@ void processIncomingTelemetry(const TelemetryPacket& packet, bool count_pps)
 
             vehicle.m_last_update_time = std::chrono::steady_clock::now();
             vehicle.m_has_authoritative_state = false;
+
+            if (resumed_after_gap)
+            {
+                // Схлопываем отрезок: пересечения по этой хорде не считаем.
+                vehicle.m_prev_x = vehicle.m_normalized_x;
+                vehicle.m_prev_y = vehicle.m_normalized_y;
+                vehicle.m_prev_track_progress = vehicle.m_track_progress;
+                vehicle.m_signal_lost = false;
+                std::cout << "[SIGNAL] Vehicle #" << raceID
+                          << " (device #" << vehicle.m_device_id
+                          << ") signal restored — lap timing continues" << std::endl;
+            }
+
+            // Новые координаты — RaceManager проверит этот отрезок ровно один раз.
+            ++vehicle.m_telemetry_seq;
 
             // ? Calculate heading from movement (only if vehicle moved significantly)
             double dx = vehicle.m_normalized_x - vehicle.m_prev_x;
@@ -762,7 +854,9 @@ void processIncomingTelemetry(const TelemetryPacket& packet, bool count_pps)
             // Track Server WebSocket stream land here and need vehicles.
             std::cout << "[TELEMETRY] Creating new vehicle #" << raceID << " from prototype #" << packet.ID << std::endl;
 
-            Vehicle new_vehicle(packet);
+            // race ID передаём явно: внутри пакета лежит ID железки, и раньше
+            // именно он оседал в Vehicle::m_id, расходясь с ключом g_vehicles.
+            Vehicle new_vehicle(raceID, packet);
 
             // [DEBUG_ALIGN_TMP] Raw vs render position on create
             {
@@ -852,6 +946,8 @@ void processIncomingVehicleState(const VehicleStatePacket& packet)
         vehicle.m_speed_kph = packet.speed_kph;
         vehicle.m_heading = packet.heading;
         vehicle.m_last_update_time = std::chrono::steady_clock::now();
+        vehicle.m_signal_lost = false;
+        ++vehicle.m_telemetry_seq;
 
         applyRaceStateFromPacket(vehicle, packet);
 
@@ -1217,6 +1313,7 @@ static void simulationThreadWorker(int vehicle_id, std::vector<SplinePoint> smoo
                 vehicle.m_has_authoritative_state = false;
                 vehicle.m_last_update_time = std::chrono::steady_clock::now();
                 vehicle.m_apply_track_render_offset = false;  // track-frame coords
+                ++vehicle.m_telemetry_seq;  // новый отрезок для RaceManager
             }
 
             fillPacketRaceStateFromVehicle(packet, it->second);

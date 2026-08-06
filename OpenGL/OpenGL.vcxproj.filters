@@ -72,9 +72,6 @@
     <ClCompile Include="src\core\main.cpp">
       <Filter>src\core</Filter>
     </ClCompile>
-    <ClCompile Include="src\core\DeviceRegistry.cpp">
-      <Filter>src\core</Filter>
-    </ClCompile>
     <ClCompile Include="src\input\Input.cpp">
       <Filter>src\input</Filter>
     </ClCompile>
@@ -147,29 +144,78 @@
     <ClCompile Include="src\ui\UIRaceManager\UIRaceManager.cpp">
       <Filter>src\ui\UIRaceManager</Filter>
     </ClCompile>
-    <ClCompile Include="src\ui\UIRaceManager\RaceDisplay\RaceStatusBar.cpp" />
-    <ClCompile Include="src\ui\UIRaceManager\RaceDisplay\RaceDisplay.cpp" />
-    <ClCompile Include="src\rendering\VehicleNameRenderer.cpp" />
-    <ClCompile Include="..\..\RAJAGP Server\core\src\Crc.cpp" />
-    <ClCompile Include="..\..\RAJAGP Server\core\src\RajaParser.cpp" />
-    <ClCompile Include="src\network\TrackServerClient.cpp" />
-    <ClCompile Include="src\network\NetworkCompat.cpp" />
-    <ClCompile Include="src\track\TrackEditor.cpp" />
-    <ClCompile Include="src\ui\TrackReviewPanel.cpp" />
-    <ClCompile Include="src\ui\ui_scale.cpp" />
-    <ClCompile Include="src\ui\pro\ProView.cpp" />
-    <ClCompile Include="src\ui\pro\ProLapList.cpp" />
-    <ClCompile Include="src\ui\pro\ProChannels.cpp" />
-    <ClCompile Include="src\ui\pro\ProLapInfo.cpp" />
-    <ClCompile Include="src\ui\pro\ProGForce.cpp" />
-    <ClCompile Include="src\ui\pro\ProTrackMap.cpp" />
-    <ClCompile Include="src\ui\pro\ProLaptime.cpp" />
-    <ClCompile Include="src\ui\pro\ProEvents.cpp" />
-    <ClCompile Include="src\ui\pro\ProSectors.cpp" />
-    <ClCompile Include="src\ui\pro\ProSidebar.cpp" />
-    <ClCompile Include="src\ui\pro\ProRelative.cpp" />
-    <ClCompile Include="src\ui\Accounts.cpp" />
-    <ClCompile Include="src\ui\SettingsPanel.cpp" />
+    <ClCompile Include="src\ui\pro\ProChannels.cpp">
+      <Filter>src\ui\ProUI</Filter>
+    </ClCompile>
+    <ClCompile Include="src\ui\pro\ProEvents.cpp">
+      <Filter>src\ui\ProUI</Filter>
+    </ClCompile>
+    <ClCompile Include="src\ui\pro\ProGForce.cpp">
+      <Filter>src\ui\ProUI</Filter>
+    </ClCompile>
+    <ClCompile Include="src\ui\pro\ProLapInfo.cpp">
+      <Filter>src\ui\ProUI</Filter>
+    </ClCompile>
+    <ClCompile Include="src\ui\pro\ProLapList.cpp">
+      <Filter>src\ui\ProUI</Filter>
+    </ClCompile>
+    <ClCompile Include="src\ui\pro\ProLaptime.cpp">
+      <Filter>src\ui\ProUI</Filter>
+    </ClCompile>
+    <ClCompile Include="src\ui\pro\ProRelative.cpp">
+      <Filter>src\ui\ProUI</Filter>
+    </ClCompile>
+    <ClCompile Include="src\ui\pro\ProSidebar.cpp">
+      <Filter>src\ui\ProUI</Filter>
+    </ClCompile>
+    <ClCompile Include="src\ui\pro\ProSectors.cpp">
+      <Filter>src\ui\ProUI</Filter>
+    </ClCompile>
+    <ClCompile Include="src\ui\pro\ProTrackMap.cpp">
+      <Filter>src\ui\ProUI</Filter>
+    </ClCompile>
+    <ClCompile Include="src\ui\pro\ProView.cpp">
+      <Filter>src\ui\ProUI</Filter>
+    </ClCompile>
+    <ClCompile Include="src\network\NetworkCompat.cpp">
+      <Filter>src\network</Filter>
+    </ClCompile>
+    <ClCompile Include="src\ui\UIRaceManager\RaceDisplay\RaceStatusBar.cpp">
+      <Filter>src\ui\UIRaceManager\RaceDisplay</Filter>
+    </ClCompile>
+    <ClCompile Include="src\ui\ui_scale.cpp">
+      <Filter>src\ui</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\RAJAGP Server\core\src\Crc.cpp">
+      <Filter>src\network</Filter>
+    </ClCompile>
+    <ClCompile Include="src\network\TrackServerClient.cpp">
+      <Filter>src\network</Filter>
+    </ClCompile>
+    <ClCompile Include="src\ui\TrackReviewPanel.cpp">
+      <Filter>src\ui</Filter>
+    </ClCompile>
+    <ClCompile Include="src\ui\SettingsPanel.cpp">
+      <Filter>src\ui</Filter>
+    </ClCompile>
+    <ClCompile Include="src\track\TrackEditor.cpp">
+      <Filter>src\input</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\RAJAGP Server\core\src\RajaParser.cpp">
+      <Filter>src\input</Filter>
+    </ClCompile>
+    <ClCompile Include="src\ui\UIRaceManager\RaceDisplay\RaceDisplay.cpp">
+      <Filter>src\Racing</Filter>
+    </ClCompile>
+    <ClCompile Include="src\ui\Accounts.cpp">
+      <Filter>src\core</Filter>
+    </ClCompile>
+    <ClCompile Include="src\rendering\VehicleNameRenderer.cpp">
+      <Filter>src\vehicle</Filter>
+    </ClCompile>
+    <ClCompile Include="src\core\DeviceRegistry.cpp">
+      <Filter>src\vehicle</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\input\Input.h">
@@ -196,7 +242,6 @@
     <ClInclude Include="libraries\include\serialib\serialib.h">
       <Filter>libaries\include\serialib</Filter>
     </ClInclude>
-    <ClInclude Include="src\Config.h" />
     <ClInclude Include="src\racing\TimeDiffirence\TimeDiff.h">
       <Filter>src\Racing\TimeDiff</Filter>
     </ClInclude>
@@ -231,35 +276,78 @@
     <ClInclude Include="src\track\TelemetryTrackBuilder.h">
       <Filter>src\TrackBuilding</Filter>
     </ClInclude>
-    <ClInclude Include="src\ui\UIRaceManager\UIRaceManager.h" />
     <ClInclude Include="src\racing\ModeManager\ModeManager.h">
       <Filter>src\Racing\ModeManager</Filter>
     </ClInclude>
     <ClInclude Include="src\ui\UIRaceManager\RaceDisplay\RaceDisplay.h">
       <Filter>src\ui\UIRaceManager\RaceDisplay</Filter>
     </ClInclude>
-    <ClInclude Include="src\ui\UIRaceManager\RaceDisplay\RaceFlags.h" />
-    <ClInclude Include="src\ui\UIRaceManager\RaceDisplay\RaceStatusBar.h" />
-    <ClInclude Include="src\rendering\VehicleNameRenderer.h" />
-    <ClInclude Include="src\network\TrackServerClient.h" />
-    <ClInclude Include="src\ui\Accounts.h" />
-    <ClInclude Include="src\ui\SettingsPanel.h" />
-    <ClInclude Include="src\core\DeviceRegistry.h">
+    <ClInclude Include="src\ui\pro\ProChannels.h">
+      <Filter>src\ui\ProUI</Filter>
+    </ClInclude>
+    <ClInclude Include="src\ui\pro\ProEvents.h">
+      <Filter>src\ui\ProUI</Filter>
+    </ClInclude>
+    <ClInclude Include="src\ui\pro\ProGForce.h">
+      <Filter>src\ui\ProUI</Filter>
+    </ClInclude>
+    <ClInclude Include="src\ui\pro\ProLapInfo.h">
+      <Filter>src\ui\ProUI</Filter>
+    </ClInclude>
+    <ClInclude Include="src\ui\pro\ProLapList.h">
+      <Filter>src\ui\ProUI</Filter>
+    </ClInclude>
+    <ClInclude Include="src\ui\pro\ProLaptime.h">
+      <Filter>src\ui\ProUI</Filter>
+    </ClInclude>
+    <ClInclude Include="src\ui\pro\ProRelative.h">
+      <Filter>src\ui\ProUI</Filter>
+    </ClInclude>
+    <ClInclude Include="src\ui\pro\ProSectors.h">
+      <Filter>src\ui\ProUI</Filter>
+    </ClInclude>
+    <ClInclude Include="src\ui\pro\ProTrackMap.h">
+      <Filter>src\ui\ProUI</Filter>
+    </ClInclude>
+    <ClInclude Include="src\ui\pro\ProView.h">
+      <Filter>src\ui\ProUI</Filter>
+    </ClInclude>
+    <ClInclude Include="src\ui\UIRaceManager\RaceDisplay\RaceStatusBar.h">
+      <Filter>src\ui\UIRaceManager\RaceDisplay</Filter>
+    </ClInclude>
+    <ClInclude Include="src\ui\ui_scale.hpp">
+      <Filter>src\ui</Filter>
+    </ClInclude>
+    <ClInclude Include="src\network\TrackServerClient.h">
+      <Filter>src\network</Filter>
+    </ClInclude>
+    <ClInclude Include="src\ui\UIRaceManager\UIRaceManager.h">
+      <Filter>src\ui</Filter>
+    </ClInclude>
+    <ClInclude Include="src\ui\SettingsPanel.h">
+      <Filter>src\ui</Filter>
+    </ClInclude>
+    <ClInclude Include="src\Config.h">
       <Filter>src\core</Filter>
     </ClInclude>
-    <ClInclude Include="src\track\TrackEditor.h" />
-    <ClInclude Include="src\ui\TrackReviewPanel.h" />
-    <ClInclude Include="src\ui\ui_scale.hpp" />
-    <ClInclude Include="src\ui\pro\ProView.h" />
-    <ClInclude Include="src\ui\pro\ProLapList.h" />
-    <ClInclude Include="src\ui\pro\ProChannels.h" />
-    <ClInclude Include="src\ui\pro\ProLapInfo.h" />
-    <ClInclude Include="src\ui\pro\ProGForce.h" />
-    <ClInclude Include="src\ui\pro\ProTrackMap.h" />
-    <ClInclude Include="src\ui\pro\ProLaptime.h" />
-    <ClInclude Include="src\ui\pro\ProEvents.h" />
-    <ClInclude Include="src\ui\pro\ProSectors.h" />
-    <ClInclude Include="src\ui\pro\ProRelative.h" />
+    <ClInclude Include="src\track\TrackEditor.h">
+      <Filter>src\core</Filter>
+    </ClInclude>
+    <ClInclude Include="src\ui\Accounts.h">
+      <Filter>src\core</Filter>
+    </ClInclude>
+    <ClInclude Include="src\ui\TrackReviewPanel.h">
+      <Filter>src\ui</Filter>
+    </ClInclude>
+    <ClInclude Include="src\ui\UIRaceManager\RaceDisplay\RaceFlags.h">
+      <Filter>src\Racing</Filter>
+    </ClInclude>
+    <ClInclude Include="src\rendering\VehicleNameRenderer.h">
+      <Filter>src\vehicle</Filter>
+    </ClInclude>
+    <ClInclude Include="src\core\DeviceRegistry.h">
+      <Filter>src\vehicle</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <None Include="..\code_writing_guide.md" />

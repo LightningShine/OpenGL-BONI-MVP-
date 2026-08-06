@@ -21,7 +21,7 @@ static constexpr float BASE_HEIGHT = 900.0f;
 // ============================================================================
 // Единственное место, где задаётся версия — футер, Help и About читают отсюда.
 // Держать в синхроне с README ("Текущая версия").
-static constexpr const char* APP_VERSION = "v1.1";
+static constexpr const char* APP_VERSION = "v26.1.5";
 static constexpr const char* APP_NAME = "RAJAGP";
 
 // ============================================================================

@@ -1,0 +1,32 @@
+========================================
+       RACE SESSION RESULTS
+========================================
+Date: 2026-07-25 14:32:59
+========================================
+
+FINAL STANDINGS:
+----------------
+
+Position: 1
+  Vehicle ID: #2
+  Completed Laps: 2
+  Progress: 0.225
+  Delta to Best: +245.083s
+  Total Race Time: 3:11.324
+  Best Lap Time: 1:01.454
+  Current Lap 2: 4:16.444 (in progress)
+  Lap Times:
+    Lap 0: 2:09.870
+    Lap 1: 1:01.454
+
+Position: 2 (LAPPED)
+  Vehicle ID: #1
+  Completed Laps: 0
+  Progress: 0.926
+  Total Race Time: 0:00.000
+  Best Lap Time: 0:00.000
+  Current Lap 0: 7:41.361 (in progress)
+
+========================================
+End of Report
+========================================
