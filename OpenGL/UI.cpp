@@ -2919,7 +2919,7 @@ void UI::RenderTopMenu()
             // тянет свою вертикаль от предыдущего элемента, из-за чего кнопки
             // и подпись расходились по высоте.
             const float startX = (ImGui::GetWindowWidth() - groupW) * 0.5f;
-            const float iconSz = btnH - ui_scale::points(10.f);
+            const float iconSz = btnH - ui_scale::points(3.f);
 
             // Реальная высота кнопки с иконкой — это иконка ПЛЮС отступы рамки,
             // а не заданная btnH. Считаем её честно и по ней центрируем и
@@ -2962,12 +2962,20 @@ void UI::RenderTopMenu()
 
             // Подпись центрируем по ТОЙ ЖЕ вертикали, что и кнопки: берём
             // середину кнопки и вычитаем половину высоты строки.
-            const float position_s = status.position_ms / 1000.0f;
-            const float duration_s = status.duration_ms / 1000.0f;
-            ImGui::SetCursorPos(ImVec2(startX + (btnW + gap) * 3.0f,
-                                       btnY + (rowH - ImGui::GetTextLineHeight()) * 0.5f));
-            ImGui::TextColored(ImVec4(0.72f, 0.72f, 0.78f, 1.0f), "%.1f / %.1f s",
-                               position_s, duration_s);
+            // Подпись рисуем прямо в список отображения по вычисленной точке.
+            // Через ImGui::Text она попадала в раскладку меню-бара, у которой
+            // своя вертикаль, и текст упорно вставал не на одном уровне с
+            // кнопками. Здесь позиция задаётся явно и совпадает точно.
+            char time_buf[64];
+            snprintf(time_buf, sizeof(time_buf), "%.1f / %.1f s",
+                     status.position_ms / 1000.0f, status.duration_ms / 1000.0f);
+
+            const ImVec2 text_size = ImGui::CalcTextSize(time_buf);
+            const ImVec2 win_pos = ImGui::GetWindowPos();
+            ImGui::GetWindowDrawList()->AddText(
+                ImVec2(win_pos.x + startX + (btnW + gap) * 3.0f,
+                       win_pos.y + btnY + (rowH - text_size.y) * 0.5f),
+                IM_COL32(184, 184, 199, 255), time_buf);
         }
 
         // === PRO / LITE TOGGLE BUTTON (right side of navbar) ===
