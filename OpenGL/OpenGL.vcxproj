@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup Label="ProjectConfigurations">
     <ProjectConfiguration Include="Debug|ARM64">
@@ -249,9 +249,13 @@
     <ClCompile Include="src\core\main.cpp" />
     <ClCompile Include="src\core\DeviceRegistry.cpp" />
     <ClCompile Include="src\logging\ConsoleLog.cpp" />
+    <ClCompile Include="src\logging\TelemetryLog.cpp" />
     <ClCompile Include="src\input\Input.cpp" />
     <ClCompile Include="src\network\ESP32_Code.cpp" />
     <ClCompile Include="src\network\SimulationServer.cpp" />
+    <ClCompile Include="src\network\TelemetryIngest.cpp" />
+    <ClCompile Include="src\network\SyntheticTelemetry.cpp" />
+    <ClCompile Include="src\network\ReplayPlayer.cpp" />
     <ClCompile Include="src\racing\RaceManager.cpp" />
     <ClCompile Include="src\racing\StopReset\StartStop.cpp" />
     <ClCompile Include="src\racing\TimeDiffirence\TimeDiff.cpp" />
@@ -260,6 +264,7 @@
     <ClCompile Include="src\rendering\VehicleNameRenderer.cpp" />
     <ClCompile Include="src\track\TelemetryTrackBuilder.cpp" />
     <ClCompile Include="src\track\TrackEditor.cpp" />
+    <ClCompile Include="src\track\TrackProjection.cpp" />
     <ClCompile Include="src\track\TrackRecorder.cpp" />
     <ClCompile Include="src\ui\TrackReviewPanel.cpp" />
     <ClCompile Include="src\ui\ui_scale.cpp" />
@@ -302,9 +307,13 @@
     <ClInclude Include="src\ui\SettingsPanel.h" />
     <ClInclude Include="src\core\DeviceRegistry.h" />
     <ClInclude Include="src\logging\ConsoleLog.h" />
+    <ClInclude Include="src\logging\TelemetryLog.h" />
     <ClInclude Include="src\network\ESP32_Code.h" />
     <ClInclude Include="src\network\Server.h" />
     <ClInclude Include="src\network\SimulationServer.h" />
+    <ClInclude Include="src\network\TelemetryIngest.h" />
+    <ClInclude Include="src\network\SyntheticTelemetry.h" />
+    <ClInclude Include="src\network\ReplayPlayer.h" />
     <ClInclude Include="src\racing\ModeManager\ModeManager.h" />
     <ClInclude Include="src\racing\RaceManager.h" />
     <ClInclude Include="src\racing\StopReset\StartStop.h" />
@@ -314,6 +323,7 @@
     <ClInclude Include="src\rendering\VehicleNameRenderer.h" />
     <ClInclude Include="src\track\TelemetryTrackBuilder.h" />
     <ClInclude Include="src\track\TrackEditor.h" />
+    <ClInclude Include="src\track\TrackProjection.h" />
     <ClInclude Include="src\track\TrackRecorder.h" />
     <ClInclude Include="src\ui\TrackReviewPanel.h" />
     <ClInclude Include="src\ui\ui_scale.hpp" />

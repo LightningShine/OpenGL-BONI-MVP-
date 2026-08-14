@@ -1,6 +1,7 @@
 #pragma once
 #include "../input/Input.h"
 #include "../network/Server.h"
+#include "../Config.h"
 #include <map>
 #include <mutex>
 #include <atomic>
@@ -11,6 +12,27 @@
 
 extern int g_focused_vehicle_id;  // -1 = лидер (дефолт), иначе ID машины
 extern bool g_show_vehicle_names; // true = show TLA names above vehicles
+
+// Зафиксированное пересечение линии старт/финиша.
+//
+// Геометрия проверяется ТАМ, ГДЕ РОЖДАЕТСЯ ОТРЕЗОК — на приёме пакета: только
+// там видна каждая пара точек. Кадр рендера приходит реже пакетов (50 Гц на
+// машину против 30-60 кадров на всех) и раньше видел лишь последнюю пару,
+// поэтому часть пересечений терялась и круг засчитывался лишь со следующего
+// проезда. При свёрнутом окне кадров нет вовсе, и терялись все.
+//
+// RaceManager разбирает накопленные события и ведёт по ним гоночную логику.
+struct LineCrossing
+{
+	float    fraction = 0.0f;        // доля отрезка, на которой легла линия
+	uint32_t utc_ms = 0;             // момент пересечения по метке источника
+	bool     has_source_time = false;
+	bool     from_geometry = true;   // false — резервная детекция по прогрессу
+	// Машина побывала на дальней половине круга с прошлого зачёта, то есть это
+	// настоящий круг, а не дребезг у линии. Взвод ведётся на приёме пакетов —
+	// только там видно каждое значение прогресса.
+	bool     armed = false;
+};
 
 struct LapData
 {
@@ -88,13 +110,26 @@ public:
 	// ========================================================================
 	std::map<int, LapData> m_laps;
 	float m_current_lap_timer = 0.0f;
-	int m_current_lap_number = 1;
+	int m_current_lap_number = RaceConstants::LAP_START_NUMBER;
 	int m_completed_laps = 0;
 	double m_total_progress = 0.0;
 	bool m_has_started_first_lap = false;
 	float m_best_lap_time = -1.0f;
 	int bestlapID = -1;
 	bool m_is_finished = false;
+
+	// Разница НОМЕРОВ кругов с лидером — то, что показывает колонка таблицы.
+	// Лидер ушёл на следующий круг, а машина ещё на предыдущем — это уже «+1
+	// круг», как на табло в большом автоспорте. От показа спасает порог по
+	// времени: пока разрыв меньше LAP_GAP_DISPLAY_SECONDS, выводятся секунды.
+	int  m_laps_behind_leader = 0;
+
+	// Полных кругов ДИСТАНЦИИ позади лидера. Не зависит от того, кто когда
+	// пересёк линию, поэтому именно эта мера ловит момент обгона на круг.
+	int  m_distance_laps_behind = 0;
+
+	// Реально отстал на круг дистанции — по этой величине пишется протокол.
+	bool m_is_lapped = false;
 
 	// Круг засчитывается только если машина побывала на дальней половине трассы
 	// с момента прошлого зачёта. Защита от дублей по пространству, а не по
@@ -110,12 +145,22 @@ public:
 	double m_prev_y = 0.0;
 	double m_heading = 0.0;  // ✅ Current direction in radians
 
-	// Растёт на каждом обновлении координат источником данных. RaceManager
-	// проверяет отрезок prev->cur только при новом значении: при потере связи
-	// пара застывает, и без этого счётчика она пересчитывалась бы каждый кадр,
-	// давая фантомные пересечения старт/финиша и обнуляя таймер круга.
-	uint64_t m_telemetry_seq = 0;
-	uint64_t m_processed_seq = 0;
+	// Метки времени источника для двух последних пакетов — gps_utc_ms, мс от
+	// полуночи UTC, общие для всех трекеров (приходят из GNSS). На них считается
+	// время круга: в отличие от кадрового таймера они не зависят ни от частоты
+	// кадров, ни от скорости воспроизведения, поэтому живой заезд и повтор
+	// записи дают один и тот же результат.
+	uint32_t m_prev_packet_utc_ms = 0;
+	uint32_t m_packet_utc_ms = 0;
+	// false — источник своего времени не даёт (симуляция по клавише T пишет
+	// позиции напрямую): для него хронометраж остаётся кадровым.
+	bool m_has_source_time = false;
+	// Метка пересечения линии, от которой идёт текущий круг.
+	uint32_t m_lap_start_utc_ms = 0;
+
+	// Пересечения, найденные на приёме пакетов и ещё не разобранные
+	// хронометражем. Копится сетевым потоком, вычерпывается RaceManager.
+	std::vector<LineCrossing> m_pending_crossings;
 
 	// Пакетов нет дольше таймаута. Во время сессии такую машину не удаляем:
 	// вместе с объектом умерли бы её круги (см. g_race_session_active).
@@ -170,6 +215,24 @@ extern std::atomic<bool> g_race_session_active;
 
 
 
+// Снимок машины для отрисовки: только то, что реально нужно кадру.
+// Копировать Vehicle целиком нельзя — внутри лежат карты кругов со всей
+// накопленной телеметрией (сэмпл каждые 0.1 с на машину), и такая копия
+// на каждый кадр под g_vehicles_mutex съедала кадры тем сильнее, чем дольше
+// шла сессия.
+struct VehicleRenderState
+{
+	int32_t     id = 0;
+	double      x = 0.0;
+	double      y = 0.0;
+	double      heading = 0.0;
+	double      speed_kph = 0.0;
+	glm::vec3   color{ 1.0f, 1.0f, 1.0f };
+	std::string name;
+	bool        is_leader = false;
+	bool        apply_track_render_offset = true;
+};
+
 // === Function ===
 void vehicleLoop(); // Главный цикл обновления машин
 
@@ -181,7 +244,7 @@ std::vector<glm::vec2> generateTriangle(float size); // ✅ Треугольни
 // camera_zoom: the marker is scaled by 1/zoom so it keeps a constant
 // on-screen size instead of growing when the user zooms into the track.
 void renderVehicle(GLuint shader_program, GLuint vao, GLuint vbo,
-	const Vehicle& vehicle, const glm::mat4& projection, float camera_zoom = 1.0f);
+	const VehicleRenderState& vehicle, const glm::mat4& projection, float camera_zoom = 1.0f);
 
 void renderAllVehicles(GLuint shader_program, GLuint vao, GLuint vbo,
 	const glm::mat4& projection,

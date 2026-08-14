@@ -40,6 +40,8 @@
 #include "../ui/ui_scale.hpp"
 #include "DeviceRegistry.h"
 #include "../logging/ConsoleLog.h"
+#include "../network/SyntheticTelemetry.h"
+#include "../network/ReplayPlayer.h"
 #include "../input/Input.h"
 #include "../rendering/Interpolation.h"
 #include "../rendering/Render.h"          
@@ -144,6 +146,80 @@ const std::vector<glm::vec2>* track_points = nullptr, std::mutex* points_mutex =
 	if (glfwGetKey(window, GLFW_KEY_T) == GLFW_RELEASE)
 	{
 		wasTPressed = false;
+	}
+
+	// ── Транспорт повтора: Space — пуск/пауза, стрелки — перемотка ──────────
+	// Короткое нажатие стрелки даёт один тик записи. Удержание после короткой
+	// задержки включает НЕПРЕРЫВНУЮ перемотку: повторять одиночные шаги с
+	// частотой кадров бессмысленно — скорость зависела бы от частоты кадров,
+	// а не от намерения оператора.
+	if (telemetry::replay_is_active())
+	{
+		constexpr double SCRUB_HOLD_DELAY = 0.35;   // с какой задержки начинается перемотка
+		constexpr double SCRUB_SPEED      = 10.0;   // во сколько раз быстрее реального времени
+
+		// Своя дельта кадра: processInput её не получает. Ограничиваем сверху,
+		// иначе первый кадр после открытия записи (или после свёрнутого окна)
+		// отмотал бы сразу далеко.
+		static double lastScrubTime = glfwGetTime();
+		const double nowTime = glfwGetTime();
+		double deltaTime = nowTime - lastScrubTime;
+		lastScrubTime = nowTime;
+		if (deltaTime < 0.0 || deltaTime > 0.1)
+			deltaTime = 0.0;
+
+		static bool wasSpacePressed = false;
+		const bool spaceDown = glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS;
+		if (spaceDown && !wasSpacePressed)
+			telemetry::replay_toggle_pause();
+		wasSpacePressed = spaceDown;
+
+		auto handleArrow = [&](int key, double direction, bool& wasDown, double& heldFor)
+		{
+			const bool down = glfwGetKey(window, key) == GLFW_PRESS;
+			if (down && !wasDown)
+			{
+				telemetry::replay_step(static_cast<int>(direction));
+				heldFor = 0.0;
+			}
+			else if (down)
+			{
+				heldFor += deltaTime;
+				if (heldFor >= SCRUB_HOLD_DELAY)
+					telemetry::replay_scrub(direction * SCRUB_SPEED * deltaTime);
+			}
+			wasDown = down;
+		};
+
+		static bool wasRightDown = false;
+		static bool wasLeftDown = false;
+		static double rightHeldFor = 0.0;
+		static double leftHeldFor = 0.0;
+		handleArrow(GLFW_KEY_RIGHT, 1.0, wasRightDown, rightHeldFor);
+		handleArrow(GLFW_KEY_LEFT, -1.0, wasLeftDown, leftHeldFor);
+	}
+
+	// G key: синтетический источник ПРОВОДНОЙ телеметрии. В отличие от T, идёт
+	// через тот же тракт, что и приёмник (CRC, журнал .rjl, пайплайн), и даёт
+	// повторяемый поток — на нём проверяется хронометраж.
+	static bool wasGPressed = false;
+	if (glfwGetKey(window, GLFW_KEY_G) == GLFW_PRESS && !wasGPressed)
+	{
+		wasGPressed = true;
+
+		if (telemetry::synthetic_is_running())
+		{
+			telemetry::synthetic_stop();
+		}
+		else
+		{
+			telemetry::SyntheticScenario scenario;  // значения по умолчанию — чистый заезд
+			telemetry::synthetic_start(scenario);
+		}
+	}
+	if (glfwGetKey(window, GLFW_KEY_G) == GLFW_RELEASE)
+	{
+		wasGPressed = false;
 	}
 
 	// Y key: test track recording without hardware by generating a circle of telemetry packets.

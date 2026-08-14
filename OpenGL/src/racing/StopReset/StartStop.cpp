@@ -14,6 +14,7 @@ void RaceManager::StartSession() {
     // Пока сессия идёт, машины не удаляются по таймауту: потеря связи не должна
     // стирать участника вместе с его кругами (см. removeVehicles).
     g_race_session_active.store(true, std::memory_order_relaxed);
+    InvalidateStandingsCache();  // смена состояния должна быть видна сразу
     std::cout << "[SESSION] Session Started!" << std::endl;
 }
 
@@ -52,6 +53,7 @@ void RaceManager::StopSession() {
                     m_leadLapCarCount++;
         }
 
+        InvalidateStandingsCache();
         std::cout << "[SESSION] Session Stopped! Leader=#" << m_leaderAtStop
                   << " laps=" << m_leaderLapsAtStop
                   << " leadLapCars=" << m_leadLapCarCount
@@ -85,8 +87,13 @@ void RaceManager::ResetSession() {
         vehicle.m_is_finished = false;
         vehicle.m_telemetry_sample_timer = 0.0f;
         vehicle.m_lap_armed = false;
-        vehicle.m_processed_seq = vehicle.m_telemetry_seq;
+        vehicle.m_is_lapped = false;
+        vehicle.m_laps_behind_leader = 0;
+        vehicle.m_distance_laps_behind = 0;
+        vehicle.m_lap_start_utc_ms = 0;
+        vehicle.m_pending_crossings.clear();
     }
+    InvalidateStandingsCache();
     std::cout << "[SESSION] Session Reset! All lap data cleared." << std::endl;
 }
 

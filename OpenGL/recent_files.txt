@@ -1,0 +1,2 @@
+C:/Users/gamer/source/repos/OpenGL-BONI-MVP-/OpenGL/src/saves/rulli 2.0.txt
+C:/Users/gamer/source/repos/OpenGL-BONI-MVP-/OpenGL/src/saves/output_LBTU.txt

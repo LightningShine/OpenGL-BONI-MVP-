@@ -1,4 +1,5 @@
-﻿#include "RaceManager.h"
+#include "RaceManager.h"
+#include "LapClock.h"
 #include "../vehicle/Vehicle.h"
 #include "../rendering/Interpolation.h"
 #include "../Config.h"
@@ -23,6 +24,15 @@ extern std::atomic<bool> g_is_map_loaded;
 // GLOBAL RACE MANAGER INSTANCE
 // ============================================================================
 RaceManager* g_race_manager = nullptr;
+
+namespace {
+    using racing::utc_at_fraction;
+    using racing::utc_elapsed_ms;
+
+    // Круг длиннее часа — почти наверняка сбитая метка, а не медленная машина.
+    // В таком случае честнее откатиться на кадровый таймер, чем записать мусор.
+    constexpr float MAX_PLAUSIBLE_LAP_SECONDS = 3600.0f;
+}
 
 // ============================================================================
 // CONSTRUCTOR / DESTRUCTOR
@@ -52,6 +62,16 @@ void RaceManager::SetStartFinishLine(const glm::vec2& p1, const glm::vec2& p2)
     std::cout << "[RACE MANAGER] Start/Finish line set: "
               << "P1(" << p1.x << ", " << p1.y << ") -> "
               << "P2(" << p2.x << ", " << p2.y << ")" << std::endl;
+}
+
+bool RaceManager::GetStartFinishLine(glm::vec2& out_p1, glm::vec2& out_p2) const
+{
+    if (!m_lineInitialized)
+        return false;
+
+    out_p1 = m_startFinishP1;
+    out_p2 = m_startFinishP2;
+    return true;
 }
 
 // ============================================================================
@@ -180,69 +200,36 @@ void RaceManager::Update(float deltaTime)
             continue;
         }
         
-        // Check for start/finish crossing.
-        // Use strict segment intersection for correctness. Progress-cycle fallback below
-        // handles low-rate updates on closed tracks.
-        // The S/F line lives in the centered track frame; GPS vehicles store raw
-        // coordinates, so shift them by the same render offset the drawing uses
-        // (for .trk2 tracks the offset is non-zero — without it no lap counts).
-        const glm::vec2 frameOff = vehicle.m_apply_track_render_offset
-                                     ? getTrackRenderOffset() : glm::vec2(0.0f, 0.0f);
-        const glm::vec2 prevPos(vehicle.m_prev_x + frameOff.x, vehicle.m_prev_y + frameOff.y);
-        const glm::vec2 curPos(vehicle.m_normalized_x + frameOff.x, vehicle.m_normalized_y + frameOff.y);
+        // Геометрию пересечения здесь больше не считаем: она вычисляется на
+        // приёме пакета, где видна каждая пара точек (см. LineCrossing).
+        // Забираем пересечения, найденные приёмом телеметрии. Он видит КАЖДЫЙ
+        // отрезок движения, поэтому здесь разбираются все проезды подряд — в
+        // том числе накопившиеся, пока окно было свёрнуто и кадров не было.
+        std::vector<LineCrossing> crossings;
+        crossings.swap(vehicle.m_pending_crossings);
 
-        const glm::vec2 sfP1 = m_startFinishP1;
-        const glm::vec2 sfP2 = m_startFinishP2;
-
-        // Отрезок prev->cur создаётся источником данных на каждый пакет, а этот
-        // цикл крутится каждый кадр. Проверяем только НОВЫЙ отрезок: иначе при
-        // потере связи застывшая пара пересчитывалась бы кадр за кадром, а если
-        // она пересекает линию — писала бы круг и обнуляла таймер бесконечно.
-        const bool hasFreshTelemetry = (vehicle.m_telemetry_seq != vehicle.m_processed_seq);
-        vehicle.m_processed_seq = vehicle.m_telemetry_seq;
-
-        float intersectionRatio = 0.0f;
-        const bool crossed = hasFreshTelemetry &&
-            CheckLineSegmentIntersection(prevPos, curPos, sfP1, sfP2, intersectionRatio);
-
-        // Резервная детекция по циклу прогресса (0.999 -> 0.001) для случаев, когда
-        // строгое пересечение промахнулось: редкие пакеты, или позиция уехала вбок
-        // и хорда прошла мимо концов линии. Симуляция даёт точный прогресс, реальная
-        // телеметрия — шумный, поэтому порог намеренно широкий.
-        const bool progressCycled = hasFreshTelemetry &&
-                                    vehicle.m_prev_track_progress > 0.85 &&
-                                    vehicle.m_track_progress < 0.15;
-
-        // Взводим машину на дальней половине круга. Пока не взведена, пересечение
-        // линии не считается кругом — это и позволяет держать обе детекции
-        // включёнными сразу, не боясь двойного зачёта.
-        if (vehicle.m_track_progress > 0.5)
-            vehicle.m_lap_armed = true;
-
-
-        // ====================================================================
-        // LAP COMPLETION DETECTION
-        // ====================================================================
-        if (kDebugFinishCrossing && (crossed || progressCycled))
+        if (kDebugFinishCrossing)
         {
-            const glm::vec2 off = getTrackRenderOffset();
-            std::cout.setf(std::ios::fixed);
-            std::cout << "[S/F DEBUG] veh#" << vehicleID
-                      << " sessionState=" << static_cast<int>(m_sessionState)
-                      << " finished=" << (vehicle.m_is_finished ? 1 : 0)
-                      << " crossed=" << (crossed ? 1 : 0)
-                      << " ratio=" << std::setprecision(3) << intersectionRatio
-                      << std::endl;
+            for (const LineCrossing& crossing : crossings)
+            {
+                std::cout.setf(std::ios::fixed);
+                std::cout << "[S/F DEBUG] veh#" << vehicleID
+                          << " sessionState=" << static_cast<int>(m_sessionState)
+                          << " finished=" << (vehicle.m_is_finished ? 1 : 0)
+                          << " geometry=" << (crossing.from_geometry ? 1 : 0)
+                          << " armed=" << (crossing.armed ? 1 : 0)
+                          << " ratio=" << std::setprecision(3) << crossing.fraction
+                          << std::endl;
+            }
         }
 
         if (m_sessionState == SessionState::Idle)
         {
             // Just riding, reset timer if crossed but don't record laps.
-            if (crossed || progressCycled) {
-                vehicle.m_current_lap_timer = deltaTime * (1.0f - intersectionRatio);
-            } else {
+            if (!crossings.empty())
+                vehicle.m_current_lap_timer = 0.0f;
+            else
                 vehicle.m_current_lap_timer += deltaTime;
-            }
             vehicle.m_total_progress = vehicle.m_completed_laps + vehicle.m_track_progress;
             continue;
         }
@@ -254,12 +241,45 @@ void RaceManager::Update(float deltaTime)
             continue;
         }
 
-        if (vehicle.m_has_started_first_lap && (crossed || progressCycled) && vehicle.m_lap_armed)
+        if (crossings.empty())
         {
-            vehicle.m_lap_armed = false;
+            vehicle.m_current_lap_timer += deltaTime;
+        }
 
-            // Sub-frame accurate timing
-            float crossingTime = vehicle.m_current_lap_timer + (deltaTime * intersectionRatio);
+        for (const LineCrossing& crossing : crossings)
+        {
+        const float intersectionRatio = crossing.fraction;
+        const bool crossed = crossing.from_geometry;
+
+        if (vehicle.m_has_started_first_lap && crossing.armed)
+        {
+
+            // ----------------------------------------------------------------
+            // ВРЕМЯ КРУГА
+            // Основной источник — метки времени пакетов: разность gps_utc_ms
+            // между двумя пересечениями. Доля отрезка берётся из геометрии
+            // (где именно на отрезке легла линия), а не из длительности кадра.
+            // Поэтому результат не зависит ни от FPS, ни от скорости
+            // воспроизведения записи — живой заезд и повтор совпадают.
+            //
+            // Кадровый таймер остаётся запасным путём: у источников без
+            // собственного времени (симуляция по клавише T) меток просто нет.
+            // ----------------------------------------------------------------
+            const float crossing_fraction = intersectionRatio;
+            float crossingTime = vehicle.m_current_lap_timer + (deltaTime * crossing_fraction);
+            const uint32_t crossing_utc_ms = crossing.utc_ms;
+            const bool crossing_utc_valid = crossing.has_source_time;
+
+            if (crossing_utc_valid)
+            {
+                if (vehicle.m_lap_start_utc_ms != 0)
+                {
+                    const float measured =
+                        utc_elapsed_ms(vehicle.m_lap_start_utc_ms, crossing_utc_ms) / 1000.0f;
+                    if (measured > 0.0f && measured < MAX_PLAUSIBLE_LAP_SECONDS)
+                        crossingTime = measured;
+                }
+            }
 
             const float MIN_VALID_LAP_TIME = 0.1f;
 
@@ -324,13 +344,18 @@ void RaceManager::Update(float deltaTime)
                 // else: car not yet allowed to finish — timer resets below, it retries next crossing
             }
 
-            // Reset timer after crossing (applies even when processLap==false)
-            vehicle.m_current_lap_timer = deltaTime * (1.0f - intersectionRatio);
+            // Reset timer after crossing (applies even when processLap==false).
+            // Отсчёт нового круга начинается с ТОГО ЖЕ момента, что и зачёт
+            // предыдущего: иначе доля отрезка между двумя пересечениями
+            // потерялась бы и круги медленно расползались бы по времени.
+            vehicle.m_current_lap_timer = deltaTime * (1.0f - crossing_fraction);
+            if (crossing_utc_valid)
+                vehicle.m_lap_start_utc_ms = crossing_utc_ms;
         }
         // ====================================================================
         // FIRST LAP START DETECTION
         // ====================================================================
-        else if (!vehicle.m_has_started_first_lap && crossed)
+        else if (!vehicle.m_has_started_first_lap)
         {
             // Prevent false start on vehicle creation
             float timeSinceCreation = vehicle.m_current_lap_timer;
@@ -339,17 +364,11 @@ void RaceManager::Update(float deltaTime)
             {
                 if (kDebugFinishCrossing)
                 {
-                    const glm::vec2 off = getTrackRenderOffset();
                     std::cout.setf(std::ios::fixed);
                     std::cout << "[S/F DEBUG] START veh#" << vehicleID
                               << " fixType=" << vehicle.m_fix_type
+                              << " geometry=" << (crossed ? 1 : 0)
                               << " ratio=" << std::setprecision(3) << intersectionRatio
-                              << " prevPos=(" << std::setprecision(6) << prevPos.x << "," << prevPos.y << ")"
-                              << " curPos=(" << curPos.x << "," << curPos.y << ")"
-                              << " sfP1=(" << sfP1.x << "," << sfP1.y << ")"
-                              << " sfP2=(" << sfP2.x << "," << sfP2.y << ")"
-                              << " off=(" << off.x << "," << off.y << ")"
-                              << " prevProg=" << std::setprecision(3) << vehicle.m_prev_track_progress
                               << " curProg=" << vehicle.m_track_progress
                               << " lapT=" << vehicle.m_current_lap_timer
                               << std::endl;
@@ -358,7 +377,13 @@ void RaceManager::Update(float deltaTime)
                 vehicle.m_has_started_first_lap = true;
                 vehicle.m_current_lap_timer = deltaTime * (1.0f - intersectionRatio);
                 vehicle.m_prev_track_progress = vehicle.m_track_progress;
-                
+
+                // Отсюда пойдёт отсчёт первого боевого круга. Момент берём тот
+                // же, что и для зачёта: точку на отрезке, где легла линия.
+                if (crossing.has_source_time)
+                    vehicle.m_lap_start_utc_ms = crossing.utc_ms;
+
+
                 std::cout << "[RACE MANAGER] Vehicle #" << vehicleID 
                           << " crossed start/finish line, starting Lap " << vehicle.m_current_lap_number 
                           << std::endl;
@@ -368,13 +393,9 @@ void RaceManager::Update(float deltaTime)
                 vehicle.m_current_lap_timer += deltaTime;
             }
         }
-        // ====================================================================
-        // NORMAL TIMER INCREMENT
-        // ====================================================================
-        else
-        {
-            vehicle.m_current_lap_timer += deltaTime;
-        }
+        // Пересечение без взвода у уже стартовавшей машины — дребезг у самой
+        // линии, а не круг. Пропускаем.
+        }  // for (crossings)
 
         // ====================================================================
         // UPDATE TOTAL PROGRESS (lap number + current lap progress)
@@ -409,7 +430,72 @@ void RaceManager::Update(float deltaTime)
 
     // Update leader and positions
     std::vector<VehicleStanding> standings = GetStandingsInternal();
-    
+
+    // ====================================================================
+    // КРУГОВЫЕ
+    // Считаем по реальному отставанию в дистанции, а не по счётчику кругов.
+    // Со счётчиком статус переключался в момент, когда КТО-ТО ИЗ ДВОИХ
+    // пересекал линию, а не когда лидер действительно настигал машину: поэтому
+    // круговой не появлялся при обгоне на круг и не снимался, когда круговой
+    // отыгрывался обратно. Здесь состояние согласовано (счётчики кругов уже
+    // обновлены выше в этом же кадре), поэтому флаг ставим на саму машину.
+    // ====================================================================
+    if (!standings.empty())
+    {
+        const auto leader_it = g_vehicles.find(standings[0].vehicleID);
+        if (leader_it != g_vehicles.end())
+        {
+            const Vehicle& leader = leader_it->second;
+            const double leader_progress = leader.m_total_progress;
+            const int leader_lap_number = leader.m_current_lap_number;
+
+            for (auto& [id, vehicle] : g_vehicles)
+            {
+                if (!vehicle.m_has_started_first_lap)
+                {
+                    vehicle.m_laps_behind_leader = 0;
+                    vehicle.m_distance_laps_behind = 0;
+                    vehicle.m_is_lapped = false;
+                    continue;
+                }
+
+                // Мера 1 — разница НОМЕРОВ кругов. Ловит момент, когда лидер
+                // уходит на новый круг, а машина ещё на предыдущем.
+                const int lap_number_gap = leader_lap_number - vehicle.m_current_lap_number;
+
+                // Мера 2 — отставание по ДИСТАНЦИИ. Ловит момент физического
+                // обгона на круг. Нужна отдельно, потому что сразу после того,
+                // как отстающий пересёк линию, номера кругов у него и у лидера
+                // сравниваются — хотя круг отставания никуда не делся.
+                double gap_laps = leader_progress - vehicle.m_total_progress;
+                if (gap_laps < 0.0)
+                    gap_laps = 0.0;
+
+                const int previous_distance = vehicle.m_distance_laps_behind;
+                int distance_laps = static_cast<int>(std::floor(gap_laps));
+
+                // Прибавляется сразу, снимается через зазор: иначе на границе
+                // ровно одного круга значение мигало бы туда-обратно.
+                if (distance_laps < previous_distance &&
+                    gap_laps > static_cast<double>(previous_distance) - RaceConstants::LAPS_BEHIND_HYSTERESIS)
+                {
+                    distance_laps = previous_distance;
+                }
+                vehicle.m_distance_laps_behind = distance_laps;
+                vehicle.m_is_lapped = (distance_laps >= 1);
+
+                // В таблицу идёт большая из двух: метка обязана появиться и при
+                // уходе лидера на новый круг, и при обгоне на круг — смотря что
+                // произошло раньше, — и не пропадать, пока верно хоть одно.
+                vehicle.m_laps_behind_leader =
+                    (lap_number_gap > distance_laps) ? lap_number_gap : distance_laps;
+                if (vehicle.m_laps_behind_leader < 0)
+                    vehicle.m_laps_behind_leader = 0;
+            }
+        }
+    }
+
+
     // ====================================================================
     // UPDATE CURRENT POSITION IN TELEMETRY SAMPLES
     // ====================================================================
@@ -477,37 +563,6 @@ void RaceManager::Update(float deltaTime)
 // Returns true if segments intersect, and outIntersectionRatio (0.0 to 1.0)
 // indicates where along the vehicle's path the intersection occurred.
 // ============================================================================
-bool RaceManager::CheckLineSegmentIntersection(
-    const glm::vec2& vehiclePrev, const glm::vec2& vehicleCurrent,
-    const glm::vec2& lineP1, const glm::vec2& lineP2,
-    float& outIntersectionRatio) const
-{
-    // Vehicle movement vector
-    glm::vec2 v = vehicleCurrent - vehiclePrev;
-    
-    // Start/Finish line vector
-    glm::vec2 s = lineP2 - lineP1;
-    
-    // Check if parallel (cross product near zero)
-    float denominator = (-s.x * v.y) + (v.x * s.y);
-    if (std::abs(denominator) < 1e-6f)
-        return false;  // Parallel or coincident
-    
-    // Calculate parametric intersection points
-    glm::vec2 delta = vehiclePrev - lineP1;
-    float t = ((-s.y * delta.x) + (s.x * delta.y)) / denominator;  // t along vehicle path
-    float u = ((-v.y * delta.x) + (v.x * delta.y)) / denominator;  // u along finish line
-    
-    // Check if intersection is within both segments
-    if (t >= 0.0f && t <= 1.0f && u >= 0.0f && u <= 1.0f)
-    {
-        outIntersectionRatio = t;
-        return true;
-    }
-    
-    return false;
-}
-
     auto formatTime = [](float totalSeconds) {
         if (totalSeconds < 0.0f)
             totalSeconds = 0.0f;
@@ -538,13 +593,14 @@ std::vector<VehicleStanding> RaceManager::GetStandingsInternal() const
         standing.currentLapTime = vehicle.m_is_finished ? 0.0f : vehicle.m_current_lap_timer;
         standing.hasStartedFirstLap = vehicle.m_has_started_first_lap;
         standing.isFinished = vehicle.m_is_finished;
+        standing.isLapped = vehicle.m_is_lapped;
+        standing.lapsBehindLeader = vehicle.m_laps_behind_leader;
         standing.distanceFromStart = vehicle.m_track_progress;
         standing.serverPosition = vehicle.m_has_authoritative_state
                                     ? vehicle.m_server_position : 0;
         
-        // Best lap logic depends on LAP_START_NUMBER
-        int minCompletedLaps = (RaceConstants::LAP_START_NUMBER == 0) ? 1 : 2;
-        standing.bestLapTime = (vehicle.m_completed_laps >= minCompletedLaps) ? vehicle.m_best_lap_time : -1.0f;
+        standing.bestLapTime = (vehicle.m_completed_laps >= RaceConstants::MIN_LAPS_FOR_BEST_LAP)
+                                 ? vehicle.m_best_lap_time : -1.0f;
         
         // Calculate total race time (sum of all completed laps)
         standing.totalRaceTime = 0.0f;
@@ -612,13 +668,9 @@ std::vector<VehicleStanding> RaceManager::GetStandingsInternal() const
     // ========================================================================
     // ASSIGN POSITIONS & DETECT LAPPED CARS
     // ========================================================================
-    int leaderLaps = standings.empty() ? 0 : standings[0].completedLaps;
-    
+    // isLapped уже проставлен из Vehicle::m_is_lapped выше — здесь только места.
     for (size_t i = 0; i < standings.size(); ++i)
-    {
         standings[i].position = static_cast<int>(i + 1);
-        standings[i].isLapped = (standings[i].completedLaps < leaderLaps);
-    }
     
     return standings;
 }
@@ -629,8 +681,38 @@ std::vector<VehicleStanding> RaceManager::GetStandingsInternal() const
 // ============================================================================
 std::vector<VehicleStanding> RaceManager::GetStandings() const
 {
-    std::lock_guard<std::mutex> lock(g_vehicles_mutex);
-    return GetStandingsInternal();
+    // Таблицу спрашивают 4-7 раз за кадр: главный экран, статус-бар и почти
+    // каждая PRO-панель. Каждый пересчёт брал мьютекс машин, считал дельты по
+    // всем участникам и сортировал — то есть одно и то же несколько раз подряд
+    // с одинаковым результатом. Отдаём снимок, пересчитывая не чаще раза за
+    // кадр; данные при этом свежее одного кадра быть всё равно не могут.
+    {
+        std::lock_guard<std::mutex> cache_lock(m_standings_cache_mutex);
+        if (!m_standings_cache.empty() &&
+            (std::chrono::steady_clock::now() - m_standings_cache_time) < STANDINGS_CACHE_TTL)
+        {
+            return m_standings_cache;
+        }
+    }
+
+    std::vector<VehicleStanding> standings;
+    {
+        std::lock_guard<std::mutex> lock(g_vehicles_mutex);
+        standings = GetStandingsInternal();
+    }
+
+    {
+        std::lock_guard<std::mutex> cache_lock(m_standings_cache_mutex);
+        m_standings_cache = standings;
+        m_standings_cache_time = std::chrono::steady_clock::now();
+    }
+    return standings;
+}
+
+void RaceManager::InvalidateStandingsCache()
+{
+    std::lock_guard<std::mutex> cache_lock(m_standings_cache_mutex);
+    m_standings_cache.clear();
 }
 
 // ============================================================================
@@ -710,9 +792,7 @@ float RaceManager::GetVehicleBestLapTime(int32_t vehicleID) const
     auto it = g_vehicles.find(vehicleID);
     if (it != g_vehicles.end())
     {
-        int minCompletedLaps = (RaceConstants::LAP_START_NUMBER == 0) ? 1 : 2;
-        
-        if (it->second.m_completed_laps < minCompletedLaps)
+        if (it->second.m_completed_laps < RaceConstants::MIN_LAPS_FOR_BEST_LAP)
             return -1.0f;
         
         return it->second.m_best_lap_time;

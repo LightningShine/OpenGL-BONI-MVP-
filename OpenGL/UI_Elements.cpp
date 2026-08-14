@@ -1,6 +1,7 @@
 ﻿#include "UI_Elements.h"
 #include "src/ui/UI_Elements_Config.h"
 #include "src/ui/UI_Config.h"
+#include "src/Config.h"
 #include "src/input/Input.h"
 #include "src/rendering/Interpolation.h"  // For SplinePoint
 #include "src/racing/RaceManager.h"  // For RaceManager and VehicleStanding
@@ -688,8 +689,6 @@ void UIElements::drawLeaderboard()
     // =========================================================
     // DRIVER ROWS
     // =========================================================
-    int leader_laps = standings[0].completedLaps;
-
     for (size_t i = 0; i < standings.size(); ++i)
     {
         const VehicleStanding& s = standings[i];
@@ -772,7 +771,18 @@ void UIElements::drawLeaderboard()
 
         // --- TIME/GAP ---
         {
-            int lap_diff = leader_laps - s.completedLaps;
+            // Правило колонки, как на табло в большом автоспорте:
+            //   «+N кругов» показываем тем, кто отстал на N номеров круга от
+            //   лидера И оторван от него дальше порога по времени.
+            // Первое условие даёт метку сразу, как лидер уходит на новый круг.
+            // Второе спасает читаемость: пока трое борются за подиум и идут в
+            // пределах порога, оператору нужен разрыв в секундах, а не «+1 круг»
+            // у машины, которая физически идёт рядом.
+            const int   lap_diff = s.lapsBehindLeader;
+            const float gap_seconds = s.deltaTimeToLeader;
+            const bool  show_laps = (lap_diff >= 1) &&
+                                    (gap_seconds >= RaceConstants::LAP_GAP_DISPLAY_SECONDS);
+
             char gap_buf[32];
             ImU32 gap_col = is_focused ? col_gold : col_text;
 
@@ -783,16 +793,16 @@ void UIElements::drawLeaderboard()
             }
             else if (s.isFinished && lap_diff >= 1)
             {
-                // Lapped car that has now finished: show how many laps down it was
+                // Финишировавший круговой: сколько кругов проиграл. Порог по
+                // времени здесь не нужен — гонка для него уже закончена.
                 if (lap_diff == 1)
                     snprintf(gap_buf, sizeof(gap_buf), "LAPPED");
                 else
                     snprintf(gap_buf, sizeof(gap_buf), "+%d LAPS", lap_diff);
                 gap_col = col_lapped;
             }
-            else if (!s.isFinished && lap_diff >= 1)
+            else if (show_laps)
             {
-                // Still racing, behind by laps
                 if (lap_diff == 1)
                     snprintf(gap_buf, sizeof(gap_buf), "+1 LAP");
                 else
@@ -801,9 +811,8 @@ void UIElements::drawLeaderboard()
             }
             else
             {
-                float delta = s.deltaTimeToLeader;
-                if (delta != 0.0f)
-                    snprintf(gap_buf, sizeof(gap_buf), "+%.3f", delta);
+                if (gap_seconds != 0.0f)
+                    snprintf(gap_buf, sizeof(gap_buf), "+%.3f", gap_seconds);
                 else
                     snprintf(gap_buf, sizeof(gap_buf), "---");
             }

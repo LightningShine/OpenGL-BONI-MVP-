@@ -21,6 +21,11 @@ namespace
     constexpr const char* LOG_FILE_PREFIX = "console_";
     constexpr const char* LOG_FILE_EXTENSION = ".log";
 
+    // Как часто сбрасывать обычный вывод на диск. Компромисс: при жёстком
+    // завершении теряется не больше этого окна, зато печать перестаёт стоить
+    // обращения к диску. Поток ошибок сбрасывается всегда сразу.
+    constexpr std::chrono::milliseconds FLUSH_INTERVAL{ 250 };
+
     /// Текущее локальное время как "ГГГГ-ММ-ДД ЧЧ:ММ:СС" или "ЧЧ:ММ:СС.ммм".
     std::string format_local_time(bool with_date)
     {
@@ -116,21 +121,33 @@ namespace
         bool is_open() const { return stream_.is_open(); }
 
         /// Пишет строку целиком под мьютексом — так строки из разных потоков не
-        /// перемешиваются посимвольно. Сброс на диск сразу: журнал нужен именно
-        /// в том случае, когда приложение не завершилось штатно.
-        void write_line(const char* tag, const std::string& text)
+        /// перемешиваются посимвольно.
+        ///
+        /// `urgent` — сбросить на диск немедленно. Так помечен поток ошибок:
+        /// именно его содержимое нужно, если приложение не завершилось штатно.
+        /// Обычный вывод сбрасывается пачками: сброс на каждой строке — это
+        /// обращение к диску из потока, который в этот момент может рисовать
+        /// кадр или вычерпывать COM-порт.
+        void write_line(const char* tag, const std::string& text, bool urgent)
         {
             std::lock_guard<std::mutex> lock(mutex_);
             if (!stream_.is_open())
                 return;
 
             stream_ << '[' << format_local_time(false) << "] [" << tag << "] " << text << '\n';
-            stream_.flush();
+
+            const auto now = std::chrono::steady_clock::now();
+            if (urgent || (now - last_flush_) >= FLUSH_INTERVAL)
+            {
+                stream_.flush();
+                last_flush_ = now;
+            }
         }
 
     private:
         std::ofstream stream_;
         std::mutex mutex_;
+        std::chrono::steady_clock::time_point last_flush_ = std::chrono::steady_clock::now();
     };
 
     // ------------------------------------------------------------------------
@@ -140,8 +157,9 @@ namespace
     class TeeStreambuf final : public std::streambuf
     {
     public:
-        TeeStreambuf(std::streambuf* console, LogFile& file, const char* tag)
-            : console_(console), file_(file), tag_(tag)
+        /// `urgent` — сбрасывать строки на диск немедленно (для потока ошибок).
+        TeeStreambuf(std::streambuf* console, LogFile& file, const char* tag, bool urgent)
+            : console_(console), file_(file), tag_(tag), urgent_(urgent)
         {
         }
 
@@ -184,13 +202,14 @@ namespace
             if (line_.empty())
                 return;
 
-            file_.write_line(tag_, line_);
+            file_.write_line(tag_, line_, urgent_);
             line_.clear();
         }
 
         std::streambuf* console_;
         LogFile&        file_;
         const char*     tag_;
+        bool            urgent_;
         std::mutex      mutex_;
         std::string     line_;
     };
@@ -235,14 +254,16 @@ ConsoleLogSession::ConsoleLogSession(const std::filesystem::path& directory, siz
         return;
     }
 
-    impl_->file->write_line("LOG", "console log started " + format_local_time(true) + " (UTF-8)");
+    impl_->file->write_line("LOG", "console log started " + format_local_time(true) + " (UTF-8)", true);
 
     // Перехват ставим последним: до этого момента любые сообщения об ошибках
     // должны идти в обычную консоль.
     impl_->original_out = std::cout.rdbuf();
     impl_->original_err = std::cerr.rdbuf();
-    impl_->out_buffer = std::make_unique<TeeStreambuf>(impl_->original_out, *impl_->file, "OUT");
-    impl_->err_buffer = std::make_unique<TeeStreambuf>(impl_->original_err, *impl_->file, "ERR");
+    // Ошибки сбрасываются на диск сразу, обычный вывод — пачками: если
+    // приложение упадёт, последняя строка stderr должна оказаться в файле.
+    impl_->out_buffer = std::make_unique<TeeStreambuf>(impl_->original_out, *impl_->file, "OUT", false);
+    impl_->err_buffer = std::make_unique<TeeStreambuf>(impl_->original_err, *impl_->file, "ERR", true);
     std::cout.rdbuf(impl_->out_buffer.get());
     std::cerr.rdbuf(impl_->err_buffer.get());
 }
@@ -265,7 +286,7 @@ ConsoleLogSession::~ConsoleLogSession()
         impl_->err_buffer->flush_pending_line();
 
     if (impl_->file)
-        impl_->file->write_line("LOG", "console log closed " + format_local_time(true));
+        impl_->file->write_line("LOG", "console log closed " + format_local_time(true), true);
 }
 
 bool ConsoleLogSession::is_active() const

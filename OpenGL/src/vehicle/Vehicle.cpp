@@ -366,8 +366,15 @@ std::vector<glm::vec2> generateTriangle(float size)
 }
 
 void renderVehicle(GLuint shader_program, GLuint vao, GLuint vbo,
-    const Vehicle& vehicle, const glm::mat4& projection, float camera_zoom)
+    const VehicleRenderState& vehicle, const glm::mat4& projection, float camera_zoom)
 {
+    // Сглаживание поворота лидера должно переживать кадр, поэтому угол хранится
+    // здесь, по ID машины. Раньше он лежал в Vehicle, но рендер работал с копией
+    // объекта и записывал угол в неё — сглаживание не накапливалось вообще.
+    // Доступ только из потока рендера.
+    static std::map<int32_t, float> s_rotation_cache;
+    float& cached_rotation = s_rotation_cache[vehicle.id];
+
     // Constant on-screen size: world-space vertices shrink as the camera
     // zooms in, so the marker never covers the track at high zoom.
     const float markerScale = 1.0f / (camera_zoom > 0.01f ? camera_zoom : 0.01f);
@@ -387,41 +394,41 @@ void renderVehicle(GLuint shader_program, GLuint vao, GLuint vbo,
     static GLint colorLoc = glGetUniformLocation(shader_program, "uColor");
     
     // ✅ Выбираем форму: треугольник для лидера, круг для остальных
-    const std::vector<glm::vec2>& outlineShape = vehicle.m_is_leader ? triangleOutline : circleOutline;
-    const std::vector<glm::vec2>& bodyShape = vehicle.m_is_leader ? triangleBody : circleBody;
+    const std::vector<glm::vec2>& outlineShape = vehicle.is_leader ? triangleOutline : circleOutline;
+    const std::vector<glm::vec2>& bodyShape = vehicle.is_leader ? triangleBody : circleBody;
 
     // ========================================================================
     // ✅ CALCULATE ROTATION ANGLE WITH PERSISTENCE
     // Caches last valid angle to prevent flickering when GPS jitter causes
     // movement < MIN_MOVEMENT threshold. Uses exponential smoothing for gradual rotation.
     // ========================================================================
-    float rotationAngle = vehicle.m_last_rotation_angle;  // ✅ Start with cached angle
+    float rotationAngle = cached_rotation;  // ✅ Start with cached angle
 
-    if (vehicle.m_is_leader)
+    if (vehicle.is_leader)
     {
         // Use authoritative heading if available. This is more stable than deriving
         // rotation from frame-to-frame position differences.
-        float newAngle = static_cast<float>(vehicle.m_heading) - glm::half_pi<float>();
+        float newAngle = static_cast<float>(vehicle.heading) - glm::half_pi<float>();
 
         // ✅ SMOOTH INTERPOLATION (exponential smoothing)
         const float SMOOTHING_FACTOR = 0.3f;  // 0.0 = no change, 1.0 = instant (0.3 = good balance)
 
         // Handle angle wrapping (-PI to PI)
-        float angleDiff = newAngle - vehicle.m_last_rotation_angle;
+        float angleDiff = newAngle - cached_rotation;
 
         if (angleDiff > glm::pi<float>())
             angleDiff -= 2.0f * glm::pi<float>();
         else if (angleDiff < -glm::pi<float>())
             angleDiff += 2.0f * glm::pi<float>();
 
-        rotationAngle = vehicle.m_last_rotation_angle + angleDiff * SMOOTHING_FACTOR;
+        rotationAngle = cached_rotation + angleDiff * SMOOTHING_FACTOR;
 
-        vehicle.m_last_rotation_angle = rotationAngle;
+        cached_rotation = rotationAngle;
     }
 
     // ✅ ОПТИМИЗАЦИЯ: Создаем матрицу вращения один раз
     glm::mat2 rotationMatrix(1.0f);
-    if (vehicle.m_is_leader)
+    if (vehicle.is_leader)
     {
         float cosAngle = std::cos(rotationAngle);
         float sinAngle = std::sin(rotationAngle);
@@ -431,16 +438,16 @@ void renderVehicle(GLuint shader_program, GLuint vao, GLuint vbo,
         );
     }
 
-  const glm::vec2 renderOffset = vehicle.m_apply_track_render_offset ? getTrackRenderOffset() : glm::vec2(0.0f, 0.0f);
-    const float baseX = static_cast<float>(vehicle.m_normalized_x) + renderOffset.x;
-    const float baseY = static_cast<float>(vehicle.m_normalized_y) + renderOffset.y;
+    const glm::vec2 renderOffset = vehicle.apply_track_render_offset ? getTrackRenderOffset() : glm::vec2(0.0f, 0.0f);
+    const float baseX = static_cast<float>(vehicle.x) + renderOffset.x;
+    const float baseY = static_cast<float>(vehicle.y) + renderOffset.y;
 
     // === РИСУЕМ БЕЛУЮ ОБВОДКУ ===
     std::vector<glm::vec2> outlineVertices;
     outlineVertices.reserve(outlineShape.size());
     for (const auto& vertex : outlineShape) {
         // ✅ Применяем матрицу поворота (экономит вычисления cos/sin)
-        glm::vec2 transformedVertex = (vehicle.m_is_leader)
+        glm::vec2 transformedVertex = (vehicle.is_leader)
             ? rotationMatrix * vertex
             : vertex;
         transformedVertex *= markerScale;
@@ -469,7 +476,7 @@ void renderVehicle(GLuint shader_program, GLuint vao, GLuint vbo,
     bodyVertices.reserve(bodyShape.size());
     for (const auto& vertex : bodyShape) {
         // ✅ Применяем матрицу поворота (экономит вычисления cos/sin)
-        glm::vec2 transformedVertex = (vehicle.m_is_leader)
+        glm::vec2 transformedVertex = (vehicle.is_leader)
             ? rotationMatrix * vertex
             : vertex;
         transformedVertex *= markerScale;
@@ -485,7 +492,7 @@ void renderVehicle(GLuint shader_program, GLuint vao, GLuint vbo,
         bodyVertices.data(), GL_DYNAMIC_DRAW);
 
     // ✅ Используем кешированный цвет машины
-    glUniform3f(colorLoc, vehicle.m_cached_color.r, vehicle.m_cached_color.g, vehicle.m_cached_color.b);
+    glUniform3f(colorLoc, vehicle.color.r, vehicle.color.g, vehicle.color.b);
 
     glBindVertexArray(vao);
     glDrawArrays(GL_TRIANGLE_FAN, 0, static_cast<GLsizei>(bodyVertices.size()));
@@ -510,14 +517,10 @@ void renderAllVehicles(GLuint shader_program, GLuint vao, GLuint vbo,
     float minY = camera_pos.y - visibleHeight;
     float maxY = camera_pos.y + visibleHeight;
 
-    // ✅ Собираем копии машин с интерполированными позициями
-    struct RenderData {
-        Vehicle vehicle;  // Copy for thread-safe rendering
-        double interp_x, interp_y, interp_heading, interp_speed;
-        bool use_interpolation;
-    };
-
-    std::vector<RenderData> vehiclesToRender;
+    // Под мьютексом копируем ТОЛЬКО скаляры: он же нужен сетевому потоку на
+    // каждый принятый пакет, поэтому держать его на время интерполяции,
+    // отсечения по видимости и тем более отрисовки нельзя.
+    std::vector<VehicleRenderState> vehiclesToRender;
     {
         std::lock_guard<std::mutex> lock(g_vehicles_mutex);
         vehiclesToRender.reserve(g_vehicles.size());
@@ -529,67 +532,63 @@ void renderAllVehicles(GLuint shader_program, GLuint vao, GLuint vbo,
             if (vehicle.m_signal_lost)
                 continue;
 
-            RenderData data{ vehicle, 0.0, 0.0, 0.0, 0.0, false };
-
-            // Try to get interpolated position
-            if (VehicleInterpolator::Get().GetInterpolatedState(
-                id, renderTime,
-                data.interp_x, data.interp_y, 
-                data.interp_heading, data.interp_speed))
-            {
-                data.use_interpolation = true;
-
-                // Check visibility with interpolated position
-                if (data.interp_x >= minX && data.interp_x <= maxX &&
-                    data.interp_y >= minY && data.interp_y <= maxY)
-                {
-                    // ✅ Use interpolated position AND heading for rendering
-                    data.vehicle.m_normalized_x = data.interp_x;
-                    data.vehicle.m_normalized_y = data.interp_y;
-                    data.vehicle.m_speed_kph = data.interp_speed;
-                    data.vehicle.m_heading = data.interp_heading;  // ✅ Fix: update heading too!
-
-                    // Update prev position for direction calculation
-                    data.vehicle.m_prev_x = vehicle.m_prev_x;
-                    data.vehicle.m_prev_y = vehicle.m_prev_y;
-
-                    vehiclesToRender.push_back(data);
-                }
-            }
-            else
-            {
-                // ✅ Fallback to direct position (no interpolation data yet or buffer not ready)
-                // This happens in first few frames or if packets are lost
-                float vX = static_cast<float>(vehicle.m_normalized_x);
-                float vY = static_cast<float>(vehicle.m_normalized_y);
-
-                if (vX >= minX && vX <= maxX && vY >= minY && vY <= maxY) {
-                    vehiclesToRender.push_back(data);
-                }
-            }
+            VehicleRenderState state;
+            state.id = id;
+            state.x = vehicle.m_normalized_x;
+            state.y = vehicle.m_normalized_y;
+            state.heading = vehicle.m_heading;
+            state.speed_kph = vehicle.m_speed_kph;
+            state.color = vehicle.m_cached_color;
+            state.name = vehicle.name;
+            state.is_leader = vehicle.m_is_leader;
+            state.apply_track_render_offset = vehicle.m_apply_track_render_offset;
+            vehiclesToRender.push_back(std::move(state));
         }
     } // ✅ Мьютекс освобожден
 
+    // Интерполяция и отсечение — уже без мьютекса машин.
+    for (VehicleRenderState& state : vehiclesToRender)
+    {
+        double interp_x = 0.0;
+        double interp_y = 0.0;
+        double interp_heading = 0.0;
+        double interp_speed = 0.0;
+        if (VehicleInterpolator::Get().GetInterpolatedState(
+                state.id, renderTime, interp_x, interp_y, interp_heading, interp_speed))
+        {
+            state.x = interp_x;
+            state.y = interp_y;
+            state.heading = interp_heading;
+            state.speed_kph = interp_speed;
+        }
+    }
+
+    const auto is_visible = [&](const VehicleRenderState& state) {
+        return state.x >= minX && state.x <= maxX && state.y >= minY && state.y <= maxY;
+    };
+
     // ✅ Рендеринг БЕЗ блокировки (может занять 10-20ms)
-    for (const RenderData& data : vehiclesToRender) {
-        renderVehicle(shader_program, vao, vbo, data.vehicle, projection, camera_zoom);
+    for (const VehicleRenderState& state : vehiclesToRender) {
+        if (is_visible(state))
+            renderVehicle(shader_program, vao, vbo, state, projection, camera_zoom);
     }
 
     // Draw TLA names above each vehicle if enabled.
     // Apply the same track-centering offset used by the dot so label and
     // dot always land at the same screen position.
     if (g_show_vehicle_names) {
-        for (const RenderData& data : vehiclesToRender) {
-            if (!data.vehicle.name.empty()) {
-                const glm::vec2 rOff = data.vehicle.m_apply_track_render_offset
-                                         ? getTrackRenderOffset()
-                                         : glm::vec2(0.0f, 0.0f);
-                VehicleNameRenderer::DrawName(
-                    data.vehicle.name,
-                    static_cast<float>(data.vehicle.m_normalized_x) + rOff.x,
-                    static_cast<float>(data.vehicle.m_normalized_y) + rOff.y,
-                    projection, g_ui ? g_ui->GetTitleFont() : nullptr, 1.0f);
-            }
+        for (const VehicleRenderState& state : vehiclesToRender) {
+            if (state.name.empty() || !is_visible(state))
+                continue;
+
+            const glm::vec2 rOff = state.apply_track_render_offset
+                                     ? getTrackRenderOffset()
+                                     : glm::vec2(0.0f, 0.0f);
+            VehicleNameRenderer::DrawName(
+                state.name,
+                static_cast<float>(state.x) + rOff.x,
+                static_cast<float>(state.y) + rOff.y,
+                projection, g_ui ? g_ui->GetTitleFont() : nullptr, 1.0f);
         }
     }
 }

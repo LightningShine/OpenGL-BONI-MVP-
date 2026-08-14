@@ -3,6 +3,7 @@
 #include <map>
 #include <vector>
 #include <chrono>
+#include <mutex>
 #include <glm/glm.hpp>
 #include "../vehicle/Vehicle.h"
 #include "StopReset/StartStop.h"
@@ -23,7 +24,8 @@ struct VehicleStanding
     double distanceFromStart;        // Progress along track (0.0 to 1.0)
     int position;                    // Current race position (1st, 2nd, etc.)
     int serverPosition;              // Track Server classification (0 = local session)
-    bool isLapped;                   // True if behind leader by 1+ laps
+    bool isLapped;                   // Реально отстал на круг дистанции (протокол)
+    int  lapsBehindLeader;           // Разница номеров кругов с лидером (табло)
     bool hasStartedFirstLap;         // True if vehicle started racing
     bool isFinished;                 // True if vehicle has crossed finish in Finishing state
     
@@ -34,7 +36,8 @@ struct VehicleStanding
     VehicleStanding() 
         : vehicleID(0), completedLaps(0), currentLapNumber(0), currentLapTime(0.0f), 
           bestLapTime(-1.0f), totalRaceTime(0.0f), distanceFromStart(0.0), 
-          position(0), serverPosition(0), isLapped(false), hasStartedFirstLap(false),
+          position(0), serverPosition(0), isLapped(false), lapsBehindLeader(0),
+          hasStartedFirstLap(false),
           isFinished(false), deltaTimeToBest(0.0f), deltaTimeToLeader(0.0f) {}
 };
 
@@ -63,6 +66,12 @@ public:
     float GetRaceElapsedTime() const;
     void SetStartFinishLine(const glm::vec2& p1, const glm::vec2& p2);  // Define start/finish line
 
+    // Копия линии старт/финиша. Нужна приёму телеметрии: пересечение ищется
+    // там, где рождается отрезок движения, иначе часть проездов теряется
+    // между кадрами (см. Vehicle::LineCrossing).
+    // false — линия ещё не задана (трек не загружен).
+    bool GetStartFinishLine(glm::vec2& out_p1, glm::vec2& out_p2) const;
+
     // Auto-stop mechanics
     void SetAutoStopConditions(int maxLaps, float maxSeconds);
     int GetAutoStopLaps() const;
@@ -71,7 +80,13 @@ public:
     // ========================================================================
     // LEADERBOARD & STANDINGS
     // ========================================================================
+    // Отдаёт снимок таблицы. Пересчитывается не чаще раза за кадр: за кадр её
+    // спрашивают несколько независимых панелей, а результат у них общий.
     std::vector<VehicleStanding> GetStandings() const;
+
+    // Сбрасывает снимок принудительно — после изменений, которые обязаны быть
+    // видны немедленно (старт, стоп и сброс сессии).
+    void InvalidateStandingsCache();
     
     // ========================================================================
     // LAP DATA ACCESS (for UI display)
@@ -126,14 +141,10 @@ private:
     glm::vec2 m_startFinishP2;
     bool m_lineInitialized;
     
-    // ========================================================================
-    // INTERSECTION DETECTION (sub-frame accurate)
-    // ========================================================================
-    bool CheckLineSegmentIntersection(
-        const glm::vec2& vehiclePrev, const glm::vec2& vehicleCurrent,
-        const glm::vec2& lineP1, const glm::vec2& lineP2,
-        float& outIntersectionRatio) const;
-    
+    // Геометрия пересечения переехала в track::segment_intersection и считается
+    // на приёме пакета — см. Vehicle::LineCrossing.
+
+
     // ========================================================================
     // DISTANCE CALCULATION (for leaderboard sorting)
     // ========================================================================
@@ -148,6 +159,17 @@ private:
     // LEADER LAP COUNT (for lapped detection)
     // ========================================================================
     int GetLeaderLapCount() const;
+
+    // ========================================================================
+    // STANDINGS CACHE (см. GetStandings)
+    // ========================================================================
+    // Кадр при 60 fps длится ~16.7 мс, так что окно короче кадра: панели одного
+    // кадра получают один и тот же снимок, а следующий кадр считает заново.
+    static constexpr std::chrono::milliseconds STANDINGS_CACHE_TTL{ 10 };
+
+    mutable std::mutex m_standings_cache_mutex;
+    mutable std::vector<VehicleStanding> m_standings_cache;
+    mutable std::chrono::steady_clock::time_point m_standings_cache_time;
 };
 
 // ============================================================================

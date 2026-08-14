@@ -160,6 +160,14 @@ private:
     void LoadResources();
     void LoadRecentFiles();
 
+    /// Открывает трек и поднимает его в начало списка недавних.
+    /// Все места, откуда открывается файл, обязаны идти через неё — иначе
+    /// список снова разойдётся с реальным порядком открытия.
+    void OpenTrackFile(const std::string& path);
+
+    /// Поднимает путь в начало списка недавних и сохраняет его на диск.
+    void NoteRecentFile(const std::string& path);
+
     // DPI-масштабирование (см. src/ui/ui_scale.hpp)
     void load_fonts();            // грузит атлас: пункты UIConfig × ui_scale
     void apply_ui_scale_change(); // пересборка шрифтов/стиля при смене DPI

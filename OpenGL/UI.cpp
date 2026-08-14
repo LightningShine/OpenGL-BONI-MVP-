@@ -12,7 +12,9 @@
 #include <glm/gtc/constants.hpp>
 #include <filesystem>
 #include <fstream>
+#include <set>
 #include <sstream>
+#include "src/network/ReplayPlayer.h"
 #include <regex>
 #ifdef _WIN32
 #include <winsock2.h>
@@ -243,9 +245,78 @@ static void applyTrackFile(const std::string& path,
     applyTrackData(buf.str(), points, mtx);
 }
 
-void UI::HandleDroppedFile(const std::string& path)
+// ============================================================================
+// СПИСОК НЕДАВНИХ ФАЙЛОВ
+//
+// Порядок открытия нигде не хранился: список строился сканированием каталога
+// saves и сортировался по алфавиту, поэтому показать «последний сверху» он не
+// мог в принципе. Держим настоящий MRU в файле рядом с devices.db — свежий
+// путь первой строкой.
+// ============================================================================
+namespace {
+    constexpr const char* RECENT_LIST_FILE = "recent_files.txt";
+    constexpr size_t MAX_RECENT_FILES = 12;
+
+    std::string normalizeTrackPath(const std::string& path)
+    {
+        std::string normalized = path;
+        std::replace(normalized.begin(), normalized.end(), '\\', '/');
+        return normalized;
+    }
+
+    /// Пути в порядке открытия, свежий первым. Отсутствующие файлы отсеиваются:
+    /// трек могли удалить или переименовать между запусками.
+    std::vector<std::string> readRecentList()
+    {
+        std::vector<std::string> paths;
+        std::ifstream file(RECENT_LIST_FILE);
+        std::string line;
+        while (std::getline(file, line))
+        {
+            if (line.empty())
+                continue;
+            if (std::filesystem::exists(line))
+                paths.push_back(line);
+        }
+        return paths;
+    }
+
+    void writeRecentList(const std::vector<std::string>& paths)
+    {
+        std::ofstream file(RECENT_LIST_FILE, std::ios::trunc);
+        if (!file.is_open())
+        {
+            std::cerr << "[UI] Cannot write " << RECENT_LIST_FILE << "\n";
+            return;
+        }
+        for (const std::string& path : paths)
+            file << path << '\n';
+    }
+}
+
+void UI::NoteRecentFile(const std::string& path)
+{
+    const std::string normalized = normalizeTrackPath(path);
+
+    std::vector<std::string> paths = readRecentList();
+    paths.erase(std::remove(paths.begin(), paths.end(), normalized), paths.end());
+    paths.insert(paths.begin(), normalized);
+    if (paths.size() > MAX_RECENT_FILES)
+        paths.resize(MAX_RECENT_FILES);
+
+    writeRecentList(paths);
+    LoadRecentFiles();  // список в меню перестраивается сразу
+}
+
+void UI::OpenTrackFile(const std::string& path)
 {
     applyTrackFile(path, m_points, m_pointsMutex);
+    NoteRecentFile(path);
+}
+
+void UI::HandleDroppedFile(const std::string& path)
+{
+    OpenTrackFile(path);
     m_showSplash = false;
     m_closeSplash = true;
 }
@@ -749,8 +820,24 @@ void UI::LoadRecentFiles()
         return;
     }
     
+    // Сначала — то, что реально открывали, в порядке открытия. Это и есть
+    // «недавние»: свежий сверху.
+    std::set<std::string> already_listed;
+    for (const std::string& path : readRecentList())
+    {
+        RecentFile file;
+        file.path = path;
+        file.name = fs::path(path).filename().string();
+        already_listed.insert(file.path);
+        m_recentFiles.push_back(file);
+    }
+
+    // Дальше — остальные треки из каталога, по алфавиту: они ещё ни разу не
+    // открывались, но прятать их от оператора незачем.
+    const size_t opened_count = m_recentFiles.size();
+
     std::cout << "[UI] Scanning saves directory: " << saves_path << "\n";
-    
+
     // Scan directory for track files (.json and .txt)
     try
     {
@@ -768,21 +855,23 @@ void UI::LoadRecentFiles()
                     file.path = entry.path().string();
                     
                     // Convert backslashes to forward slashes for consistency
-                    std::replace(file.path.begin(), file.path.end(), '\\', '/');
-                    
-                    m_recentFiles.push_back(file);
-                    std::cout << "[UI] Found save file: " << filename << "\n";
+                    file.path = normalizeTrackPath(file.path);
+
+                    if (already_listed.count(file.path) == 0)
+                        m_recentFiles.push_back(file);
                 }
             }
         }
-        
-        // Sort files alphabetically
-        std::sort(m_recentFiles.begin(), m_recentFiles.end(), 
+
+        // Сортируем ТОЛЬКО хвост из никогда не открывавшихся файлов: начало
+        // списка — это порядок открытия, его трогать нельзя.
+        std::sort(m_recentFiles.begin() + opened_count, m_recentFiles.end(),
                  [](const RecentFile& a, const RecentFile& b) {
                      return a.name < b.name;
                  });
-        
-        std::cout << "[UI] Loaded " << m_recentFiles.size() << " save file(s)\n";
+
+        std::cout << "[UI] Recent files: " << opened_count << " opened, "
+                  << (m_recentFiles.size() - opened_count) << " other save file(s)\n";
     }
     catch (const std::exception& e)
     {
@@ -1185,7 +1274,7 @@ void UI::BeginFrame()
             if (GetOpenFileNameA(&ofn))
             {
                 {
-                    applyTrackFile(ofn.lpstrFile, m_points, m_pointsMutex);
+                    OpenTrackFile(ofn.lpstrFile);
                     m_showSplash = false;
                     m_closeSplash = true;
                 }
@@ -2092,7 +2181,7 @@ void UI::RenderMainWindow()
             std::cout << "[UI] Opening: " << m_recentFiles[i].path << "\n";
             
             // Load file
-            applyTrackFile(m_recentFiles[i].path, m_points, m_pointsMutex);
+            OpenTrackFile(m_recentFiles[i].path);
             m_showSplash = false;
             m_closeSplash = true;
         }
@@ -2428,11 +2517,43 @@ void UI::RenderTopMenu()
 
                 if (GetOpenFileNameA(&ofn))
                 {
-                    applyTrackFile(ofn.lpstrFile, m_points, m_pointsMutex);
+                    OpenTrackFile(ofn.lpstrFile);
                     m_showSplash = false;
                     m_closeSplash = true;
                 }
             }
+
+            // Повтор требует уже загруженного трека: в записи лежит только
+            // эфир, а геометрия и origin нужны, чтобы восстановить позиции.
+            if (ImGui::MenuItem("Open Replay...", nullptr, false, g_is_map_loaded))
+            {
+                OPENFILENAMEA ofn = {};
+                char szFile[260] = { 0 };
+
+                ofn.lStructSize = sizeof(ofn);
+                ofn.hwndOwner = glfwGetWin32Window(m_window);
+                ofn.lpstrFile = szFile;
+                ofn.nMaxFile = sizeof(szFile);
+                ofn.lpstrFilter = "Recording\0*.rjl\0All Files\0*.*\0";
+                ofn.nFilterIndex = 1;
+                std::string logsPath = LoggingConstants::LOG_DIRECTORY;
+                ofn.lpstrInitialDir = logsPath.c_str();
+                ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
+
+                if (GetOpenFileNameA(&ofn))
+                {
+                    if (telemetry::replay_open(ofn.lpstrFile))
+                    {
+                        m_proMode = true;   // транспорт живёт в PRO-навбаре
+                        glfwSetWindowTitle(m_window, "RAJAGP PRO");
+                        m_showSplash = false;
+                        m_closeSplash = true;
+                    }
+                }
+            }
+
+            if (ImGui::MenuItem("Close Replay", nullptr, false, telemetry::replay_is_active()))
+                telemetry::replay_close();
 
             ImGui::Separator();
 
@@ -2773,6 +2894,51 @@ void UI::RenderTopMenu()
         // Конец пунктов меню — левая граница для пилюли статуса (см.
         // RenderRaceStatusBar): она не имеет права налезать на меню.
         m_menuRightEdgeX = ImGui::GetCursorScreenPos().x;
+
+        // === ТРАНСПОРТ ПОВТОРА (центр навбара, только PRO) ===
+        // Живой заезд управляется гонкой, а не кнопками, поэтому панель
+        // появляется только когда открыта запись.
+        if (m_proMode && telemetry::replay_is_active())
+        {
+            const telemetry::ReplayStatus status = telemetry::replay_status();
+
+            const float barH = ImGui::GetWindowHeight();
+            const float btnH = barH - ui_scale::points(8.f);
+            const float btnW = ui_scale::points(34.f);
+            const float gap  = ui_scale::points(4.f);
+            const float labelW = ui_scale::points(96.f);
+            const float groupW = btnW * 3.0f + gap * 3.0f + labelW;
+
+            ImGui::SetCursorPosX((ImGui::GetWindowWidth() - groupW) * 0.5f);
+            ImGui::SetCursorPosY((barH - btnH) * 0.5f);
+
+            ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.f);
+            ImGui::PushStyleColor(ImGuiCol_Button,        IM_COL32(55, 55, 60, 220));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(75, 75, 80, 255));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive,  IM_COL32(40, 40, 45, 255));
+            ImGui::PushStyleColor(ImGuiCol_Text,          IM_COL32(210, 210, 220, 255));
+
+            if (ImGui::Button("<|", ImVec2(btnW, btnH)))
+                telemetry::replay_step(-1);
+            ImGui::SameLine(0.f, gap);
+
+            if (ImGui::Button(status.paused ? ">" : "||", ImVec2(btnW, btnH)))
+                telemetry::replay_toggle_pause();
+            ImGui::SameLine(0.f, gap);
+
+            if (ImGui::Button("|>", ImVec2(btnW, btnH)))
+                telemetry::replay_step(1);
+            ImGui::SameLine(0.f, gap);
+
+            ImGui::PopStyleColor(4);
+            ImGui::PopStyleVar();
+
+            const float position_s = status.position_ms / 1000.0f;
+            const float duration_s = status.duration_ms / 1000.0f;
+            ImGui::SetCursorPosY((barH - ImGui::GetTextLineHeight()) * 0.5f);
+            ImGui::TextColored(ImVec4(0.72f, 0.72f, 0.78f, 1.0f), "%.1f / %.1f s",
+                               position_s, duration_s);
+        }
 
         // === PRO / LITE TOGGLE BUTTON (right side of navbar) ===
         {

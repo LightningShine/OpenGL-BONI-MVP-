@@ -218,7 +218,7 @@ void handleState(const std::string& text)
                     v.laps.clear();
                     v.m_best_lap_time       = -1.0f;
                     v.m_completed_laps      = 0;
-                    v.m_current_lap_number  = 1;
+                    v.m_current_lap_number  = RaceConstants::LAP_START_NUMBER;
                     v.m_current_lap_timer   = 0.0f;
                     v.m_has_started_first_lap = false;
                     v.m_is_leader           = false;

@@ -406,10 +406,13 @@ void getCoordinateDifferenceFromOrigin(double Metr_est, double Metr_north, doubl
 	normalized_x = (diff_easting / g_map_origin.m_map_size);
 	normalized_y = (diff_northing / g_map_origin.m_map_size);
 
-	// Debug output for vehicles (skip track loading)
+	// Debug output for vehicles (skip track loading).
+	// Функция зовётся дважды на каждый пакет телеметрии — на полном поле машин
+	// это около тысячи вызовов в секунду, и печать отсюда идёт в журнал с
+	// записью на диск. Держим за флагом.
 	static int call_count = 0;
 	call_count++;
-	if (call_count % 120 == 0) { // Log every 120th call (every 2 seconds at 60Hz)
+	if (LoggingConstants::VERBOSE_TELEMETRY && call_count % 120 == 0) {
 		std::cout << "[COORD] UTM: (" << Metr_est << ", " << Metr_north << ")" << std::endl;
 		std::cout << "[COORD] Origin UTM: (" << g_map_origin.m_origin_meters_easting 
 				  << ", " << g_map_origin.m_origin_meters_northing << ")" << std::endl;

@@ -1,5 +1,7 @@
 #include "../network/ESP32_Code.h"
 #include "SimulationServer.h"
+#include "TelemetryIngest.h"
+#include "../Config.h"
 #include <iostream>
 #include <thread>
 #include <chrono>
@@ -36,10 +38,6 @@ static std::atomic<bool> g_capture_stop_requested{ false };
 static std::thread g_capture_thread;
 static std::mutex g_serial_mutex;
 
-static std::mutex g_last_packet_mutex;
-static TelemetryPacket g_last_packet{};
-static std::atomic<bool> g_has_last_packet{ false };
-
 static std::atomic<bool> g_discovery_running{ false };
 static std::atomic<bool> g_discovery_stop_requested{ false };
 static std::thread g_discovery_thread;
@@ -67,12 +65,8 @@ bool calibrateOriginToStartFinish()
         return false;
 
     TelemetryPacket packet{};
-    {
-        if (!g_has_last_packet.load(std::memory_order_relaxed))
-            return false;
-        std::lock_guard<std::mutex> lock(g_last_packet_mutex);
-        packet = g_last_packet;
-    }
+    if (!telemetry::last_received_packet(packet))
+        return false;
 
     glm::vec2 startPoint(0.0f, 0.0f);
     {
@@ -305,6 +299,11 @@ static void realDataThreadWorker(const std::string& com_port)
 
     std::cout << "[REAL DATA] Listening on " << com_port << std::endl;
 
+    // Приём (и запись журнала) живёт ровно столько же, сколько поток чтения:
+    // один открытый порт — один файл. Переоткрытие порта при зависании
+    // (reopenPort ниже) сессию записи не прерывает.
+    telemetry::ingest_start(logging::TelemetryLogSource::Receiver);
+
     uint64_t bytes_seen = 0;
     uint64_t telemetry_headers_seen = 0;
     uint64_t telemetry_packets_ok = 0;
@@ -415,30 +414,18 @@ static void realDataThreadWorker(const std::string& com_port)
                         std::this_thread::sleep_for(std::chrono::milliseconds(1));
                 }
 
-                // CRC check + RAJA→TelemetryPacket translation (rajagp_core).
+                // Отдаём сырые байты в общую точку приёма: она проверит CRC,
+                // запишет их в журнал и подаст в пайплайн. Здесь остаётся
+                // только диагностика самого порта.
                 TelemetryPacket packet{};
                 const bool crc_ok = (totalRead == payloadSize) &&
-                    rajagp::parseRajaPayload(payload, packet);
+                    telemetry::ingest_wire_packet(payload, &packet);
 
                 if (crc_ok)
                 {
                     telemetry_packets_ok++;
-                   last_packet = packet;
+                    last_packet = packet;
                     has_last_packet = true;
-
-                    {
-                        std::lock_guard<std::mutex> lock(g_last_packet_mutex);
-                        g_last_packet = packet;
-                        g_has_last_packet.store(true, std::memory_order_relaxed);
-                    }
-
-                    processIncomingTelemetry(packet);
-
-                    // ✅ 2. Broadcast to network clients (if server is running)
-                    // Only broadcast if in server mode (not client mode)
-                    if (g_is_server_mode && !g_is_client_mode) {
-                        BroadcastTelemetryToClients(packet);
-                    }
                 }
                 else
                 {
@@ -485,6 +472,7 @@ static void realDataThreadWorker(const std::string& com_port)
         }
     }
 
+    telemetry::ingest_stop();
     std::cout << "[REAL DATA] Stopped listening on " << com_port << std::endl;
     closeSerialNoThrow();
 }
