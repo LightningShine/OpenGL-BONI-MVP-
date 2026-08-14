@@ -21,6 +21,42 @@ std::atomic<bool> g_is_vehicles_active = false;
 std::atomic<bool> g_race_session_active = false;
 std::atomic<bool> g_pipeline_rebuilding = false;
 
+// Глубина захвата мьютекса машин ЭТИМ потоком. Ноль означает «не держим».
+// Пересчёт повтора поднимает её на весь прогон, и вложенные захваты внутри
+// приёма пакета становятся пустыми операциями.
+static thread_local int t_vehicles_lock_depth = 0;
+
+VehiclesLock::VehiclesLock()
+    : owns_(t_vehicles_lock_depth == 0)
+{
+    if (owns_)
+    {
+        g_vehicles_mutex.lock();
+        ++t_vehicles_lock_depth;
+    }
+}
+
+VehiclesLock::~VehiclesLock()
+{
+    if (owns_)
+    {
+        --t_vehicles_lock_depth;
+        g_vehicles_mutex.unlock();
+    }
+}
+
+void enter_vehicles_bulk_section()
+{
+    g_vehicles_mutex.lock();
+    ++t_vehicles_lock_depth;
+}
+
+void leave_vehicles_bulk_section()
+{
+    --t_vehicles_lock_depth;
+    g_vehicles_mutex.unlock();
+}
+
 // ✅ Система выбора машины для отслеживания
 int g_focused_vehicle_id = -1;  // -1 = лидер (дефолт)
 
@@ -518,21 +554,16 @@ void renderAllVehicles(GLuint shader_program, GLuint vao, GLuint vbo,
     float minY = camera_pos.y - visibleHeight;
     float maxY = camera_pos.y + visibleHeight;
 
-    // Во время отката повтора машины перестраиваются прогоном записи, и их
-    // промежуточные позиции показывать нельзя — глазом это видно как прыжок
-    // назад и возврат. Держим последний целый кадр: картинка замирает на доли
-    // секунды и обновляется сразу конечным состоянием.
-    static std::vector<VehicleRenderState> s_lastGoodFrame;
-
     // Под мьютексом копируем ТОЛЬКО скаляры: он же нужен сетевому потоку на
     // каждый принятый пакет, поэтому держать его на время интерполяции,
     // отсечения по видимости и тем более отрисовки нельзя.
+    //
+    // Отдельной «заморозки» на время отката повтора здесь НЕТ и быть не должно:
+    // откат удерживает этот же мьютекс целиком, поэтому мы либо подождём, либо
+    // прочитаем готовое состояние. Раньше здесь стоял показ последнего целого
+    // кадра — и при удержании перемотки он давал кадр, отставший на один шаг,
+    // то есть сам создавал те прыжки, от которых должен был спасать.
     std::vector<VehicleRenderState> vehiclesToRender;
-    if (g_pipeline_rebuilding.load(std::memory_order_relaxed))
-    {
-        vehiclesToRender = s_lastGoodFrame;
-    }
-    else
     {
         std::lock_guard<std::mutex> lock(g_vehicles_mutex);
         vehiclesToRender.reserve(g_vehicles.size());
@@ -556,8 +587,6 @@ void renderAllVehicles(GLuint shader_program, GLuint vao, GLuint vbo,
             state.apply_track_render_offset = vehicle.m_apply_track_render_offset;
             vehiclesToRender.push_back(std::move(state));
         }
-        // Кадр целый — запоминаем его на случай ближайшего отката.
-        s_lastGoodFrame = vehiclesToRender;
     } // ✅ Мьютекс освобожден
 
     // Интерполяция и отсечение — уже без мьютекса машин.

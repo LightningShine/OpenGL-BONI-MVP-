@@ -2919,8 +2919,13 @@ void UI::RenderTopMenu()
             // тянет свою вертикаль от предыдущего элемента, из-за чего кнопки
             // и подпись расходились по высоте.
             const float startX = (ImGui::GetWindowWidth() - groupW) * 0.5f;
-            const float btnY   = (barH - btnH) * 0.5f;
             const float iconSz = btnH - ui_scale::points(10.f);
+
+            // Реальная высота кнопки с иконкой — это иконка ПЛЮС отступы рамки,
+            // а не заданная btnH. Считаем её честно и по ней центрируем и
+            // кнопки, и подпись: иначе они стоят на разных уровнях.
+            const float rowH = iconSz + ImGui::GetStyle().FramePadding.y * 2.0f;
+            const float btnY = (barH - rowH) * 0.5f;
 
             ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.f);
             ImGui::PushStyleColor(ImGuiCol_Button,        IM_COL32(55, 55, 60, 220));
@@ -2936,7 +2941,7 @@ void UI::RenderTopMenu()
                 ImGui::SetCursorPos(ImVec2(x, btnY));
                 if (icon != nullptr)
                     return ImGui::ImageButton(id, (ImTextureID)icon, ImVec2(iconSz, iconSz));
-                return ImGui::Button(fallback, ImVec2(btnW, btnH));
+                return ImGui::Button(fallback, ImVec2(btnW, rowH));
             };
 
             if (transportButton("##replayBack", m_iconStepBack, "<|", startX))
@@ -2960,7 +2965,7 @@ void UI::RenderTopMenu()
             const float position_s = status.position_ms / 1000.0f;
             const float duration_s = status.duration_ms / 1000.0f;
             ImGui::SetCursorPos(ImVec2(startX + (btnW + gap) * 3.0f,
-                                       btnY + (btnH - ImGui::GetTextLineHeight()) * 0.5f));
+                                       btnY + (rowH - ImGui::GetTextLineHeight()) * 0.5f));
             ImGui::TextColored(ImVec4(0.72f, 0.72f, 0.78f, 1.0f), "%.1f / %.1f s",
                                position_s, duration_s);
         }

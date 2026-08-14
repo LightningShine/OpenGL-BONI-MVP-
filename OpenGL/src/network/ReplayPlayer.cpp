@@ -71,19 +71,26 @@ namespace
     // длины записи. Поэтому стоимость перемотки не зависит от длины файла:
     // всегда не больше одного интервала, а память ограничена сверху.
     // ------------------------------------------------------------------------
-    // Чем чаще снимки, тем короче прогон при откате — и тем меньше замирает
-    // картинка. Верхняя граница по количеству держит память под контролем
-    // независимо от длины записи.
-    constexpr size_t KEYFRAME_COUNT = 48;
+    // Снимок берётся каждые полсекунды ЗАПИСИ. Столь частым он может быть
+    // потому, что не тащит историю телеметрических сэмплов — она тяжёлая, а
+    // для восстановления позиций и кругов не нужна. Чем чаще снимки, тем
+    // короче прогон при откате: полсекунды записи это десятки пакетов, доли
+    // миллисекунды работы — окно, в котором вообще может мелькнуть
+    // промежуточное состояние, схлопывается.
+    constexpr uint32_t KEYFRAME_INTERVAL_MS = 500;
+
+    // Потолок на случай очень длинных записей: 4000 снимков это больше получаса
+    // при полусекундном шаге.
+    constexpr size_t MAX_KEYFRAMES = 4000;
 
     struct Keyframe
     {
         size_t index = 0;                        // позиция в записи
-        std::map<int32_t, Vehicle> vehicles;     // машины целиком: круги, сэмплы, метки
+        std::map<int32_t, Vehicle> vehicles;     // без истории сэмплов, см. capture
     };
 
     std::vector<Keyframe> g_keyframes;   // по возрастанию index, доступ под g_mutex
-    size_t g_keyframe_stride = 0;        // через сколько записей снимать очередной
+    uint32_t g_next_keyframe_ms = 0;     // когда снимать следующий
 
     /// Сбрасывает всё, что накопил пайплайн, чтобы прогнать запись заново.
     /// Сессию перезапускаем, если она шла: иначе после перемотки назад круги
@@ -94,7 +101,7 @@ namespace
                                  g_race_manager->GetSessionState() != SessionState::Idle;
 
         {
-            std::lock_guard<std::mutex> lock(g_vehicles_mutex);
+            VehiclesLock lock;
             g_vehicles.clear();
         }
         // Снимаем ВСЁ состояние по машинам, а не только машины: тайм-синк
@@ -126,21 +133,32 @@ namespace
     /// состояние заведомо полное.
     void capture_keyframe_if_due(size_t index)
     {
-        if (g_keyframe_stride == 0)
+        std::lock_guard<std::mutex> lock(g_mutex);
+        if (!g_reader || g_keyframes.size() >= MAX_KEYFRAMES)
             return;
 
-        std::lock_guard<std::mutex> lock(g_mutex);
-        const size_t next_slot = g_keyframes.size();
-        if (next_slot >= KEYFRAME_COUNT || index < next_slot * g_keyframe_stride)
+        const uint32_t elapsed = g_reader->record_elapsed_ms(index);
+        if (!g_keyframes.empty() && elapsed < g_next_keyframe_ms)
             return;
 
         Keyframe frame;
         frame.index = index;
         {
-            std::lock_guard<std::mutex> vlock(g_vehicles_mutex);
+            VehiclesLock vlock;
             frame.vehicles = g_vehicles;
         }
+
+        // Историю сэмплов из снимка выбрасываем: это самая тяжёлая часть машины
+        // (десять замеров в секунду на круг), а восстанавливать её не нужно —
+        // при откате она остаётся у живых машин нетронутой.
+        for (auto& [id, vehicle] : frame.vehicles)
+        {
+            vehicle.laps.clear();
+            vehicle.m_pending_crossings.clear();
+        }
+
         g_keyframes.push_back(std::move(frame));
+        g_next_keyframe_ms = elapsed + KEYFRAME_INTERVAL_MS;
     }
 
     /// Ближайший снимок НЕ ПОЗЖЕ target. nullptr, если такого ещё нет.
@@ -163,8 +181,27 @@ namespace
     void restore_keyframe(const Keyframe& frame)
     {
         {
-            std::lock_guard<std::mutex> lock(g_vehicles_mutex);
-            g_vehicles = frame.vehicles;
+            VehiclesLock lock;
+
+            // Машин, которых в снимке не было, на тот момент ещё не существовало.
+            for (auto it = g_vehicles.begin(); it != g_vehicles.end();)
+                it = (frame.vehicles.count(it->first) == 0) ? g_vehicles.erase(it) : std::next(it);
+
+            for (const auto& [id, snapshot] : frame.vehicles)
+            {
+                auto it = g_vehicles.find(id);
+                if (it == g_vehicles.end())
+                {
+                    g_vehicles.emplace(id, snapshot);
+                    continue;
+                }
+
+                // История сэмплов в снимке не хранится — переносим её с живой
+                // машины, иначе графики и дельты обнулялись бы при каждом откате.
+                auto samples = std::move(it->second.laps);
+                it->second = snapshot;
+                it->second.laps = std::move(samples);
+            }
         }
         telemetryResetInterpolationState();
     }
@@ -191,7 +228,14 @@ namespace
             // На время отката поднимаем флаг: пока он поднят, гоночная логика
             // не трогается и не считает результат по половине записи.
             g_rebuilding.store(true);
-            g_pipeline_rebuilding.store(true);   // рендер и таблица держат последний целый кадр
+            g_pipeline_rebuilding.store(true);
+
+            // Держим мьютекс машин на ВЕСЬ откат. Любой читатель — карта PRO,
+            // таймер круга, панели — обязан взять этот же мьютекс, поэтому
+            // подождёт и увидит только «до» и «после». Точечная заморозка
+            // отдельных потребителей эту задачу не решала: их больше десятка,
+            // и незакрытые как раз и давали прыжки на карте.
+            enter_vehicles_bulk_section();
 
             size_t from = 0;
             {
@@ -207,6 +251,29 @@ namespace
                 reset_pipeline_state();
 
             feed_range(from, target);
+
+            // Диагностика: если окно пересчёта вдруг стало длинным, это будет
+            // видно в журнале, а не только глазами по прыжкам на карте.
+            const size_t replayed = target - from;
+            if (replayed > 2000)
+            {
+                std::cout << "[REPLAY] Long rebuild: " << replayed
+                          << " packets (no nearby keyframe)" << std::endl;
+            }
+
+            // Досчитываем гоночную логику ДО того, как отпустим мьютекс.
+            // Пересечения, найденные при доигрывании от снимка к цели, лежат в
+            // очереди неразобранными: без этого интерфейс получал бы новые
+            // позиции и старые круги с таймером, а через кадр цифры прыгали бы.
+            // deltaTime = 0: время записи задают метки пакетов, а не кадр.
+            if (g_race_manager)
+            {
+                g_race_manager->Update(0.0f);
+                g_race_manager->InvalidateStandingsCache();
+            }
+
+            leave_vehicles_bulk_section();
+
             g_rebuilding.store(false);
             g_pipeline_rebuilding.store(false);
         }
@@ -348,12 +415,7 @@ bool replay_open(const std::filesystem::path& path)
         g_reader = std::move(reader);
         g_file_name = path.filename().string();
         g_keyframes.clear();
-        g_keyframes.reserve(KEYFRAME_COUNT);
-        // Интервал считаем от длины записи, а не фиксируем в секундах: так
-        // стоимость перемотки одинакова и для минутной записи, и для часовой.
-        g_keyframe_stride = g_reader->record_count() / KEYFRAME_COUNT;
-        if (g_keyframe_stride == 0)
-            g_keyframe_stride = 1;
+        g_next_keyframe_ms = 0;
     }
 
     // Повтор НЕ открывает журнал: иначе получилась бы запись записи.
@@ -394,7 +456,7 @@ void replay_close()
         g_reader.reset();
         g_file_name.clear();
         g_keyframes.clear();
-        g_keyframe_stride = 0;
+        g_next_keyframe_ms = 0;
     }
     std::cout << "[REPLAY] Closed" << std::endl;
 }

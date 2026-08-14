@@ -127,7 +127,7 @@ void RaceManager::Update(float deltaTime)
         }
     }
 
-    std::lock_guard<std::mutex> lock(g_vehicles_mutex);
+    VehiclesLock lock;
 
     for (auto& [vehicleID, vehicle] : g_vehicles)
     {
@@ -717,13 +717,12 @@ std::vector<VehicleStanding> RaceManager::GetStandings() const
     {
         std::lock_guard<std::mutex> cache_lock(m_standings_cache_mutex);
 
-        // Во время отката повтора состояние машин перестраивается прогоном
-        // записи. Считать по нему таблицу нельзя — она мелькала бы промежуточными
-        // порядками. Держим последний целый результат до конца отката.
-        const bool rebuilding = g_pipeline_rebuilding.load(std::memory_order_relaxed);
+        // Отдельной «заморозки» на время отката повтора здесь нет: откат
+        // удерживает мьютекс машин целиком, поэтому пересчёт либо подождёт,
+        // либо возьмёт готовое состояние. Удержание старого результата, наоборот,
+        // отдавало бы таблицу, отставшую на шаг перемотки.
         if (!m_standings_cache.empty() &&
-            (rebuilding ||
-             (std::chrono::steady_clock::now() - m_standings_cache_time) < STANDINGS_CACHE_TTL))
+            (std::chrono::steady_clock::now() - m_standings_cache_time) < STANDINGS_CACHE_TTL)
         {
             return m_standings_cache;
         }
@@ -731,7 +730,7 @@ std::vector<VehicleStanding> RaceManager::GetStandings() const
 
     std::vector<VehicleStanding> standings;
     {
-        std::lock_guard<std::mutex> lock(g_vehicles_mutex);
+        VehiclesLock lock;
         standings = GetStandingsInternal();
     }
 
@@ -782,7 +781,7 @@ int RaceManager::GetLeaderLapCount() const
 // ============================================================================
 const std::map<int, LapData>* RaceManager::GetVehicleLaps(int32_t vehicleID) const
 {
-    std::lock_guard<std::mutex> lock(g_vehicles_mutex);
+    VehiclesLock lock;
     auto it = g_vehicles.find(vehicleID);
     if (it != g_vehicles.end())
         return &(it->second.m_laps);
@@ -792,7 +791,7 @@ const std::map<int, LapData>* RaceManager::GetVehicleLaps(int32_t vehicleID) con
 
 std::map<int, LapData> RaceManager::GetVehicleLapsCopy(int32_t vehicleID) const
 {
-    std::lock_guard<std::mutex> lock(g_vehicles_mutex);
+    VehiclesLock lock;
     auto it = g_vehicles.find(vehicleID);
     if (it != g_vehicles.end())
         return it->second.m_laps;   // copy under lock
@@ -802,7 +801,7 @@ std::map<int, LapData> RaceManager::GetVehicleLapsCopy(int32_t vehicleID) const
 
 float RaceManager::GetVehicleCurrentLapTime(int32_t vehicleID) const
 {
-    std::lock_guard<std::mutex> lock(g_vehicles_mutex);
+    VehiclesLock lock;
     auto it = g_vehicles.find(vehicleID);
     if (it != g_vehicles.end())
         return it->second.m_is_finished ? 0.0f : it->second.m_current_lap_timer;
@@ -812,7 +811,7 @@ float RaceManager::GetVehicleCurrentLapTime(int32_t vehicleID) const
 
 int RaceManager::GetVehicleCompletedLaps(int32_t vehicleID) const
 {
-    std::lock_guard<std::mutex> lock(g_vehicles_mutex);
+    VehiclesLock lock;
     auto it = g_vehicles.find(vehicleID);
     if (it != g_vehicles.end())
         return it->second.m_completed_laps;
@@ -822,7 +821,7 @@ int RaceManager::GetVehicleCompletedLaps(int32_t vehicleID) const
 
 float RaceManager::GetVehicleBestLapTime(int32_t vehicleID) const
 {
-    std::lock_guard<std::mutex> lock(g_vehicles_mutex);
+    VehiclesLock lock;
     auto it = g_vehicles.find(vehicleID);
     if (it != g_vehicles.end())
     {
@@ -837,7 +836,7 @@ float RaceManager::GetVehicleBestLapTime(int32_t vehicleID) const
 
 float RaceManager::GetVehiclePreviousLapTime(int32_t vehicleID) const
 {
-    std::lock_guard<std::mutex> lock(g_vehicles_mutex);
+    VehiclesLock lock;
     auto it = g_vehicles.find(vehicleID);
     if (it != g_vehicles.end())
     {
@@ -864,7 +863,7 @@ float RaceManager::GetVehicleLapDelta(int32_t vehicleID) const
         return 0.0f;
 
     {
-        std::lock_guard<std::mutex> lock(g_vehicles_mutex);
+        VehiclesLock lock;
         auto it = g_vehicles.find(vehicleID);
         if (it != g_vehicles.end() && it->second.m_is_finished)
             return 0.0f;
@@ -879,7 +878,7 @@ float RaceManager::GetVehicleLeaderDelta(int32_t vehicleID) const
         return 0.0f;
 
     {
-        std::lock_guard<std::mutex> lock(g_vehicles_mutex);
+        VehiclesLock lock;
         auto it = g_vehicles.find(vehicleID);
         if (it != g_vehicles.end() && it->second.m_is_finished)
             return 0.0f;
@@ -890,7 +889,7 @@ float RaceManager::GetVehicleLeaderDelta(int32_t vehicleID) const
 
 int RaceManager::GetVehicleCurrentLapNumber(int32_t vehicleID) const
 {
-    std::lock_guard<std::mutex> lock(g_vehicles_mutex);
+    VehiclesLock lock;
     auto it = g_vehicles.find(vehicleID);
     if (it != g_vehicles.end())
         return it->second.m_current_lap_number;
@@ -903,7 +902,7 @@ int RaceManager::GetVehicleCurrentLapNumber(int32_t vehicleID) const
 // ============================================================================
 void RaceManager::PrintSessionSummary() const
 {
-    std::lock_guard<std::mutex> lock(g_vehicles_mutex);
+    VehiclesLock lock;
     
     std::cout << "\n========================================" << std::endl;
     std::cout << "       RACE SESSION SUMMARY" << std::endl;
@@ -1008,7 +1007,7 @@ std::string RaceManager::BuildResultsText() const
             }
             
             // Get vehicle data for detailed lap info
-            std::lock_guard<std::mutex> lock(g_vehicles_mutex);
+            VehiclesLock lock;
             auto veh_it = g_vehicles.find(standing.vehicleID);
             if (veh_it != g_vehicles.end())
             {

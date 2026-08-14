@@ -510,7 +510,7 @@ void processIncomingTelemetry(const TelemetryPacket& packet, bool count_pps)
         {
             // Allocate a free race ID (1..99) that is not currently in use.
             // Must coordinate with g_vehicles to avoid collisions with simulated racers.
-            std::lock_guard<std::mutex> vlock(g_vehicles_mutex);
+            VehiclesLock vlock;
             raceID = allocateRaceIdLocked();
             if (raceID != -1)
             {
@@ -590,7 +590,7 @@ void processIncomingTelemetry(const TelemetryPacket& packet, bool count_pps)
             {
                 bool erased = false;
                 {
-                    std::lock_guard<std::mutex> lock(g_vehicles_mutex);
+                    VehiclesLock lock;
                     auto it = g_vehicles.find(raceID);
                     if (it != g_vehicles.end())
                     {
@@ -636,7 +636,7 @@ void processIncomingTelemetry(const TelemetryPacket& packet, bool count_pps)
     // ? CRITICAL DEBUG: Check vehicle existence BEFORE lock
     bool vehicle_exists = false;
     {
-        std::lock_guard<std::mutex> check_lock(g_vehicles_mutex);
+        VehiclesLock check_lock;
         vehicle_exists = (g_vehicles.find(raceID) != g_vehicles.end());
 
         // Print map contents on creation
@@ -656,7 +656,7 @@ void processIncomingTelemetry(const TelemetryPacket& packet, bool count_pps)
     const uint32_t now_ms = getMonotonicTimeMs();
     constexpr uint32_t kMinSendIntervalMs = 16; // ~60 Hz
     {
-        std::lock_guard<std::mutex> lock(g_vehicles_mutex);
+        VehiclesLock lock;
 
         auto it = g_vehicles.find(raceID);
 

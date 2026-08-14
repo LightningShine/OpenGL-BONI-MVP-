@@ -1,4 +1,4 @@
-﻿#include "StartStop.h"
+#include "StartStop.h"
 #include "../RaceManager.h"
 #include "../../rendering/Render.h"
 #include "../../Config.h"
@@ -26,7 +26,7 @@ void RaceManager::StopSession() {
         // 1) The stored leader must be the first to cross the finish line.
         // 2) Lapped cars may only finish after all lead-lap cars have finished.
         {
-            std::lock_guard<std::mutex> lock(g_vehicles_mutex);
+            VehiclesLock lock;
 
             int maxLaps = 0;
             for (const auto& [id, veh] : g_vehicles)
@@ -72,7 +72,7 @@ void RaceManager::ResetSession() {
     // Сессии нет — машины снова живут по таймауту и уходят с карты сами.
     g_race_session_active.store(false, std::memory_order_relaxed);
 
-    std::lock_guard<std::mutex> lock(g_vehicles_mutex);
+    VehiclesLock lock;
     for (auto& [id, vehicle] : g_vehicles) {
         vehicle.m_laps.clear();
         vehicle.laps.clear(); // Clear telemetry samples
