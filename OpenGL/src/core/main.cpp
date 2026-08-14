@@ -153,7 +153,14 @@ const std::vector<glm::vec2>* track_points = nullptr, std::mutex* points_mutex =
 	// задержки включает НЕПРЕРЫВНУЮ перемотку: повторять одиночные шаги с
 	// частотой кадров бессмысленно — скорость зависела бы от частоты кадров,
 	// а не от намерения оператора.
-	if (telemetry::replay_is_active())
+	// Модификаторы решают, кому достанутся стрелки. Раньше повтор забирал их
+	// безусловно, поэтому R + стрелка одновременно крутила камеру и мотала
+	// запись. Теперь у каждой роли свой модификатор и они не пересекаются.
+	const bool rotationHeld = glfwGetKey(window, GLFW_KEY_R) == GLFW_PRESS;
+	const bool shiftHeld = glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS ||
+	                       glfwGetKey(window, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS;
+
+	if (telemetry::replay_is_active() && !rotationHeld && !shiftHeld)
 	{
 		constexpr double SCRUB_HOLD_DELAY = 0.35;   // с какой задержки начинается перемотка
 		constexpr double SCRUB_SPEED      = 10.0;   // во сколько раз быстрее реального времени
@@ -302,9 +309,11 @@ const std::vector<glm::vec2>* track_points = nullptr, std::mutex* points_mutex =
 
 
 	// Camera movement (W/A/S/D or Arrows)
-	// Note: Arrow keys are used for rotation when R is pressed
-	bool isRotationMode = glfwGetKey(window, GLFW_KEY_R) == GLFW_PRESS;
-	
+	// Стрелки распределены так: R + влево/вправо — поворот вида,
+	// Shift + влево/вправо — сдвиг камеры, голые влево/вправо — перемотка
+	// повтора. Вверх/вниз остаются за камерой.
+	const bool isRotationMode = rotationHeld;
+
 	if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
 		camera_pos.y += speed / zoom;  // Up
 
@@ -326,10 +335,12 @@ const std::vector<glm::vec2>* track_points = nullptr, std::mutex* points_mutex =
 		if (glfwGetKey(window, GLFW_KEY_DOWN) == GLFW_PRESS)
 			camera_pos.y -= speed / zoom;
 		
-		if (glfwGetKey(window, GLFW_KEY_LEFT) == GLFW_PRESS)
+		// Горизонтальный сдвиг — только с Shift: голые стрелки влево/вправо
+		// отданы перемотке повтора.
+		if (shiftHeld && glfwGetKey(window, GLFW_KEY_LEFT) == GLFW_PRESS)
 			camera_pos.x -= speed / zoom;
-		
-		if (glfwGetKey(window, GLFW_KEY_RIGHT) == GLFW_PRESS)
+
+		if (shiftHeld && glfwGetKey(window, GLFW_KEY_RIGHT) == GLFW_PRESS)
 			camera_pos.x += speed / zoom;
 	}
 	
@@ -1128,8 +1139,19 @@ int main()
 		float deltaTime = std::chrono::duration<float>(currentFrameTime - lastFrameTime).count();
 		lastFrameTime = currentFrameTime;
 
-		// Update Race Manager (lap timing logic)
-		if (g_race_manager)
+		// На паузе повтора время записи стоит, поэтому и хронометраж стоит:
+		// иначе таймер текущего круга продолжал бы идти по кадрам, хотя данных
+		// не поступает. Записанные времена кругов это не затрагивает — они
+		// считаются по меткам пакетов.
+		if (telemetry::replay_is_paused())
+			deltaTime = 0.0f;
+
+		// Update Race Manager (lap timing logic).
+		// Во время пересчёта после перемотки назад состояние гонки неполное —
+		// скормлена лишь часть записи. Считать по нему лидера и круги нельзя:
+		// в таблице мелькали чужие лидеры. Пересчёт короткий, пропуск кадра-двух
+		// незаметен, а результат остаётся ровно таким, каким был в заезде.
+		if (g_race_manager && !telemetry::replay_is_rebuilding())
 		{
 			g_race_manager->Update(deltaTime);
 		}

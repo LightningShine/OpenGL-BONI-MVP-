@@ -1,5 +1,7 @@
 #include "SyntheticTelemetry.h"
 
+#include "ESP32_Code.h"
+#include "ReplayPlayer.h"
 #include "TelemetryIngest.h"
 #include "../Config.h"
 #include "../input/Input.h"
@@ -346,6 +348,20 @@ bool synthetic_start(const SyntheticScenario& scenario)
     if (!g_is_map_loaded)
     {
         std::cerr << "[SYNTH] Cannot start: no track loaded" << std::endl;
+        return false;
+    }
+
+    // Источник данных в приложении один: два потока пакетов в одном пайплайне
+    // смешались бы в одних и тех же машинах.
+    if (replay_is_active())
+    {
+        std::cerr << "[SYNTH] Cannot start: a replay is open, close it first" << std::endl;
+        return false;
+    }
+
+    if (isRealDataCaptureRunning())
+    {
+        std::cerr << "[SYNTH] Cannot start: COM capture is running" << std::endl;
         return false;
     }
 

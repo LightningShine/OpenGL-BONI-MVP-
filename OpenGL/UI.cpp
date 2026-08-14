@@ -538,7 +538,11 @@ void UI::RenderPrototypeToast()
 
     ImGui::Begin("##PrototypeToast", nullptr, flags);
 
-    ImDrawList* draw = ImGui::GetWindowDrawList();
+    // Рисуем в ПЕРЕДНИЙ список отображения, а не в список окна. Окно тоста
+    // помечено NoBringToFrontOnFocus, поэтому любая панель PRO, по которой
+    // кликнули, поднималась выше и закрывала уведомление. Передний слой
+    // отрисовывается после всех окон, так что тост всегда сверху.
+    ImDrawList* draw = ImGui::GetForegroundDrawList();
     const ImVec2 p0 = win_pos;
     const ImVec2 p1(win_pos.x + win_size.x, win_pos.y + win_size.y);
 
@@ -565,13 +569,10 @@ void UI::RenderPrototypeToast()
         char header[64];
         snprintf(header, sizeof(header), "Prototype %d", m_lastPrototypeRaceId);
 
-        ImGui::PushFont(titleFont);
-        ImGui::SetWindowFontScale(headerPx / ImGui::GetFontSize());
-        ImVec2 tsize = ImGui::CalcTextSize(header);
-        ImGui::SetCursorScreenPos(ImVec2(p0.x + (win_size.x - tsize.x) * 0.5f, p0.y + 10.0f * s));
-        ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(colHeader), "%s", header);
-        ImGui::SetWindowFontScale(1.0f);
-        ImGui::PopFont();
+        const ImVec2 tsize = titleFont->CalcTextSizeA(headerPx, FLT_MAX, 0.0f, header);
+        draw->AddText(titleFont, headerPx,
+                      ImVec2(p0.x + (win_size.x - tsize.x) * 0.5f, p0.y + 10.0f * s),
+                      colHeader, header);
     }
 
   // Prototype photo (104x73 in reference)
@@ -593,11 +594,7 @@ void UI::RenderPrototypeToast()
         const float iconH = 24.0f * s;
 
         const char* pct = "100%";
-        ImGui::PushFont(uiFont);
-        ImGui::SetWindowFontScale(batteryPx / ImGui::GetFontSize());
-        ImVec2 pctSize = ImGui::CalcTextSize(pct);
-        ImGui::SetWindowFontScale(1.0f);
-        ImGui::PopFont();
+        const ImVec2 pctSize = uiFont->CalcTextSizeA(batteryPx, FLT_MAX, 0.0f, pct);
 
         const float totalW = iconW + 8.0f * s + pctSize.x;
         ImVec2 iconMin(p0.x + (win_size.x - totalW) * 0.5f, rowY);
@@ -606,25 +603,19 @@ void UI::RenderPrototypeToast()
             draw->AddImage((ImTextureID)m_protoBatteryIconTexture, iconMin, iconMax, ImVec2(0, 0), ImVec2(1, 1), colMuted);
 
         // Battery percent uses Russo One @ 12px (reference)
-        ImGui::PushFont(titleFont);
-       ImGui::SetCursorScreenPos(ImVec2(iconMax.x + 8.0f * s, rowY + 4.0f * s));
-        ImGui::SetWindowFontScale(batteryPx / ImGui::GetFontSize());
-        ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(colMuted), "%s", pct);
-        ImGui::SetWindowFontScale(1.0f);
-        ImGui::PopFont();
+        draw->AddText(titleFont, batteryPx,
+                      ImVec2(iconMax.x + 8.0f * s, rowY + 4.0f * s), colMuted, pct);
     }
 
     // Connected
     {
         const char* status = "Connected";
-     const float gapPx = 1.5f * s;
-        ImGui::PushFont(titleFont);
-        ImGui::SetWindowFontScale(statusPx / ImGui::GetFontSize());
-        ImVec2 stSize = ImGui::CalcTextSize(status);
-        ImGui::SetCursorScreenPos(ImVec2(p0.x + (win_size.x - stSize.x) * 0.5f, batteryRowY + 24.0f * s + gapPx));
-        ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(colGreen), "%s", status);
-        ImGui::SetWindowFontScale(1.0f);
-        ImGui::PopFont();
+        const float gapPx = 1.5f * s;
+        const ImVec2 stSize = titleFont->CalcTextSizeA(statusPx, FLT_MAX, 0.0f, status);
+        draw->AddText(titleFont, statusPx,
+                      ImVec2(p0.x + (win_size.x - stSize.x) * 0.5f,
+                             batteryRowY + 24.0f * s + gapPx),
+                      colGreen, status);
     }
 
     // Pager dots
@@ -764,6 +755,12 @@ void UI::LoadResources()
     if (!LoadTextureFromFile("styles/icons/PNG/circle-x.png", &m_iconClose, nullptr, nullptr)) std::cerr << "Failed to load circle-x.png\n";
     if (!LoadTextureFromFile("styles/icons/PNG/DragAndDrop.png", &m_iconDragDrop, nullptr, nullptr)) std::cerr << "Failed to load DragAndDrop.png\n";
     if (!LoadTextureFromFile("styles/icons/PNG/Icon.png",       &m_logoTexture,   nullptr, nullptr)) std::cerr << "Failed to load Icon.png\n";
+
+    // Транспорт повтора. Имена файлов — как их положил автор иконок.
+    if (!LoadTextureFromFile("styles/icons/PNG/Play.png",       &m_iconPlay,        nullptr, nullptr)) std::cerr << "Failed to load Play.png\n";
+    if (!LoadTextureFromFile("styles/icons/PNG/Paise.png",      &m_iconPause,       nullptr, nullptr)) std::cerr << "Failed to load Paise.png\n";
+    if (!LoadTextureFromFile("styles/icons/PNG/LeftArrow.png",  &m_iconStepBack,    nullptr, nullptr)) std::cerr << "Failed to load LeftArrow.png\n";
+    if (!LoadTextureFromFile("styles/icons/PNG/RighArrow.png",  &m_iconStepForward, nullptr, nullptr)) std::cerr << "Failed to load RighArrow.png\n";
 
     // Иконки-цифры 1..9 для боковых групп PRO-вида (512×512 PNG).
     for (int i = 0; i < 9; ++i) {
@@ -1665,12 +1662,21 @@ void UI::RenderRaceStatusBar(ModeManager* modeManager)
 
     if (g_race_manager)
     {
-        float max_time = g_race_manager->GetAutoStopSeconds();
-        if (max_time > 0.0f) {
-            float elapsed = g_race_manager->GetRaceElapsedTime();
-            float remaining = std::max(0.0f, max_time - elapsed);
+        if (telemetry::replay_is_active())
+        {
+            // В повторе часы сессии показывают положение В ЗАПИСИ, а не время,
+            // прошедшее с открытия файла. Иначе после перемотки они врали бы:
+            // оператору нужно знать, на какой минуте заезда произошло событие.
+            m_sessionElapsedMs = telemetry::replay_status().position_ms;
+        }
+        else if (const float max_time = g_race_manager->GetAutoStopSeconds(); max_time > 0.0f)
+        {
+            const float elapsed = g_race_manager->GetRaceElapsedTime();
+            const float remaining = std::max(0.0f, max_time - elapsed);
             m_sessionElapsedMs = static_cast<uint32_t>(remaining * 1000.0f);
-        } else {
+        }
+        else
+        {
             const float elapsed_seconds = std::max(0.0f, g_race_manager->GetRaceElapsedTime());
             m_sessionElapsedMs = static_cast<uint32_t>(elapsed_seconds * 1000.0f);
         }
@@ -2909,8 +2915,12 @@ void UI::RenderTopMenu()
             const float labelW = ui_scale::points(96.f);
             const float groupW = btnW * 3.0f + gap * 3.0f + labelW;
 
-            ImGui::SetCursorPosX((ImGui::GetWindowWidth() - groupW) * 0.5f);
-            ImGui::SetCursorPosY((barH - btnH) * 0.5f);
+            // Позицию задаём каждому элементу явно. SameLine внутри меню-бара
+            // тянет свою вертикаль от предыдущего элемента, из-за чего кнопки
+            // и подпись расходились по высоте.
+            const float startX = (ImGui::GetWindowWidth() - groupW) * 0.5f;
+            const float btnY   = (barH - btnH) * 0.5f;
+            const float iconSz = btnH - ui_scale::points(10.f);
 
             ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.f);
             ImGui::PushStyleColor(ImGuiCol_Button,        IM_COL32(55, 55, 60, 220));
@@ -2918,24 +2928,39 @@ void UI::RenderTopMenu()
             ImGui::PushStyleColor(ImGuiCol_ButtonActive,  IM_COL32(40, 40, 45, 255));
             ImGui::PushStyleColor(ImGuiCol_Text,          IM_COL32(210, 210, 220, 255));
 
-            if (ImGui::Button("<|", ImVec2(btnW, btnH)))
+            // Кнопка транспорта: иконка, если она загрузилась, иначе текстовая
+            // подпись — интерфейс не должен исчезать из-за отсутствующего файла.
+            auto transportButton = [&](const char* id, void* icon, const char* fallback,
+                                       float x) -> bool
+            {
+                ImGui::SetCursorPos(ImVec2(x, btnY));
+                if (icon != nullptr)
+                    return ImGui::ImageButton(id, (ImTextureID)icon, ImVec2(iconSz, iconSz));
+                return ImGui::Button(fallback, ImVec2(btnW, btnH));
+            };
+
+            if (transportButton("##replayBack", m_iconStepBack, "<|", startX))
                 telemetry::replay_step(-1);
-            ImGui::SameLine(0.f, gap);
 
-            if (ImGui::Button(status.paused ? ">" : "||", ImVec2(btnW, btnH)))
+            if (transportButton("##replayPlay",
+                                status.paused ? m_iconPlay : m_iconPause,
+                                status.paused ? ">" : "||",
+                                startX + btnW + gap))
                 telemetry::replay_toggle_pause();
-            ImGui::SameLine(0.f, gap);
 
-            if (ImGui::Button("|>", ImVec2(btnW, btnH)))
+            if (transportButton("##replayFwd", m_iconStepForward, "|>",
+                                startX + (btnW + gap) * 2.0f))
                 telemetry::replay_step(1);
-            ImGui::SameLine(0.f, gap);
 
             ImGui::PopStyleColor(4);
             ImGui::PopStyleVar();
 
+            // Подпись центрируем по ТОЙ ЖЕ вертикали, что и кнопки: берём
+            // середину кнопки и вычитаем половину высоты строки.
             const float position_s = status.position_ms / 1000.0f;
             const float duration_s = status.duration_ms / 1000.0f;
-            ImGui::SetCursorPosY((barH - ImGui::GetTextLineHeight()) * 0.5f);
+            ImGui::SetCursorPos(ImVec2(startX + (btnW + gap) * 3.0f,
+                                       btnY + (btnH - ImGui::GetTextLineHeight()) * 0.5f));
             ImGui::TextColored(ImVec4(0.72f, 0.72f, 0.78f, 1.0f), "%.1f / %.1f s",
                                position_s, duration_s);
         }
@@ -3230,8 +3255,10 @@ void UI::RenderHelpModal()
         sectionHeader("Camera");
         bindRow("W|Up",           "Move camera up");
         bindRow("S|Down",         "Move camera down");
-        bindRow("A|Left",         "Move camera left");
-        bindRow("D|Right",        "Move camera right");
+        bindRow("A",              "Move camera left");
+        bindRow("D",              "Move camera right");
+        bindRow("Shift|Left",     "Move camera left");
+        bindRow("Shift|Right",    "Move camera right");
         bindRow("Mouse Wheel",    "Zoom in / Zoom out");
         bindRow("+ (Plus)",       "Zoom in");
         bindRow("- (Minus)",      "Zoom out");
@@ -3246,6 +3273,13 @@ void UI::RenderHelpModal()
         bindRow("Ctrl+S",         "Save race results as .txt (dialog)");
         bindRow("Ctrl+P",         "Print race results");
         bindRow("Space",          "Finalize open track recording");
+
+        // ── REPLAY ────────────────────────────────────────────────────────
+        sectionHeader("Replay (PRO)");
+        bindRow("Space",          "Play / pause the recording");
+        bindRow("Left Arrow",     "Step one tick back (20 ms)");
+        bindRow("Right Arrow",    "Step one tick forward (20 ms)");
+        bindRow("Hold Left/Right","Scrub continuously at 10x");
 
         // ── NETWORK ───────────────────────────────────────────────────────
         sectionHeader("Network");

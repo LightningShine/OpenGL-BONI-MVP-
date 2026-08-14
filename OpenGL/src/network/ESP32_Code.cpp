@@ -1,5 +1,7 @@
 #include "../network/ESP32_Code.h"
 #include "SimulationServer.h"
+#include "ReplayPlayer.h"
+#include "SyntheticTelemetry.h"
 #include "TelemetryIngest.h"
 #include "../Config.h"
 #include <iostream>
@@ -279,6 +281,11 @@ std::string getSelectedComPort()
     return g_selected_port;
 }
 
+bool isRealDataCaptureRunning()
+{
+    return g_capture_running.load();
+}
+
 void stopRealDataCapture()
 {
     g_capture_stop_requested.store(true);
@@ -489,6 +496,19 @@ bool selectAndOpenComPort(const std::string& port)
 {
     if (port.empty())
         return false;
+
+    // Живой приём вытесняет повтор и генератор: пайплайн один, и настоящая
+    // телеметрия в нём главнее. Закрываем их явно, а не молча мешаем потоки.
+    if (telemetry::replay_is_active())
+    {
+        std::cout << "[SERIAL] Closing replay: live capture takes over" << std::endl;
+        telemetry::replay_close();
+    }
+    if (telemetry::synthetic_is_running())
+    {
+        std::cout << "[SERIAL] Stopping synthetic generator: live capture takes over" << std::endl;
+        telemetry::synthetic_stop();
+    }
 
     {
         std::lock_guard<std::mutex> lock(g_selected_port_mutex);

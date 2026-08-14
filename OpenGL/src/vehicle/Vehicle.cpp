@@ -19,6 +19,7 @@ std::map<int32_t, Vehicle> g_vehicles;
 std::mutex g_vehicles_mutex;
 std::atomic<bool> g_is_vehicles_active = false;
 std::atomic<bool> g_race_session_active = false;
+std::atomic<bool> g_pipeline_rebuilding = false;
 
 // ✅ Система выбора машины для отслеживания
 int g_focused_vehicle_id = -1;  // -1 = лидер (дефолт)
@@ -517,10 +518,21 @@ void renderAllVehicles(GLuint shader_program, GLuint vao, GLuint vbo,
     float minY = camera_pos.y - visibleHeight;
     float maxY = camera_pos.y + visibleHeight;
 
+    // Во время отката повтора машины перестраиваются прогоном записи, и их
+    // промежуточные позиции показывать нельзя — глазом это видно как прыжок
+    // назад и возврат. Держим последний целый кадр: картинка замирает на доли
+    // секунды и обновляется сразу конечным состоянием.
+    static std::vector<VehicleRenderState> s_lastGoodFrame;
+
     // Под мьютексом копируем ТОЛЬКО скаляры: он же нужен сетевому потоку на
     // каждый принятый пакет, поэтому держать его на время интерполяции,
     // отсечения по видимости и тем более отрисовки нельзя.
     std::vector<VehicleRenderState> vehiclesToRender;
+    if (g_pipeline_rebuilding.load(std::memory_order_relaxed))
+    {
+        vehiclesToRender = s_lastGoodFrame;
+    }
+    else
     {
         std::lock_guard<std::mutex> lock(g_vehicles_mutex);
         vehiclesToRender.reserve(g_vehicles.size());
@@ -544,6 +556,8 @@ void renderAllVehicles(GLuint shader_program, GLuint vao, GLuint vbo,
             state.apply_track_render_offset = vehicle.m_apply_track_render_offset;
             vehiclesToRender.push_back(std::move(state));
         }
+        // Кадр целый — запоминаем его на случай ближайшего отката.
+        s_lastGoodFrame = vehiclesToRender;
     } // ✅ Мьютекс освобожден
 
     // Интерполяция и отсечение — уже без мьютекса машин.

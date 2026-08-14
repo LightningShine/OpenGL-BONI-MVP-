@@ -357,10 +357,21 @@ void RaceManager::Update(float deltaTime)
         // ====================================================================
         else if (!vehicle.m_has_started_first_lap)
         {
-            // Prevent false start on vehicle creation
-            float timeSinceCreation = vehicle.m_current_lap_timer;
-            
-            if (timeSinceCreation > 0.5f)
+            // Защита от ложного старта в момент создания машины: пересечение
+            // засчитываем, только если машина едет уже заметное время.
+            //
+            // Меряем это ВРЕМЕНЕМ ИСТОЧНИКА, а не кадрами. При пересчёте после
+            // перемотки назад кадров не происходит вовсе, кадровый таймер
+            // оставался нулём — и первое пересечение каждой машины молча
+            // выбрасывалось вместе со всеми её кругами.
+            constexpr uint32_t MIN_TIME_BEFORE_FIRST_LAP_MS = 500;
+            const bool driving_long_enough =
+                vehicle.m_has_source_time
+                    ? utc_elapsed_ms(vehicle.m_first_packet_utc_ms, vehicle.m_packet_utc_ms) >
+                          MIN_TIME_BEFORE_FIRST_LAP_MS
+                    : vehicle.m_current_lap_timer > 0.5f;
+
+            if (driving_long_enough)
             {
                 if (kDebugFinishCrossing)
                 {
@@ -396,6 +407,20 @@ void RaceManager::Update(float deltaTime)
         // Пересечение без взвода у уже стартовавшей машины — дребезг у самой
         // линии, а не круг. Пропускаем.
         }  // for (crossings)
+
+        // ====================================================================
+        // ТАЙМЕР ТЕКУЩЕГО КРУГА НА ЭКРАНЕ
+        // Привязан к часам источника, а не к кадрам: иначе после перемотки он
+        // начинал бы отсчёт заново от нуля и показывал не то время, которое
+        // машина реально имела в этой точке заезда. Метки пакетов идут 50 раз
+        // в секунду, так что для глаза это по-прежнему плавно.
+        // ====================================================================
+        if (vehicle.m_has_source_time && vehicle.m_lap_start_utc_ms != 0 &&
+            vehicle.m_has_started_first_lap && !vehicle.m_is_finished)
+        {
+            vehicle.m_current_lap_timer =
+                utc_elapsed_ms(vehicle.m_lap_start_utc_ms, vehicle.m_packet_utc_ms) / 1000.0f;
+        }
 
         // ====================================================================
         // UPDATE TOTAL PROGRESS (lap number + current lap progress)
@@ -518,7 +543,10 @@ void RaceManager::Update(float deltaTime)
     
     if (!standings.empty())
     {
-        constexpr bool kLogLeaderChanges = false;
+        // Включено намеренно: смена лидера — редкое событие, а без записи в
+        // журнал расхождение между живым заездом и повтором приходится
+        // угадывать. Строка печатается раз на смену, не в горячем пути.
+        constexpr bool kLogLeaderChanges = true;
         static int32_t previousLeader = -1;
         int32_t currentLeader = standings[0].vehicleID;
         
@@ -688,8 +716,14 @@ std::vector<VehicleStanding> RaceManager::GetStandings() const
     // кадр; данные при этом свежее одного кадра быть всё равно не могут.
     {
         std::lock_guard<std::mutex> cache_lock(m_standings_cache_mutex);
+
+        // Во время отката повтора состояние машин перестраивается прогоном
+        // записи. Считать по нему таблицу нельзя — она мелькала бы промежуточными
+        // порядками. Держим последний целый результат до конца отката.
+        const bool rebuilding = g_pipeline_rebuilding.load(std::memory_order_relaxed);
         if (!m_standings_cache.empty() &&
-            (std::chrono::steady_clock::now() - m_standings_cache_time) < STANDINGS_CACHE_TTL)
+            (rebuilding ||
+             (std::chrono::steady_clock::now() - m_standings_cache_time) < STANDINGS_CACHE_TTL))
         {
             return m_standings_cache;
         }

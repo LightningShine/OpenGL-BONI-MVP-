@@ -55,7 +55,9 @@ namespace {
     // Потолок неразобранных пересечений на машину. Хронометраж вычерпывает их
     // каждый кадр, так что копиться им негде — кроме случая «окно свёрнуто на
     // час». Круг на пересечение, поэтому шестидесяти хватает с запасом.
-    constexpr size_t MAX_PENDING_CROSSINGS = 64;
+    // Пересчёт после перемотки скармливает всю запись разом, а хронометраж
+    // разбирает очередь уже потом — значит сюда ложатся все круги заезда.
+    constexpr size_t MAX_PENDING_CROSSINGS = 512;
 
     // Prototype (hardware) ID -> race vehicle ID mapping.
     // Race IDs are limited to 1..99.
@@ -191,6 +193,34 @@ namespace {
 
     std::mutex g_time_sync_mutex;
     std::unordered_map<int32_t, VehicleTimeSync> g_time_sync;
+}
+
+void telemetryResetAllVehicleState()
+{
+    telemetryResetPrototypeIdMapping();
+    telemetryResetInterpolationState();
+}
+
+void telemetryResetInterpolationState()
+{
+    VehicleInterpolator::Get().Clear();
+
+    {
+        std::lock_guard<std::mutex> lock(g_time_sync_mutex);
+        g_time_sync.clear();
+    }
+    {
+        std::lock_guard<std::mutex> lock(g_lap_smoother_mutex);
+        g_lap_smoother.clear();
+    }
+    {
+        std::lock_guard<std::mutex> lock(s_send_rate_mutex);
+        s_last_send_time_ms.clear();
+    }
+    {
+        std::lock_guard<std::mutex> lock(g_track_mismatch_mutex);
+        g_track_mismatch_start_ms.clear();
+    }
 }
 
 void telemetryForgetVehicle(int32_t race_id)
@@ -833,6 +863,7 @@ void processIncomingTelemetry(const TelemetryPacket& packet, bool count_pps)
             Vehicle new_vehicle(raceID, packet);
             new_vehicle.m_packet_utc_ms = packet.time;
             new_vehicle.m_prev_packet_utc_ms = packet.time;
+            new_vehicle.m_first_packet_utc_ms = packet.time;
             new_vehicle.m_has_source_time = (packet.time != 0);
 
             // [DEBUG_ALIGN_TMP] Raw vs render position on create

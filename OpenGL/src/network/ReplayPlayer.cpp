@@ -1,5 +1,6 @@
 #include "ReplayPlayer.h"
 
+#include "ESP32_Code.h"
 #include "SimulationServer.h"
 #include "SyntheticTelemetry.h"
 #include "TelemetryIngest.h"
@@ -41,9 +42,48 @@ namespace
     // проигрывателя: полный пересчёт занимает заметное время, и делать его в
     // кадре нельзя.
     std::atomic<size_t> g_position{ 0 };
-    std::atomic<bool> g_seek_pending{ false };
-    std::atomic<int64_t> g_seek_target_ms{ 0 };
+    std::atomic<bool> g_rebuilding{ false };
     std::string g_file_name;
+
+    // Запросы перемотки НАКАПЛИВАЮТСЯ, а не перезаписываются: при удержании
+    // стрелки их приходит по одному на кадр, и каждый несёт свой сдвиг. Копим
+    // сумму и применяем одним движением — иначе каждый кадр запускал бы
+    // отдельный полный пересчёт.
+    std::atomic<int64_t> g_seek_delta_ms{ 0 };
+
+    // Не чаще этого применяем накопленный сдвиг при удержании стрелки. С
+    // ключевыми кадрами перемотка стала дешёвой, поэтому шаг сделан мелким:
+    // чем он мельче, тем меньше заметен скачок позиции на каждом обновлении.
+    // Чем чаще применяем накопленный сдвиг, тем мельче шаг позиции и тем
+    // ровнее выглядит перемотка. Стоимость шага ограничена расстоянием до
+    // ближайшего снимка, поэтому частить здесь недорого.
+    constexpr std::chrono::milliseconds SEEK_MIN_INTERVAL{ 8 };
+
+    // ------------------------------------------------------------------------
+    // КЛЮЧЕВЫЕ КАДРЫ
+    //
+    // Без них перемотка назад стоит прогона записи С НАЧАЛА: на десятиминутной
+    // записи с полным полем машин это сотни тысяч пакетов на каждый прыжок.
+    // Снимок состояния снимается по ходу воспроизведения, и перемотка в любую
+    // точку доигрывает лишь остаток от ближайшего предыдущего снимка.
+    //
+    // Количество снимков фиксировано, а интервал между ними считается от
+    // длины записи. Поэтому стоимость перемотки не зависит от длины файла:
+    // всегда не больше одного интервала, а память ограничена сверху.
+    // ------------------------------------------------------------------------
+    // Чем чаще снимки, тем короче прогон при откате — и тем меньше замирает
+    // картинка. Верхняя граница по количеству держит память под контролем
+    // независимо от длины записи.
+    constexpr size_t KEYFRAME_COUNT = 48;
+
+    struct Keyframe
+    {
+        size_t index = 0;                        // позиция в записи
+        std::map<int32_t, Vehicle> vehicles;     // машины целиком: круги, сэмплы, метки
+    };
+
+    std::vector<Keyframe> g_keyframes;   // по возрастанию index, доступ под g_mutex
+    size_t g_keyframe_stride = 0;        // через сколько записей снимать очередной
 
     /// Сбрасывает всё, что накопил пайплайн, чтобы прогнать запись заново.
     /// Сессию перезапускаем, если она шла: иначе после перемотки назад круги
@@ -57,8 +97,10 @@ namespace
             std::lock_guard<std::mutex> lock(g_vehicles_mutex);
             g_vehicles.clear();
         }
-        VehicleInterpolator::Get().Clear();
-        telemetryResetPrototypeIdMapping();
+        // Снимаем ВСЁ состояние по машинам, а не только машины: тайм-синк
+        // интерполятора переживал сброс, и пересозданные машины наследовали
+        // временные поправки прошлого прогона.
+        telemetryResetAllVehicleState();
 
         if (g_race_manager)
         {
@@ -79,8 +121,56 @@ namespace
         }
     }
 
+    /// Снимает состояние машин, если позиция дошла до следующей отметки.
+    /// Снимок делается только по ходу нормального воспроизведения — там
+    /// состояние заведомо полное.
+    void capture_keyframe_if_due(size_t index)
+    {
+        if (g_keyframe_stride == 0)
+            return;
+
+        std::lock_guard<std::mutex> lock(g_mutex);
+        const size_t next_slot = g_keyframes.size();
+        if (next_slot >= KEYFRAME_COUNT || index < next_slot * g_keyframe_stride)
+            return;
+
+        Keyframe frame;
+        frame.index = index;
+        {
+            std::lock_guard<std::mutex> vlock(g_vehicles_mutex);
+            frame.vehicles = g_vehicles;
+        }
+        g_keyframes.push_back(std::move(frame));
+    }
+
+    /// Ближайший снимок НЕ ПОЗЖЕ target. nullptr, если такого ещё нет.
+    const Keyframe* find_keyframe_before(size_t target)
+    {
+        const Keyframe* best = nullptr;
+        for (const Keyframe& frame : g_keyframes)
+        {
+            if (frame.index <= target)
+                best = &frame;
+            else
+                break;
+        }
+        return best;
+    }
+
+    /// Восстанавливает машины из снимка. Привязки устройств не трогаем: они
+    /// действуют на всю запись, а сброс выдал бы устройству новый номер при
+    /// живой машине со старым.
+    void restore_keyframe(const Keyframe& frame)
+    {
+        {
+            std::lock_guard<std::mutex> lock(g_vehicles_mutex);
+            g_vehicles = frame.vehicles;
+        }
+        telemetryResetInterpolationState();
+    }
+
     /// Переставляет позицию. Вперёд — досылаем недостающие записи; назад —
-    /// пересчитываем с начала, потому что состояние гонки накопительное.
+    /// откатываемся на ближайший снимок и доигрываем остаток.
     void apply_seek(size_t target)
     {
         const size_t total = g_reader->record_count();
@@ -90,14 +180,44 @@ namespace
         const size_t current = g_position.load();
         if (target >= current)
         {
+            // Вперёд — просто досылаем недостающее: состояние накопительное,
+            // прогон этих же пакетов даёт ровно то же, что и обычная игра.
             feed_range(current, target);
         }
         else
         {
-            reset_pipeline_state();
-            feed_range(0, target);
+            // Назад — откат на ближайший снимок и доигрывание остатка. Полный
+            // пересчёт с нуля остаётся только если снимков ещё нет.
+            // На время отката поднимаем флаг: пока он поднят, гоночная логика
+            // не трогается и не считает результат по половине записи.
+            g_rebuilding.store(true);
+            g_pipeline_rebuilding.store(true);   // рендер и таблица держат последний целый кадр
+
+            size_t from = 0;
+            {
+                std::lock_guard<std::mutex> lock(g_mutex);
+                if (const Keyframe* frame = find_keyframe_before(target))
+                {
+                    restore_keyframe(*frame);
+                    from = frame->index;
+                }
+            }
+
+            if (from == 0)
+                reset_pipeline_state();
+
+            feed_range(from, target);
+            g_rebuilding.store(false);
+            g_pipeline_rebuilding.store(false);
         }
         g_position.store(target);
+
+        // Сбрасываем сглаживание ПОСЛЕ ЛЮБОЙ перемотки, в том числе вперёд.
+        // Интерполятор привязывает метки пакетов к локальным часам один раз, а
+        // перемотка эту привязку ломает: время записи прыгает, локальное — нет.
+        // Из-за этого машина после отпускания клавиши доезжала до места рывком.
+        // Сброс заставляет привязку установиться заново от текущей точки.
+        telemetryResetInterpolationState();
     }
 
     size_t index_for_offset_ms(int64_t offset_ms)
@@ -125,11 +245,19 @@ namespace
         uint32_t segment_start_ms = 0;
         bool timing_valid = false;
 
+        auto last_seek_at = std::chrono::steady_clock::time_point{};
+
         while (!g_stop_requested.load())
         {
-            if (g_seek_pending.exchange(false))
+            // Забираем накопленный сдвиг целиком и не чаще, чем раз в
+            // SEEK_MIN_INTERVAL: при удержании стрелки это превращает десятки
+            // пересчётов в секунду в несколько.
+            if (g_seek_delta_ms.load() != 0 &&
+                (std::chrono::steady_clock::now() - last_seek_at) >= SEEK_MIN_INTERVAL)
             {
-                apply_seek(index_for_offset_ms(g_seek_target_ms.load()));
+                const int64_t delta = g_seek_delta_ms.exchange(0);
+                apply_seek(index_for_offset_ms(delta));
+                last_seek_at = std::chrono::steady_clock::now();
                 timing_valid = false;
             }
 
@@ -151,6 +279,10 @@ namespace
             if (record != nullptr)
                 ingest_wire_packet(record + sizeof(uint32_t));
             g_position.store(index + 1);
+
+            // Снимок снимаем именно здесь — на нормальном воспроизведении,
+            // где состояние гарантированно полное.
+            capture_keyframe_if_due(index + 1);
 
             // Темп держим по абсолютным дедлайнам от начала отрезка
             // воспроизведения: sleep на фиксированную паузу копит отставание
@@ -191,9 +323,19 @@ bool replay_open(const std::filesystem::path& path)
         return false;
     }
 
+    // Живой приём, генератор и повтор кормят ОДИН пайплайн. Запустить два
+    // источника разом — значит смешать два потока пакетов в одних машинах:
+    // позиции начнут прыгать между заездами, а круги считаться по мешанине.
+    // Плюс повтор писался бы в открытый живой журнал — запись записи.
     if (synthetic_is_running())
     {
         std::cerr << "[REPLAY] Cannot start: synthetic generator is running" << std::endl;
+        return false;
+    }
+
+    if (isRealDataCaptureRunning())
+    {
+        std::cerr << "[REPLAY] Cannot start: COM capture is running, disconnect it first" << std::endl;
         return false;
     }
 
@@ -205,10 +347,24 @@ bool replay_open(const std::filesystem::path& path)
         std::lock_guard<std::mutex> lock(g_mutex);
         g_reader = std::move(reader);
         g_file_name = path.filename().string();
+        g_keyframes.clear();
+        g_keyframes.reserve(KEYFRAME_COUNT);
+        // Интервал считаем от длины записи, а не фиксируем в секундах: так
+        // стоимость перемотки одинакова и для минутной записи, и для часовой.
+        g_keyframe_stride = g_reader->record_count() / KEYFRAME_COUNT;
+        if (g_keyframe_stride == 0)
+            g_keyframe_stride = 1;
     }
 
     // Повтор НЕ открывает журнал: иначе получилась бы запись записи.
     reset_pipeline_state();
+
+    // Запись делалась во время заезда, значит и воспроизводить её надо в
+    // состоянии гонки — иначе круги не считались бы вовсе. Моменты старта и
+    // стопа в файле пока не хранятся (там только эфир), поэтому сессию
+    // запускаем сразу с начала записи.
+    if (g_race_manager)
+        g_race_manager->StartSession();
 
     g_position.store(0);
     g_paused.store(true);
@@ -237,6 +393,8 @@ void replay_close()
         std::lock_guard<std::mutex> lock(g_mutex);
         g_reader.reset();
         g_file_name.clear();
+        g_keyframes.clear();
+        g_keyframe_stride = 0;
     }
     std::cout << "[REPLAY] Closed" << std::endl;
 }
@@ -252,6 +410,11 @@ void replay_toggle_pause()
         g_paused.store(!g_paused.load());
 }
 
+bool replay_is_paused()
+{
+    return g_active.load() && g_paused.load();
+}
+
 void replay_set_speed(double speed)
 {
     if (speed > 0.0)
@@ -264,8 +427,7 @@ void replay_step(int ticks)
         return;
 
     g_paused.store(true);   // покадровый шаг подразумевает паузу
-    g_seek_target_ms.store(static_cast<int64_t>(ticks) * REPLAY_TICK_MS);
-    g_seek_pending.store(true);
+    g_seek_delta_ms.fetch_add(static_cast<int64_t>(ticks) * REPLAY_TICK_MS);
 }
 
 void replay_scrub(double seconds)
@@ -273,8 +435,16 @@ void replay_scrub(double seconds)
     if (!g_active.load() || seconds == 0.0)
         return;
 
-    g_seek_target_ms.store(static_cast<int64_t>(seconds * 1000.0));
-    g_seek_pending.store(true);
+    // Перемотка ставит на паузу. Без этого воспроизведение продолжало тянуть
+    // позицию вперёд, пока удержание клавиши тянуло назад: машина прыгала
+    // между двумя точками. Возобновление — пробелом, как в любом плеере.
+    g_paused.store(true);
+    g_seek_delta_ms.fetch_add(static_cast<int64_t>(seconds * 1000.0));
+}
+
+bool replay_is_rebuilding()
+{
+    return g_rebuilding.load();
 }
 
 ReplayStatus replay_status()
