@@ -1,5 +1,7 @@
 #include "RaceManager.h"
 #include "LapClock.h"
+#include "../core/AppPaths.h"
+#include "../core/WorldSnapshot.h"
 #include "../vehicle/Vehicle.h"
 #include "../rendering/Interpolation.h"
 #include "../Config.h"
@@ -584,6 +586,70 @@ void RaceManager::Update(float deltaTime)
         
         previousLeader = currentLeader;
     }
+
+    // ========================================================================
+    // ПУБЛИКАЦИЯ СНИМКА
+    // Состояние согласовано: пересечения разобраны, круги и таймеры пересчитаны,
+    // таблица построена и отсортирована. Только теперь отдаём его наружу.
+    // Интерфейс читает исключительно снимок и поэтому не может застать
+    // половину перестройки — см. world/WorldSnapshot.h.
+    // ========================================================================
+    PublishSnapshot(standings);
+}
+
+void RaceManager::PublishPositionsOnly() const
+{
+    // Таблицу берём из прошлого снимка как есть: при перемотке порядок за
+    // тридцать миллисекунд не меняется, а её пересчёт — самая дорогая часть.
+    PublishSnapshot(world::current()->standings);
+}
+
+void RaceManager::PublishSnapshot(const std::vector<VehicleStanding>& standings) const
+{
+    static uint64_t s_revision = 0;
+
+    auto snapshot = std::make_shared<world::Snapshot>();
+    snapshot->standings = standings;
+    snapshot->revision = ++s_revision;
+
+    for (const auto& [id, vehicle] : g_vehicles)
+    {
+        world::VehicleView view;
+        view.id = id;
+        view.device_id = vehicle.m_device_id;
+        view.name = vehicle.name;
+        view.color = vehicle.m_cached_color;
+
+        view.x = vehicle.m_normalized_x;
+        view.y = vehicle.m_normalized_y;
+        view.heading = vehicle.m_heading;
+        view.speed_kph = vehicle.m_speed_kph;
+        view.acceleration = vehicle.m_acceleration;
+        view.g_force_x = vehicle.m_g_force_x;
+        view.g_force_y = vehicle.m_g_force_y;
+        view.track_progress = vehicle.m_track_progress;
+        view.total_progress = vehicle.m_total_progress;
+        view.apply_track_render_offset = vehicle.m_apply_track_render_offset;
+
+        view.completed_laps = vehicle.m_completed_laps;
+        view.current_lap_number = vehicle.m_current_lap_number;
+        view.best_lap_id = vehicle.bestlapID;
+        view.current_lap_timer = vehicle.m_current_lap_timer;
+        view.best_lap_time = vehicle.m_best_lap_time;
+        view.has_started_first_lap = vehicle.m_has_started_first_lap;
+        view.is_leader = vehicle.m_is_leader;
+        view.is_finished = vehicle.m_is_finished;
+        view.is_lapped = vehicle.m_is_lapped;
+        view.signal_lost = vehicle.m_signal_lost;
+
+        view.fix_type = vehicle.m_fix_type;
+        view.packet_utc_ms = vehicle.m_packet_utc_ms;
+        view.laps = vehicle.m_laps;
+
+        snapshot->vehicles.emplace(id, std::move(view));
+    }
+
+    world::publish(std::move(snapshot));
 }
 
 // ============================================================================
@@ -709,6 +775,15 @@ std::vector<VehicleStanding> RaceManager::GetStandingsInternal() const
 // ============================================================================
 std::vector<VehicleStanding> RaceManager::GetStandings() const
 {
+    // Таблица берётся из опубликованного снимка: она посчитана там же, где и
+    // всё остальное состояние, и согласована с позициями машин. Пересчитывать
+    // её здесь заново означало бы снова читать рабочее состояние пайплайна.
+    const std::shared_ptr<const world::Snapshot> snapshot = world::current();
+    if (!snapshot->standings.empty())
+        return snapshot->standings;
+
+    // Снимка ещё нет (первые кадры до первого Update) — считаем напрямую.
+
     // Таблицу спрашивают 4-7 раз за кадр: главный экран, статус-бар и почти
     // каждая PRO-панель. Каждый пересчёт брал мьютекс машин, считал дельты по
     // всем участникам и сортировал — то есть одно и то же несколько раз подряд
@@ -791,66 +866,66 @@ const std::map<int, LapData>* RaceManager::GetVehicleLaps(int32_t vehicleID) con
 
 std::map<int, LapData> RaceManager::GetVehicleLapsCopy(int32_t vehicleID) const
 {
-    VehiclesLock lock;
-    auto it = g_vehicles.find(vehicleID);
-    if (it != g_vehicles.end())
-        return it->second.m_laps;   // copy under lock
+    // Из снимка, как и остальные геттеры для интерфейса: список кругов обязан
+    // совпадать с позицией машины и с таблицей. Пока он читался напрямую, при
+    // перемотке повтора панель кругов показывала круги другого момента заезда,
+    // а сам вызов вставал на мьютексе, который откат держит целиком.
+    const std::shared_ptr<const world::Snapshot> snapshot = world::current();
+    if (const world::VehicleView* view = world::find(*snapshot, vehicleID))
+        return view->laps;
 
     return {};
 }
 
 float RaceManager::GetVehicleCurrentLapTime(int32_t vehicleID) const
 {
-    VehiclesLock lock;
-    auto it = g_vehicles.find(vehicleID);
-    if (it != g_vehicles.end())
-        return it->second.m_is_finished ? 0.0f : it->second.m_current_lap_timer;
-    
+    // Из снимка: таймер обязан быть согласован с позицией машины и с таблицей.
+    // Когда он читался напрямую, после перемотки назад показывались новые
+    // позиции со старым временем, и цифры прыгали через кадр.
+    const std::shared_ptr<const world::Snapshot> snapshot = world::current();
+    if (const world::VehicleView* view = world::find(*snapshot, vehicleID))
+        return view->is_finished ? 0.0f : view->current_lap_timer;
+
     return 0.0f;
 }
 
 int RaceManager::GetVehicleCompletedLaps(int32_t vehicleID) const
 {
-    VehiclesLock lock;
-    auto it = g_vehicles.find(vehicleID);
-    if (it != g_vehicles.end())
-        return it->second.m_completed_laps;
-    
+    const std::shared_ptr<const world::Snapshot> snapshot = world::current();
+    if (const world::VehicleView* view = world::find(*snapshot, vehicleID))
+        return view->completed_laps;
+
     return 0;
 }
 
 float RaceManager::GetVehicleBestLapTime(int32_t vehicleID) const
 {
-    VehiclesLock lock;
-    auto it = g_vehicles.find(vehicleID);
-    if (it != g_vehicles.end())
+    const std::shared_ptr<const world::Snapshot> snapshot = world::current();
+    if (const world::VehicleView* view = world::find(*snapshot, vehicleID))
     {
-        if (it->second.m_completed_laps < RaceConstants::MIN_LAPS_FOR_BEST_LAP)
+        if (view->completed_laps < RaceConstants::MIN_LAPS_FOR_BEST_LAP)
             return -1.0f;
-        
-        return it->second.m_best_lap_time;
+
+        return view->best_lap_time;
     }
-    
+
     return -1.0f;
 }
 
 float RaceManager::GetVehiclePreviousLapTime(int32_t vehicleID) const
 {
-    VehiclesLock lock;
-    auto it = g_vehicles.find(vehicleID);
-    if (it != g_vehicles.end())
+    const std::shared_ptr<const world::Snapshot> snapshot = world::current();
+    if (const world::VehicleView* view = world::find(*snapshot, vehicleID))
     {
-        const auto& vehicle = it->second;
-        int previousLapNumber = vehicle.m_current_lap_number - 1;
-        
+        const int previousLapNumber = view->current_lap_number - 1;
         if (previousLapNumber < RaceConstants::LAP_START_NUMBER)
             return -1.0f;
-        
-        auto lapIt = vehicle.m_laps.find(previousLapNumber);
-        if (lapIt != vehicle.m_laps.end())
+
+        const auto lapIt = view->laps.find(previousLapNumber);
+        if (lapIt != view->laps.end())
             return lapIt->second.lapTime;
     }
-    
+
     return -1.0f;
 }
 
@@ -863,9 +938,9 @@ float RaceManager::GetVehicleLapDelta(int32_t vehicleID) const
         return 0.0f;
 
     {
-        VehiclesLock lock;
-        auto it = g_vehicles.find(vehicleID);
-        if (it != g_vehicles.end() && it->second.m_is_finished)
+        const std::shared_ptr<const world::Snapshot> snapshot = world::current();
+        const world::VehicleView* view = world::find(*snapshot, vehicleID);
+        if (view != nullptr && view->is_finished)
             return 0.0f;
     }
 
@@ -878,9 +953,9 @@ float RaceManager::GetVehicleLeaderDelta(int32_t vehicleID) const
         return 0.0f;
 
     {
-        VehiclesLock lock;
-        auto it = g_vehicles.find(vehicleID);
-        if (it != g_vehicles.end() && it->second.m_is_finished)
+        const std::shared_ptr<const world::Snapshot> snapshot = world::current();
+        const world::VehicleView* view = world::find(*snapshot, vehicleID);
+        if (view != nullptr && view->is_finished)
             return 0.0f;
     }
 
@@ -889,11 +964,10 @@ float RaceManager::GetVehicleLeaderDelta(int32_t vehicleID) const
 
 int RaceManager::GetVehicleCurrentLapNumber(int32_t vehicleID) const
 {
-    VehiclesLock lock;
-    auto it = g_vehicles.find(vehicleID);
-    if (it != g_vehicles.end())
-        return it->second.m_current_lap_number;
-    
+    const std::shared_ptr<const world::Snapshot> snapshot = world::current();
+    if (const world::VehicleView* view = world::find(*snapshot, vehicleID))
+        return view->current_lap_number;
+
     return 0;
 }
 
@@ -1045,32 +1119,34 @@ std::string RaceManager::BuildResultsText() const
 }
 
 // ============================================================================
-// SAVE RESULTS TO FILE (timestamped, saves/ directory)
+// SAVE RESULTS TO FILE (timestamped, saves/results)
 // ============================================================================
 bool RaceManager::SaveResultsToFile() const
 {
-    std::filesystem::create_directories("saves");
+    std::filesystem::create_directories(app_paths::results());
 
     auto now = std::chrono::system_clock::now();
     auto time_t_now = std::chrono::system_clock::to_time_t(now);
     std::tm tm_now;
     localtime_s(&tm_now, &time_t_now);
 
-    char filename[256];
+    char filename[128];
     std::snprintf(filename, sizeof(filename),
-                 "saves/VehicleResults_%04d-%02d-%02d_%02d-%02d-%02d.txt",
+                 "VehicleResults_%04d-%02d-%02d_%02d-%02d-%02d.txt",
                  tm_now.tm_year + 1900, tm_now.tm_mon + 1, tm_now.tm_mday,
                  tm_now.tm_hour, tm_now.tm_min, tm_now.tm_sec);
 
-    std::ofstream file(filename);
+    const std::filesystem::path path = app_paths::results() / filename;
+
+    std::ofstream file(path);
     if (!file.is_open())
     {
-        std::cerr << "[RACE MANAGER] Failed to create file: " << filename << std::endl;
+        std::cerr << "[RACE MANAGER] Failed to create file: " << path.string() << std::endl;
         return false;
     }
     file << BuildResultsText();
     file.close();
 
-    std::cout << "[RACE MANAGER] Results saved to: " << filename << std::endl;
+    std::cout << "[RACE MANAGER] Results saved to: " << path.string() << std::endl;
     return true;
 }

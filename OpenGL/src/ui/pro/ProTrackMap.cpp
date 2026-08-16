@@ -1,5 +1,6 @@
 #include "ProTrackMap.h"
 #include "../ui_scale.hpp"
+#include "../../core/WorldSnapshot.h"
 #include "../../racing/RaceManager.h"
 #include "../../rendering/Interpolation.h"
 #include "../../vehicle/Vehicle.h"
@@ -588,16 +589,17 @@ void RenderTrackMapWindow(const ProContext& ctx, int32_t vehicleId,
         // g_smooth_track_points already carry the centering offset baked in by
         // rebuildTrackCacheFromEdges, so the raw vehicle position must be
         // shifted by the same getTrackRenderOffset() to land on the track.
+        // Позиция — из снимка: точка на карте обязана стоять там же, где машина
+        // на главном экране, в том числе посреди перемотки повтора.
         double vx = 0, vy = 0; bool found = false;
         {
-            std::lock_guard<std::mutex> lk(g_vehicles_mutex);
-            auto vit = g_vehicles.find(vehicleId);
-            if (vit != g_vehicles.end()) {
-                const glm::vec2 rOff = vit->second.m_apply_track_render_offset
+            const std::shared_ptr<const world::Snapshot> snapshot = world::current();
+            if (const world::VehicleView* v = world::find(*snapshot, vehicleId)) {
+                const glm::vec2 rOff = v->apply_track_render_offset
                                          ? getTrackRenderOffset()
                                          : glm::vec2(0.0f, 0.0f);
-                vx = vit->second.m_normalized_x + rOff.x;
-                vy = vit->second.m_normalized_y + rOff.y;
+                vx = v->x + rOff.x;
+                vy = v->y + rOff.y;
                 found = true;
             }
         }

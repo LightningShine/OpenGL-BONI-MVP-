@@ -1,6 +1,7 @@
 #include "ProEvents.h"
 #include "../../racing/RaceManager.h"
 #include "../../vehicle/Vehicle.h"
+#include "../../network/ReplayPlayer.h"
 #include "../../network/TrackServerClient.h"
 #include <imgui.h>
 #include <mutex>
@@ -94,6 +95,21 @@ static void resetTracking() {
 // Poll vehicle/race state once per frame and append any new events.
 static void detectEvents() {
     if (!g_race_manager) return;
+
+    // Журнал — это НАКОПЛЕННАЯ по ходу заезда история, а не срез состояния:
+    // лучшие круги и секторы в нём выведены из того, что уже было показано.
+    // После отката повтора назад всё накопленное относится к ещё не
+    // проигранной части записи — журнал начинаем заново, иначе он отчитывается
+    // о рекордах из будущего, а при движении вперёд молчит про них повторно.
+    {
+        static uint64_t s_rewind_seen = 0;
+        const uint64_t rewinds = telemetry::replay_rewind_revision();
+        if (rewinds != s_rewind_seen) {
+            s_rewind_seen = rewinds;
+            resetTracking();
+            s_init = false;   // рекорды на новой точке пересеиваются молча
+        }
+    }
     float        sessT = g_race_manager->GetRaceElapsedTime();
     SessionState st    = g_race_manager->GetSessionState();
 

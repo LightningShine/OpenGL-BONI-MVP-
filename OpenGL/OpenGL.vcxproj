@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup Label="ProjectConfigurations">
     <ProjectConfiguration Include="Debug|ARM64">
@@ -248,6 +248,8 @@
     <ClCompile Include="libraries\include\serialib\serialib.cpp" />
     <ClCompile Include="src\core\main.cpp" />
     <ClCompile Include="src\core\DeviceRegistry.cpp" />
+    <ClCompile Include="src\core\AppPaths.cpp" />
+    <ClCompile Include="src\core\WorldSnapshot.cpp" />
     <ClCompile Include="src\logging\ConsoleLog.cpp" />
     <ClCompile Include="src\logging\TelemetryLog.cpp" />
     <ClCompile Include="src\input\Input.cpp" />
@@ -306,6 +308,8 @@
     <ClInclude Include="src\ui\Accounts.h" />
     <ClInclude Include="src\ui\SettingsPanel.h" />
     <ClInclude Include="src\core\DeviceRegistry.h" />
+    <ClInclude Include="src\core\AppPaths.h" />
+    <ClInclude Include="src\core\WorldSnapshot.h" />
     <ClInclude Include="src\logging\ConsoleLog.h" />
     <ClInclude Include="src\logging\TelemetryLog.h" />
     <ClInclude Include="src\network\ESP32_Code.h" />

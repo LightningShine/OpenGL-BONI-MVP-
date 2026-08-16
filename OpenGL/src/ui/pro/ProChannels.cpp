@@ -1,11 +1,8 @@
 #include "ProChannels.h"
+#include "../../core/WorldSnapshot.h"
 #include "../../vehicle/Vehicle.h"
 #include <imgui.h>
-#include <mutex>
 #include <cstdio>
-
-extern std::map<int32_t, Vehicle> g_vehicles;
-extern std::mutex g_vehicles_mutex;
 
 namespace Pro {
 
@@ -27,17 +24,17 @@ void RenderChannelsWindow(const ProContext& ctx, int32_t vehicleId,
     DrawPanelHeader(ctx, "CHANELS", false, nullptr, z, "Channels");
     ImGui::SetWindowFontScale(z);
 
-    // Live GPS data
+    // Данные машины — из опубликованного снимка, а не из рабочего состояния
+    // пайплайна: панель обязана показывать тот же момент, что и карта с
+    // таблицей, и не ждать на мьютексе, пока повтор перестраивает состояние.
     double speed = 0, gx = 0, gy = 0, accel = 0, progress = 0;
     int16_t fixType = 0;
     {
-        std::lock_guard<std::mutex> lk(g_vehicles_mutex);
-        auto it = g_vehicles.find(vehicleId);
-        if (it != g_vehicles.end()) {
-            const Vehicle& v = it->second;
-            speed = v.m_speed_kph; gx = v.m_g_force_x; gy = v.m_g_force_y;
-            accel = v.m_acceleration; fixType = v.m_fix_type;
-            progress = v.m_track_progress;
+        const std::shared_ptr<const world::Snapshot> snapshot = world::current();
+        if (const world::VehicleView* v = world::find(*snapshot, vehicleId)) {
+            speed = v->speed_kph; gx = v->g_force_x; gy = v->g_force_y;
+            accel = v->acceleration; fixType = v->fix_type;
+            progress = v->track_progress;
         }
     }
     const char* fixLabel = fixType == 5 ? "RTK Fixed" :
@@ -69,7 +66,14 @@ void RenderChannelsWindow(const ProContext& ctx, int32_t vehicleId,
     ImGui::SameLine(colValX);  colHdr("VALUE", colValX, false);
     DrawSep();
 
-    // Channels: first 8 = future CAN placeholders, rest = live GPS
+    // Каналы панели — только те, что реально приходят с трекера.
+    //
+    // Каналы 0-7 (обороты, передача, газ, тормоз, руль, температуры, топливо)
+    // отсюда убраны: это шина CAN, которой у нас нет, и панель показывала
+    // ЗАШИТЫЕ В КОД числа. Постоянные «9158 rpm» и «92 C» на экране инженера
+    // неотличимы от настоящих данных — а решения по ним принимают всерьёз.
+    // Номера оставшихся каналов не сдвинуты: они привязаны к смыслу канала, и
+    // при появлении CAN нижние номера займут свои места, не переименовывая эти.
     struct Ch { int id; const char* name; const char* val; ImU32 valCol; };
 
     snprintf(vb, sizeof(vb), "%.1f km/h", speed); char vSpeed[24]; snprintf(vSpeed, 24, "%s", vb);
@@ -79,14 +83,6 @@ void RenderChannelsWindow(const ProContext& ctx, int32_t vehicleId,
     char vProg[24];  snprintf(vProg,  24, "%.1f %%", progress * 100.0);
 
     const Ch channels[] = {
-        {  0, "RPM",       "9158 rpm",  COL_DIM   }, // CAN placeholder
-        {  1, "Gear",      "3",         COL_DIM   },
-        {  2, "Throttle",  "100 %",     COL_DIM   },
-        {  3, "Brake",     "0 %",       COL_DIM   },
-        {  4, "Steering",  "-4 deg",    COL_DIM   },
-        {  5, "Oil Temp",  "92 C",      COL_DIM   },
-        {  6, "H2O Temp",  "78 C",      COL_DIM   },
-        {  7, "Fuel",      "55 l",      COL_DIM   },
         {  8, "Speed",     vSpeed,      COL_WHITE  },
         {  9, "gForce Lg", vGLong,      COL_WHITE  },
         { 10, "gForce Lt", vGLat,       COL_WHITE  },

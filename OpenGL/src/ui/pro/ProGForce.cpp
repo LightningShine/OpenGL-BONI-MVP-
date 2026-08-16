@@ -1,12 +1,9 @@
 #include "ProGForce.h"
+#include "../../core/WorldSnapshot.h"
 #include "../../vehicle/Vehicle.h"
 #include <imgui.h>
-#include <mutex>
 #include <cmath>
 #include <cstdio>
-
-extern std::map<int32_t, Vehicle> g_vehicles;
-extern std::mutex g_vehicles_mutex;
 
 namespace Pro {
 
@@ -28,14 +25,13 @@ void RenderGForceWindow(const ProContext& ctx, int32_t vehicleId,
     float z = PanelZoom("GForce");
     DrawPanelHeader(ctx, "G-FORCE", false, nullptr, z, "GForce");
 
-    // Live data
+    // Из снимка — тот же момент заезда, что и у остальных панелей.
     double gx = 0, gy = 0;
     {
-        std::lock_guard<std::mutex> lk(g_vehicles_mutex);
-        auto it = g_vehicles.find(vehicleId);
-        if (it != g_vehicles.end()) {
-            gx = it->second.m_g_force_x;
-            gy = it->second.m_g_force_y;
+        const std::shared_ptr<const world::Snapshot> snapshot = world::current();
+        if (const world::VehicleView* v = world::find(*snapshot, vehicleId)) {
+            gx = v->g_force_x;
+            gy = v->g_force_y;
         }
     }
 

@@ -1,8 +1,8 @@
 #include "ProRelative.h"
+#include "../../core/WorldSnapshot.h"
 #include "../../racing/RaceManager.h"
 #include "../../vehicle/Vehicle.h"
 #include <imgui.h>
-#include <mutex>
 #include <vector>
 #include <string>
 #include <algorithm>
@@ -10,8 +10,6 @@
 #include <cstdio>
 
 extern RaceManager* g_race_manager;
-extern std::map<int32_t, Vehicle> g_vehicles;
-extern std::mutex g_vehicles_mutex;
 
 namespace Pro {
 
@@ -82,12 +80,16 @@ void RenderRelativeWindow(const ProContext& ctx, int32_t vehicleId,
     double refProg = 0.0;
     bool   haveRef = false;
     {
-        std::lock_guard<std::mutex> lk(g_vehicles_mutex);
-        auto rit = g_vehicles.find(vehicleId);
-        if (rit != g_vehicles.end()) { refProg = rit->second.m_track_progress; haveRef = true; }
-        for (auto& [id, v] : g_vehicles) {
+        // Все машины берём из ОДНОГО снимка: относительные разрывы считаются
+        // между ними, поэтому взяться из разных моментов заезда они не имеют
+        // права — на перемотке повтора это давало разъезжающиеся отставания.
+        const std::shared_ptr<const world::Snapshot> snapshot = world::current();
+        if (const world::VehicleView* ref = world::find(*snapshot, vehicleId)) {
+            refProg = ref->track_progress; haveRef = true;
+        }
+        for (const auto& [id, v] : snapshot->vehicles) {
             RelCar c;
-            c.id = id; c.name = v.name; c.progress = v.m_track_progress;
+            c.id = id; c.name = v.name; c.progress = v.track_progress;
             c.position = 0; c.isRef = (id == vehicleId);
             cars.push_back(std::move(c));
         }

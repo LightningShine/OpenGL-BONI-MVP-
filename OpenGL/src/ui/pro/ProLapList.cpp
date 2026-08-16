@@ -2,13 +2,10 @@
 #include "../../racing/RaceManager.h"
 #include "../../vehicle/Vehicle.h"
 #include <imgui.h>
-#include <mutex>
 #include <cmath>
 #include <cstdio>
 
 extern RaceManager* g_race_manager;
-extern std::map<int32_t, Vehicle> g_vehicles;
-extern std::mutex g_vehicles_mutex;
 
 namespace Pro {
 

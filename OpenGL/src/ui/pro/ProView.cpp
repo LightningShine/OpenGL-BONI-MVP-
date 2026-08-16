@@ -8,6 +8,7 @@
 #include "ProEvents.h"
 #include "ProSectors.h"
 #include "ProRelative.h"
+#include "../../core/WorldSnapshot.h"
 #include "../../vehicle/Vehicle.h"
 #include "../../racing/RaceManager.h"
 #include "../../racing/StopReset/StartStop.h"
@@ -21,8 +22,6 @@
 #include <fstream>
 
 extern RaceManager* g_race_manager;
-extern std::map<int32_t, Vehicle> g_vehicles;
-extern std::mutex g_vehicles_mutex;
 extern int g_focused_vehicle_id;
 
 namespace Pro {
@@ -83,8 +82,8 @@ static int32_t getDisplayVehicleId() {
         auto standings = g_race_manager->GetStandings();
         if (!standings.empty()) return standings.front().vehicleID;
     }
-    std::lock_guard<std::mutex> lk(g_vehicles_mutex);
-    if (!g_vehicles.empty()) return g_vehicles.begin()->first;
+    const std::shared_ptr<const world::Snapshot> snapshot = world::current();
+    if (!snapshot->vehicles.empty()) return snapshot->vehicles.begin()->first;
     return -1;
 }
 

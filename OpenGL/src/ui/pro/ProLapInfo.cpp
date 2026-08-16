@@ -1,16 +1,14 @@
 #include "ProLapInfo.h"
 #include "ProTrackMap.h"
+#include "../../core/WorldSnapshot.h"
 #include "../../racing/RaceManager.h"
 #include "../../vehicle/Vehicle.h"
 #include <imgui.h>
-#include <mutex>
 #include <cstdio>
 #include <ctime>
 #include <string>
 
 extern RaceManager* g_race_manager;
-extern std::map<int32_t, Vehicle> g_vehicles;
-extern std::mutex g_vehicles_mutex;
 
 namespace Pro {
 
@@ -138,9 +136,9 @@ void RenderSessionInfoWindow(const ProContext& ctx, int32_t vehicleId,
 
     std::string driverName = "---";
     {
-        std::lock_guard<std::mutex> lk(g_vehicles_mutex);
-        auto it = g_vehicles.find(vehicleId);
-        if (it != g_vehicles.end()) driverName = it->second.name;
+        const std::shared_ptr<const world::Snapshot> snapshot = world::current();
+        if (const world::VehicleView* v = world::find(*snapshot, vehicleId))
+            driverName = v->name;
     }
 
     char dateBuf[32] = "---";

@@ -1,14 +1,12 @@
 #include "ProLaptime.h"
+#include "../../core/WorldSnapshot.h"
 #include "../../racing/RaceManager.h"
 #include "../../vehicle/Vehicle.h"
 #include <imgui.h>
-#include <mutex>
 #include <cstdio>
 #include <cmath>
 
 extern RaceManager* g_race_manager;
-extern std::map<int32_t, Vehicle> g_vehicles;
-extern std::mutex g_vehicles_mutex;
 
 namespace Pro {
 
@@ -83,11 +81,10 @@ void RenderLaptimeWindow(const ProContext& ctx, int32_t vehicleId,
     // ── SPEED / ACCELE. ──────────────────────────────────────────────────────
     double speed = 0, accel = 0;
     {
-        std::lock_guard<std::mutex> lk(g_vehicles_mutex);
-        auto it = g_vehicles.find(vehicleId);
-        if (it != g_vehicles.end()) {
-            speed = it->second.m_speed_kph;
-            accel = it->second.m_acceleration;
+        const std::shared_ptr<const world::Snapshot> snapshot = world::current();
+        if (const world::VehicleView* v = world::find(*snapshot, vehicleId)) {
+            speed = v->speed_kph;
+            accel = v->acceleration;
         }
     }
 

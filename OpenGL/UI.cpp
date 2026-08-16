@@ -2,6 +2,7 @@
 #include "UI.h"
 #include "UI_Elements.h"
 #include "src/Config.h"
+#include "src/core/AppPaths.h"
 #include "src/ui/UI_Config.h"
 #include "src/rendering/Interpolation.h"
 #include "src/rendering/Render.h"
@@ -793,8 +794,8 @@ void UI::LoadRecentFiles()
 {
     namespace fs = std::filesystem;
     
-    const std::string saves_path = "src/saves";
-    
+    const std::string saves_path = app_paths::tracks().string();
+
     // Clear existing files
     m_recentFiles.clear();
     
@@ -1174,7 +1175,7 @@ void UI::BeginFrame()
         ofn.Flags = OFN_OVERWRITEPROMPT | OFN_NOCHANGEDIR;
 
         // Default to the saves directory used by LoadRecentFiles.
-        std::string initialDir = "src/saves";
+        std::string initialDir = app_paths::tracks().string();
         ofn.lpstrInitialDir = initialDir.c_str();
 
         std::string chosen;
@@ -1263,7 +1264,7 @@ void UI::BeginFrame()
             ofn.lpstrFileTitle = NULL;
             ofn.nMaxFileTitle = 0;
 
-            std::string savesPath = "src/saves";
+            std::string savesPath = app_paths::tracks().string();
             ofn.lpstrInitialDir = savesPath.c_str();
 
             ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
@@ -1291,6 +1292,11 @@ void UI::BeginFrame()
             ofn.lpstrFilter = "Text file\0*.txt\0All Files\0*.*\0";
             ofn.nFilterIndex = 1;
             ofn.lpstrDefExt = "txt";
+            // Диалог открывается там же, куда протоколы кладёт автосохранение
+            // конца сессии — иначе ручные и автоматические результаты снова
+            // разъехались бы по разным папкам.
+            const std::string resultsDir = app_paths::results().string();
+            ofn.lpstrInitialDir = resultsDir.c_str();
             ofn.Flags = OFN_OVERWRITEPROMPT | OFN_NOCHANGEDIR;
             if (GetSaveFileNameA(&ofn))
             {
@@ -1343,7 +1349,7 @@ void UI::BeginFrame()
             ofn.Flags = OFN_OVERWRITEPROMPT | OFN_NOCHANGEDIR;
 
             // Default to the saves directory used by LoadRecentFiles.
-            std::string initialDir = "src/saves";
+            std::string initialDir = app_paths::tracks().string();
             ofn.lpstrInitialDir = initialDir.c_str();
 
             std::string chosen;
@@ -2517,7 +2523,7 @@ void UI::RenderTopMenu()
                 ofn.nFilterIndex = 1;
                 ofn.lpstrFileTitle = NULL;
                 ofn.nMaxFileTitle = 0;
-                std::string savesPath = "src/saves";
+                std::string savesPath = app_paths::tracks().string();
                 ofn.lpstrInitialDir = savesPath.c_str();
                 ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
 
@@ -2542,7 +2548,7 @@ void UI::RenderTopMenu()
                 ofn.nMaxFile = sizeof(szFile);
                 ofn.lpstrFilter = "Recording\0*.rjl\0All Files\0*.*\0";
                 ofn.nFilterIndex = 1;
-                std::string logsPath = LoggingConstants::LOG_DIRECTORY;
+                std::string logsPath = app_paths::replays().string();
                 ofn.lpstrInitialDir = logsPath.c_str();
                 ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
 
@@ -2560,6 +2566,35 @@ void UI::RenderTopMenu()
 
             if (ImGui::MenuItem("Close Replay", nullptr, false, telemetry::replay_is_active()))
                 telemetry::replay_close();
+
+            ImGui::Separator();
+
+            // Все данные лежат под одним корнем и разложены по смыслу, но
+            // знать, где именно, оператор не обязан: отсюда открывается нужная
+            // папка. Пункты повторяют раскладку из AppPaths.h один в один.
+            if (ImGui::BeginMenu("Open Folder"))
+            {
+                struct FolderItem { const char* label; const std::filesystem::path& path; };
+                const FolderItem folders[] = {
+                    { "Tracks",  app_paths::tracks()  },
+                    { "Results", app_paths::results() },
+                    { "Replays", app_paths::replays() },
+                    { "Logs",    app_paths::logs()    },
+                };
+
+                for (const FolderItem& folder : folders)
+                {
+                    if (ImGui::MenuItem(folder.label))
+                    {
+                        if (!app_paths::open_in_explorer(folder.path))
+                        {
+                            std::cerr << "[UI] Failed to open folder: "
+                                      << folder.path.string() << std::endl;
+                        }
+                    }
+                }
+                ImGui::EndMenu();
+            }
 
             ImGui::Separator();
 

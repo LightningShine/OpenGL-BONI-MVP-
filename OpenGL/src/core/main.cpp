@@ -38,6 +38,7 @@
 #include "../Config.h"
 #include "../ui/UI_Config.h"
 #include "../ui/ui_scale.hpp"
+#include "AppPaths.h"
 #include "DeviceRegistry.h"
 #include "../logging/ConsoleLog.h"
 #include "../network/SyntheticTelemetry.h"
@@ -163,7 +164,10 @@ const std::vector<glm::vec2>* track_points = nullptr, std::mutex* points_mutex =
 	if (telemetry::replay_is_active() && !rotationHeld && !shiftHeld)
 	{
 		constexpr double SCRUB_HOLD_DELAY = 0.35;   // с какой задержки начинается перемотка
-		constexpr double SCRUB_SPEED      = 10.0;   // во сколько раз быстрее реального времени
+		// Шаг перемотки = скорость × интервал применения. При 6× и шаге в 10 мс
+		// это 60 мс записи за обновление — сопоставимо с интервалом между
+		// пакетами, поэтому назад ощущается так же непрерывно, как вперёд.
+		constexpr double SCRUB_SPEED      = 6.0;
 
 		// Своя дельта кадра: processInput её не получает. Ограничиваем сверху,
 		// иначе первый кадр после открытия записи (или после свёрнутого окна)
@@ -667,11 +671,16 @@ int main()
 	}
 #endif
 
+	// Каталоги данных — до всего остального: журнал консоли открывается прямо
+	// следующей строкой и обязан лечь уже в новое место. Здесь же выполняется
+	// разовый перенос со старой раскладки (см. AppPaths.h).
+	app_paths::prepare();
+
 	// Журнал консоли. Объявлен здесь, чтобы жить до конца main: всё, что
 	// печатается ниже, попадает и в консоль, и в файл. Разбор «что сломалось
 	// на гонке» перестаёт зависеть от того, сохранил ли оператор вывод.
 	const logging::ConsoleLogSession console_log(
-		LoggingConstants::LOG_DIRECTORY, LoggingConstants::KEEP_CONSOLE_LOG_FILES);
+		app_paths::logs(), LoggingConstants::KEEP_CONSOLE_LOG_FILES);
 
 	// Стартовый баннер. Сетевой стек — WebSocket-клиент Track Server, он
 	// работает на всех архитектурах (старый GNS удалён, см. Server.h).
@@ -1147,19 +1156,32 @@ int main()
 			deltaTime = 0.0f;
 
 		// Update Race Manager (lap timing logic).
-		// Во время пересчёта после перемотки назад состояние гонки неполное —
-		// скормлена лишь часть записи. Считать по нему лидера и круги нельзя:
-		// в таблице мелькали чужие лидеры. Пересчёт короткий, пропуск кадра-двух
-		// незаметен, а результат остаётся ровно таким, каким был в заезде.
+		// Он же досчитывает состояние после шага перемотки: сам шаг публикует
+		// только позиции (пересчёт таблицы с дельтами по всем машинам слишком
+		// дорог для каждого шага), а разбор пересечений, круги и таблица
+		// приходят сюда — ровно один раз на кадр, на уже согласованном
+		// состоянии. Флаг пересчёта остаётся страховкой: читать гоночный
+		// результат по половине скормленной записи нельзя, в таблице от этого
+		// мелькали чужие лидеры.
 		if (g_race_manager && !telemetry::replay_is_rebuilding())
 		{
 			g_race_manager->Update(deltaTime);
 		}
-		
+
+		// Ровно здесь, после Update: пересечения разобраны, номер круга и
+		// прогресс уже соответствуют точке воспроизведения — по ним и обрезаем
+		// историю телеметрии, оставшуюся от ещё не проигранной части записи.
+		telemetry::replay_trim_history_if_rewound();
+
 		ui.BeginFrame();
 
-		processInput(window, camera_position, camera_zoom, camera_rotation, camera_move_speed, 
+		processInput(window, camera_position, camera_zoom, camera_rotation, camera_move_speed,
 					&g_smooth_track_points, &points, &points_mutex);  // ✅ Pass track data for networking
+
+		// Перемотка повтора исполняется здесь: сдвиг, накопленный только что в
+		// processInput, применяется в этом же кадре и до отрисовки. Ровно один
+		// шаг на кадр — в обе стороны. См. replay_apply_pending_seek.
+		telemetry::replay_apply_pending_seek();
 		camera_position += camera_velocity;  
 		camera_velocity *= friction;
 		

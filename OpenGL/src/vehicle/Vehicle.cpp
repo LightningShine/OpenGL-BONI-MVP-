@@ -5,6 +5,7 @@
 #include "../rendering/Interpolation.h"
 #include "../rendering/VehicleNameRenderer.h"
 #include "../network/SimulationServer.h"
+#include "../core/WorldSnapshot.h"
 #include "../../UI.h"
 #include <cmath>
 #include <iostream>
@@ -20,6 +21,7 @@ std::mutex g_vehicles_mutex;
 std::atomic<bool> g_is_vehicles_active = false;
 std::atomic<bool> g_race_session_active = false;
 std::atomic<bool> g_pipeline_rebuilding = false;
+std::atomic<bool> g_position_smoothing_enabled = true;
 
 // Глубина захвата мьютекса машин ЭТИМ потоком. Ноль означает «не держим».
 // Пересчёт повтора поднимает её на весь прогон, и вложенные захваты внутри
@@ -554,55 +556,55 @@ void renderAllVehicles(GLuint shader_program, GLuint vao, GLuint vbo,
     float minY = camera_pos.y - visibleHeight;
     float maxY = camera_pos.y + visibleHeight;
 
-    // Под мьютексом копируем ТОЛЬКО скаляры: он же нужен сетевому потоку на
-    // каждый принятый пакет, поэтому держать его на время интерполяции,
-    // отсечения по видимости и тем более отрисовки нельзя.
-    //
-    // Отдельной «заморозки» на время отката повтора здесь НЕТ и быть не должно:
-    // откат удерживает этот же мьютекс целиком, поэтому мы либо подождём, либо
-    // прочитаем готовое состояние. Раньше здесь стоял показ последнего целого
-    // кадра — и при удержании перемотки он давал кадр, отставший на один шаг,
-    // то есть сам создавал те прыжки, от которых должен был спасать.
+    // Читаем ОПУБЛИКОВАННЫЙ СНИМОК, а не рабочее состояние пайплайна. Отсюда
+    // сразу два свойства: кадр не может застать половину перестройки при
+    // перемотке повтора, и отрисовка вообще не соперничает с приёмом пакетов за
+    // мьютекс — раньше он захватывался каждый кадр. См. core/WorldSnapshot.h.
+    const std::shared_ptr<const world::Snapshot> snapshot = world::current();
+
     std::vector<VehicleRenderState> vehiclesToRender;
+    vehiclesToRender.reserve(snapshot->vehicles.size());
+
+    for (const auto& [id, view] : snapshot->vehicles) {
+        // Связи нет — координаты застыли. Точку не рисуем, чтобы оператор не
+        // принял её за едущую машину; в таблице участник остаётся со своими
+        // кругами (см. removeVehicles / g_race_session_active).
+        if (view.signal_lost)
+            continue;
+
+        VehicleRenderState state;
+        state.id = id;
+        state.x = view.x;
+        state.y = view.y;
+        state.heading = view.heading;
+        state.speed_kph = view.speed_kph;
+        state.color = view.color;
+        state.name = view.name;
+        state.is_leader = view.is_leader;
+        state.apply_track_render_offset = view.apply_track_render_offset;
+        vehiclesToRender.push_back(std::move(state));
+    }
+
+    // Сглаживание применяем ТОЛЬКО когда данные идут в реальном темпе. На паузе
+    // и при перемотке позиции из снимка уже точные, а интерполятор в этот
+    // момент опирается на пачку пакетов с чужими метками времени и уводит
+    // машину в сторону — те самые остаточные прыжки.
+    if (g_position_smoothing_enabled.load(std::memory_order_relaxed))
     {
-        std::lock_guard<std::mutex> lock(g_vehicles_mutex);
-        vehiclesToRender.reserve(g_vehicles.size());
-
-        for (const auto& [id, vehicle] : g_vehicles) {
-            // Связи нет — координаты застыли. Точку не рисуем, чтобы оператор не
-            // принял её за едущую машину; в таблице участник остаётся со своими
-            // кругами (см. removeVehicles / g_race_session_active).
-            if (vehicle.m_signal_lost)
-                continue;
-
-            VehicleRenderState state;
-            state.id = id;
-            state.x = vehicle.m_normalized_x;
-            state.y = vehicle.m_normalized_y;
-            state.heading = vehicle.m_heading;
-            state.speed_kph = vehicle.m_speed_kph;
-            state.color = vehicle.m_cached_color;
-            state.name = vehicle.name;
-            state.is_leader = vehicle.m_is_leader;
-            state.apply_track_render_offset = vehicle.m_apply_track_render_offset;
-            vehiclesToRender.push_back(std::move(state));
-        }
-    } // ✅ Мьютекс освобожден
-
-    // Интерполяция и отсечение — уже без мьютекса машин.
-    for (VehicleRenderState& state : vehiclesToRender)
-    {
-        double interp_x = 0.0;
-        double interp_y = 0.0;
-        double interp_heading = 0.0;
-        double interp_speed = 0.0;
-        if (VehicleInterpolator::Get().GetInterpolatedState(
-                state.id, renderTime, interp_x, interp_y, interp_heading, interp_speed))
+        for (VehicleRenderState& state : vehiclesToRender)
         {
-            state.x = interp_x;
-            state.y = interp_y;
-            state.heading = interp_heading;
-            state.speed_kph = interp_speed;
+            double interp_x = 0.0;
+            double interp_y = 0.0;
+            double interp_heading = 0.0;
+            double interp_speed = 0.0;
+            if (VehicleInterpolator::Get().GetInterpolatedState(
+                    state.id, renderTime, interp_x, interp_y, interp_heading, interp_speed))
+            {
+                state.x = interp_x;
+                state.y = interp_y;
+                state.heading = interp_heading;
+                state.speed_kph = interp_speed;
+            }
         }
     }
 

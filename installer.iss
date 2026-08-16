@@ -13,7 +13,13 @@
 ; correct VC145 CRT). Keep this folder up to date by rebuilding Release|x64.
 #define ReleaseDir "C:\Users\gamer\source\repos\OpenGL-BONI-MVP-\x64\Release"
 #define StylesDir  "C:\Users\gamer\source\repos\OpenGL-BONI-MVP-\OpenGL\styles"
-#define SavesDir   "C:\Users\gamer\source\repos\OpenGL-BONI-MVP-\OpenGL\src\saves"
+; Готовые трассы, которые едут в дистрибутиве. Остальные три каталога данных
+; (results, replays, logs) приложение создаёт само при первом запуске —
+; поставлять их пустыми незачем, см. OpenGL\src\core\AppPaths.h.
+#define TracksDir  "C:\Users\gamer\source\repos\OpenGL-BONI-MVP-\OpenGL\saves\tracks"
+; Драйвер USB-моста CP210x (Silicon Labs). Файлы туда кладут руками, в git их
+; нет — см. redist\CP210x\README.txt.
+#define DriverDir  "C:\Users\gamer\source\repos\OpenGL-BONI-MVP-\redist\CP210x"
 
 [Setup]
 AppId={{B43984B4-4158-409B-8B50-EBA8DCC13D40}
@@ -43,6 +49,10 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
+; Драйвер приёмника. По умолчанию включён: на чистом ПК без него приложение не
+; видит устройство вообще. Снять галочку имеет смысл, только если драйвер уже
+; стоит — переустановка безвредна, но лишний раз спрашивает UAC.
+Name: "cp210xdriver"; Description: "Install USB receiver driver (Silicon Labs CP210x)"; GroupDescription: "Drivers:"
 
 [Files]
 ; --- Executable ---
@@ -61,15 +71,32 @@ Source: "{#StylesDir}\*"; DestDir: "{app}\styles"; Flags: ignoreversion recurses
 ; --- Mesa3D software/D3D12 OpenGL fallback (used only if the native GPU can't
 ;     provide OpenGL 3.3 — e.g. clean VMs, RDP, very old GPUs) ---
 Source: "{#ReleaseDir}\mesa\*"; DestDir: "{app}\mesa"; Flags: ignoreversion recursesubdirs createallsubdirs
-; --- saves (user tracks); app reads src\saves relative to its working dir ---
-Source: "{#SavesDir}\*"; DestDir: "{app}\src\saves"; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
+; --- Трассы. Все данные приложения лежат под одним корнем {app}\saves и
+;     разложены по смыслу: tracks / results / replays / logs.
+;     Файлы пользователя не затираем: onlyifdoesntexist — переустановка поверх
+;     не должна стирать трассу, записанную на прошлой гонке. ---
+Source: "{#TracksDir}\*"; DestDir: "{app}\saves\tracks"; Flags: onlyifdoesntexist recursesubdirs createallsubdirs skipifsourcedoesntexist uninsneveruninstall
 ; --- VC++ x64 redistributable (backstop: installs CRT/UCRT system-wide if missing) ---
 Source: "C:\Users\gamer\source\repos\OpenGL-BONI-MVP-\redist\vc_redist.x64.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall
+; --- Драйвер USB-моста CP210x (Silicon Labs) ---
+; Приёмник SX1280 сидит на CP2102. Без драйвера Windows не создаёт COM-порт, а
+; приложение перебирает только порты класса Ports — то есть на чистом ПК не
+; видит приёмник ВООБЩЕ. Это единственная внешняя зависимость, которую нельзя
+; закрыть со стороны приложения, поэтому она едет в дистрибутиве.
+; Содержимое папки задаётся вручную, см. redist\CP210x\README.txt: либо
+; фирменный CP210xVCPInstaller_x64.exe, либо INF-пакет. Если папки нет —
+; шаг установки просто не выполнится (см. [Code]).
+Source: "{#DriverDir}\*"; DestDir: "{tmp}\CP210x"; Flags: deleteafterinstall recursesubdirs createallsubdirs skipifsourcedoesntexist
 
 [Dirs]
-; Writable folders the app creates/uses at runtime
-Name: "{app}\saves";     Permissions: users-modify
-Name: "{app}\src\saves"; Permissions: users-modify
+; Каталоги данных. Приложение создаёт их и само (AppPaths::prepare), но здесь
+; они объявлены явно ради прав на запись: под ними лежит всё, что пишется по
+; ходу гонки, и обычный пользователь обязан иметь туда доступ.
+Name: "{app}\saves";         Permissions: users-modify
+Name: "{app}\saves\tracks";  Permissions: users-modify
+Name: "{app}\saves\results"; Permissions: users-modify
+Name: "{app}\saves\replays"; Permissions: users-modify
+Name: "{app}\saves\logs";    Permissions: users-modify
 
 [Registry]
 Root: HKA; Subkey: "Software\Classes\{#MyAppAssocExt}\OpenWithProgids"; ValueType: string; ValueName: "{#MyAppAssocKey}"; ValueData: ""; Flags: uninsdeletevalue
@@ -84,8 +111,24 @@ Name: "{group}\{cm:ProgramOnTheWeb,{#MyAppName}}";   Filename: "{#MyAppURL}"
 Name: "{autodesktop}\{#MyAppName}";                  Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; Tasks: desktopicon
 
 [Run]
-; Install VC++ runtime first, only if not already present (avoids a needless UAC prompt)
-Filename: "{tmp}\vc_redist.x64.exe"; Parameters: "/install /quiet /norestart"; StatusMsg: "Установка Microsoft Visual C++ Runtime..."; Check: VCRedistNeeded; Flags: waituntilterminated
+; ВНИМАНИЕ на flags: shellexec. Сам установщик идёт от текущего пользователя
+; (PrivilegesRequired=lowest — иначе приложению некуда писать devices.db, логи и
+; трассы, они лежат рядом с exe). А vc_redist и установка драйвера требуют
+; администратора: их манифест — requireAdministrator. Запуск через CreateProcess,
+; то есть [Run] без shellexec, на такой манифест падает с ERROR_ELEVATION_REQUIRED
+; и шаг молча не выполняется. ShellExecute поднимает UAC — по одному запросу на шаг
+; и только тогда, когда шаг вообще нужен.
+
+; VC++ runtime — только если его нет, чтобы не дёргать UAC на ровном месте.
+Filename: "{tmp}\vc_redist.x64.exe"; Parameters: "/install /quiet /norestart"; StatusMsg: "Установка Microsoft Visual C++ Runtime..."; Check: VCRedistNeeded; Flags: shellexec waituntilterminated
+
+; Драйвер CP210x, вариант 1 — фирменный установщик Silicon Labs.
+Filename: "{tmp}\CP210x\CP210xVCPInstaller_x64.exe"; Parameters: "/Q"; StatusMsg: "Установка драйвера USB-приёмника (CP210x)..."; Tasks: cp210xdriver; Check: HaveVendorDriverExe; Flags: shellexec waituntilterminated
+; Вариант 2 — универсальный INF-пакет через хранилище драйверов Windows.
+; /install доставляет драйвер уже подключённым устройствам, /subdirs забирает
+; арх-подкаталоги пакета.
+Filename: "{sys}\pnputil.exe"; Parameters: "/add-driver ""{tmp}\CP210x\*.inf"" /subdirs /install"; StatusMsg: "Установка драйвера USB-приёмника (CP210x)..."; Tasks: cp210xdriver; Check: UseInfDriver; Flags: shellexec waituntilterminated
+
 Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent
 
 [Code]
@@ -98,4 +141,32 @@ begin
   if RegQueryDWordValue(HKLM64, 'SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64', 'Installed', Installed) then
     if Installed = 1 then
       Result := False;
+end;
+
+// --- Драйвер CP210x -------------------------------------------------------
+// Форма поставки драйвера выбирается по тому, что реально лежит в пакете, а не
+// задаётся заранее: так один и тот же installer.iss собирается и с фирменным
+// установщиком Silicon Labs, и с универсальным INF-пакетом, и вообще без
+// драйвера (тогда шаг просто пропускается, а не ломает сборку).
+
+function HaveVendorDriverExe(): Boolean;
+begin
+  Result := FileExists(ExpandConstant('{tmp}\CP210x\CP210xVCPInstaller_x64.exe'));
+end;
+
+function UseInfDriver(): Boolean;
+var
+  Found: TFindRec;
+begin
+  Result := False;
+  // Фирменный установщик приоритетнее: он сам разбирается с разрядностью и с
+  // уже стоящей старой версией.
+  if HaveVendorDriverExe() then
+    Exit;
+
+  if FindFirst(ExpandConstant('{tmp}\CP210x\*.inf'), Found) then
+  begin
+    Result := True;
+    FindClose(Found);
+  end;
 end;

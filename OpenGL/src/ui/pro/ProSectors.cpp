@@ -1,4 +1,5 @@
 #include "ProSectors.h"
+#include "../../core/WorldSnapshot.h"
 #include "../../rendering/Interpolation.h"
 #include "../../vehicle/Vehicle.h"
 #include <imgui.h>
@@ -203,16 +204,17 @@ void RenderSectorsWindow(const ProContext& ctx, int32_t vehicleId,
 
         // Vehicle position dot — apply the same centering offset that is baked
         // into g_smooth_track_points (see rebuildTrackCacheFromEdges).
+        // Позиция — из снимка: точка на карте обязана стоять там же, где машина
+        // на главном экране, в том числе посреди перемотки повтора.
         double vx = 0, vy = 0; bool found = false;
         {
-            std::lock_guard<std::mutex> lk(g_vehicles_mutex);
-            auto it = g_vehicles.find(vehicleId);
-            if (it != g_vehicles.end()) {
-                const glm::vec2 rOff = it->second.m_apply_track_render_offset
+            const std::shared_ptr<const world::Snapshot> snapshot = world::current();
+            if (const world::VehicleView* v = world::find(*snapshot, vehicleId)) {
+                const glm::vec2 rOff = v->apply_track_render_offset
                                          ? getTrackRenderOffset()
                                          : glm::vec2(0.0f, 0.0f);
-                vx = it->second.m_normalized_x + rOff.x;
-                vy = it->second.m_normalized_y + rOff.y;
+                vx = v->x + rOff.x;
+                vy = v->y + rOff.y;
                 found = true;
             }
         }

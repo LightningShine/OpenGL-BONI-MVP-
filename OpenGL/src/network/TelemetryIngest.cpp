@@ -2,6 +2,7 @@
 
 #include "SimulationServer.h"
 #include "../Config.h"
+#include "../core/AppPaths.h"
 
 #include <atomic>
 #include <memory>
@@ -31,8 +32,11 @@ bool ingest_start(logging::TelemetryLogSource source)
     if (g_writer)
         return false;
 
+    // Записи повторов лежат отдельно от текстовых журналов: раньше и то, и
+    // другое сыпалось в один каталог, и найти нужный заезд среди сотни
+    // console_*.log было нечем.
     g_writer = std::make_unique<logging::TelemetryLogWriter>(
-        LoggingConstants::LOG_DIRECTORY, source);
+        app_paths::replays(), source);
     return true;
 }
 

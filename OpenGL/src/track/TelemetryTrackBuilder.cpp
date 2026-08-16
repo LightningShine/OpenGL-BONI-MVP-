@@ -1,6 +1,7 @@
 #include "TelemetryTrackBuilder.h"
 
 #include "../Config.h"
+#include "../core/AppPaths.h"
 #include "../input/Input.h"
 #include "../network/Server.h"
 #include "../rendering/Interpolation.h"
@@ -108,10 +109,10 @@ namespace
 	static std::ofstream openOutFile(const std::string& userPath, std::string& outAbsPath)
 	{
 		namespace fs = std::filesystem;
-		fs::path p = userPath.empty() ? fs::path("src/saves") / "track_recorded.txt"
+		fs::path p = userPath.empty() ? app_paths::tracks() / "track_recorded.txt"
 		                              : (fs::path(userPath).has_parent_path()
 		                                     ? fs::path(userPath)
-		                                     : fs::path("src/saves") / sanitizeName(userPath));
+		                                     : app_paths::tracks() / sanitizeName(userPath));
 		if (p.extension().empty()) p.replace_extension(".txt");
 		try { fs::create_directories(p.parent_path()); } catch (...) {}
 		std::error_code ec;
@@ -143,10 +144,10 @@ namespace
 
 		namespace fs = std::filesystem;
 		fs::path p = userPath.empty()
-		    ? fs::path("src/saves") / "track_recorded.trk2"
+		    ? app_paths::tracks() / "track_recorded.trk2"
 		    : (fs::path(userPath).has_parent_path()
 		           ? fs::path(userPath)
-		           : fs::path("src/saves") / sanitizeName(userPath));
+		           : app_paths::tracks() / sanitizeName(userPath));
 		p.replace_extension(".trk2");
 		try { fs::create_directories(p.parent_path()); } catch (...) {}
 
