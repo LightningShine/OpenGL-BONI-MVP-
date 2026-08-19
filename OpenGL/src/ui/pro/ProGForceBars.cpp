@@ -32,7 +32,7 @@ ImU32 bar_color(float value, bool longitudinal)
 {
     if (longitudinal)
         return value >= 0.f ? COL_GREEN : COL_RED;   // разгон / торможение
-    return COL_CYAN;                                  // поворот, сторона видна по столбику
+    return COL_RED;                                   // поворот, сторона видна по столбику
 }
 
 /// Общая часть обеих панелей: фон дорожки, ось нуля, риски шкалы.

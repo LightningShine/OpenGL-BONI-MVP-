@@ -177,6 +177,9 @@
     <ClCompile Include="src\ui\pro\ProTrackMap.cpp">
       <Filter>src\ui\ProUI</Filter>
     </ClCompile>
+    <ClCompile Include="src\ui\pro\ProTrackReport.cpp">
+      <Filter>src\ui\ProUI</Filter>
+    </ClCompile>
     <ClCompile Include="src\ui\pro\ProView.cpp">
       <Filter>src\ui\ProUI</Filter>
     </ClCompile>
@@ -313,6 +316,9 @@
       <Filter>src\ui\ProUI</Filter>
     </ClInclude>
     <ClInclude Include="src\ui\pro\ProTrackMap.h">
+      <Filter>src\ui\ProUI</Filter>
+    </ClInclude>
+    <ClInclude Include="src\ui\pro\ProTrackReport.h">
       <Filter>src\ui\ProUI</Filter>
     </ClInclude>
     <ClInclude Include="src\ui\pro\ProView.h">

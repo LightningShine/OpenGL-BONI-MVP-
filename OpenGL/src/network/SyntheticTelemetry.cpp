@@ -557,7 +557,7 @@ bool synthetic_start(const SyntheticScenario& scenario)
 
     g_stop_requested.store(false);
     g_running.store(true);
-    ingest_start(logging::TelemetryLogSource::Receiver);
+    // Журнал открывает старт сессии, а не источник — см. RaceManager::StartSession.
     g_thread = std::thread(player_loop, scenario, std::move(stream));
     return true;
 }

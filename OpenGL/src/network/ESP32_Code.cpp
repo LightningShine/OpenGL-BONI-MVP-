@@ -306,10 +306,10 @@ static void realDataThreadWorker(const std::string& com_port)
 
     std::cout << "[REAL DATA] Listening on " << com_port << std::endl;
 
-    // Приём (и запись журнала) живёт ровно столько же, сколько поток чтения:
-    // один открытый порт — один файл. Переоткрытие порта при зависании
-    // (reopenPort ниже) сессию записи не прерывает.
-    telemetry::ingest_start(logging::TelemetryLogSource::Receiver);
+    // Журнал заезда здесь НЕ открывается: запись начинается со стартом сессии
+    // (см. RaceManager::StartSession). Раньше файл заводился на каждое
+    // подключение порта, и свободные выезды копились в saves/replays наравне с
+    // заездами — среди них было не найти нужный.
 
     uint64_t bytes_seen = 0;
     uint64_t telemetry_headers_seen = 0;

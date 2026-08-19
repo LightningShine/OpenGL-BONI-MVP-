@@ -1,0 +1,66 @@
+========================================
+       RACE SESSION RESULTS
+========================================
+Date: 2026-08-19 13:45:38
+========================================
+
+FINAL STANDINGS:
+----------------
+
+Position: 1
+  Vehicle ID: #5
+  Completed Laps: 2
+  Progress: 0.087
+  Total Race Time: 3:06.734
+  Best Lap Time: 1:33.221
+  Current Lap 2: 0:00.014 (in progress)
+  Lap Times:
+    Lap 1: 1:33.221
+    Lap 2: 1:33.513
+
+Position: 2
+  Vehicle ID: #4
+  Completed Laps: 2
+  Progress: 0.076
+  Total Race Time: 3:08.010
+  Best Lap Time: 1:33.880
+  Current Lap 2: 0:00.015 (in progress)
+  Lap Times:
+    Lap 1: 1:34.130
+    Lap 2: 1:33.880
+
+Position: 3
+  Vehicle ID: #3
+  Completed Laps: 2
+  Progress: 0.069
+  Total Race Time: 3:07.538
+  Best Lap Time: 1:33.554
+  Current Lap 2: 0:00.014 (in progress)
+  Lap Times:
+    Lap 1: 1:33.984
+    Lap 2: 1:33.554
+
+Position: 4
+  Vehicle ID: #2
+  Completed Laps: 2
+  Progress: 0.048
+  Total Race Time: 3:07.027
+  Best Lap Time: 1:33.492
+  Current Lap 2: 0:00.013 (in progress)
+  Lap Times:
+    Lap 1: 1:33.535
+    Lap 2: 1:33.492
+
+Position: 5 (LAPPED)
+  Vehicle ID: #1
+  Completed Laps: 0
+  Progress: 1.000
+  Total Race Time: 0:00.000
+  Best Lap Time: 0:00.000
+  Current Lap 1: 0:00.006 (in progress)
+  Lap Times:
+    Lap 1: 1:34.925
+
+========================================
+End of Report
+========================================

@@ -125,6 +125,11 @@ private:
     bool m_raceTimerRunning = false;
     float m_raceElapsedSeconds = 0.0f;
 
+    // Протокол этой сессии уже сохранён. Финиш наступает один раз, но Update
+    // после него продолжает идти — без признака протокол переписывался бы
+    // каждый кадр новым файлом со свежей меткой времени.
+    bool m_resultsSaved = false;
+
     // Auto-stop config
     int m_autoStopMaxLaps = 0;
     float m_autoStopMaxSeconds = 0.0f;

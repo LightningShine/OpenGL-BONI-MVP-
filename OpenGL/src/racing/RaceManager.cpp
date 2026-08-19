@@ -4,6 +4,7 @@
 #include "../core/WorldSnapshot.h"
 #include "../vehicle/Vehicle.h"
 #include "../rendering/Interpolation.h"
+#include "../network/ReplayPlayer.h"   // replay_is_active — повтор ничего не сохраняет
 #include "../Config.h"
 #include "TimeDiffirence/TimeDiff.h"
 #include <iostream>
@@ -139,8 +140,18 @@ void RaceManager::Update(float deltaTime)
         // Records vehicle state for TimeDiff calculations.
         // IMPORTANT: On clients, vehicles can be authoritative (replicated)
         // and we still need to record samples, otherwise TimeDiff can't work.
+        //
+        // Пишем с начала заезда, а не с первого пересечения линии. Раньше до
+        // первого зачёта история не велась вовсе, и всё, что по ней строится
+        // (линия проезда в TRACK REPORT, окраска секторов), пустовало весь
+        // выездной круг — а на трассах, где зачёт почему-либо не сработал, и
+        // весь заезд. Круг всё равно начинается на линии: там история текущего
+        // круга обнуляется, см. FIRST LAP START DETECTION ниже.
+        //
+        // В практике история тоже ведётся: панели там работают наравне с гонкой,
+        // разница только в том, что практика не пишется на диск.
         // ====================================================================
-        if (vehicle.m_has_started_first_lap && !vehicle.m_is_finished)
+        if (!vehicle.m_is_finished)
         {
             constexpr float kTelemetrySampleInterval = 0.1f; // 10 Hz
             constexpr size_t kMaxSamplesPerLap = 36000;       // 1 hour cap per lap
@@ -159,6 +170,8 @@ void RaceManager::Update(float deltaTime)
                 sample.gForceY = static_cast<float>(vehicle.m_g_force_y);
                 sample.aceleration = static_cast<float>(vehicle.m_acceleration);
                 sample.speed = static_cast<float>(vehicle.m_speed_kph);
+                sample.x = vehicle.m_normalized_x;
+                sample.y = vehicle.m_normalized_y;
                 sample.curentPosition = 0; // Updated after standings sort
 
                 if (vehicle.laps.find(vehicle.m_current_lap_number) == vehicle.laps.end())
@@ -243,17 +256,15 @@ void RaceManager::Update(float deltaTime)
             }
         }
 
-        if (m_sessionState == SessionState::Idle)
-        {
-            // Just riding, reset timer if crossed but don't record laps.
-            if (!crossings.empty())
-                vehicle.m_current_lap_timer = 0.0f;
-            else
-                vehicle.m_current_lap_timer += deltaTime;
-            vehicle.m_total_progress = vehicle.m_completed_laps + vehicle.m_track_progress;
-            continue;
-        }
-
+        // ПРАКТИКА СЧИТАЕТСЯ ТАК ЖЕ, КАК ГОНКА.
+        //
+        // Раньше здесь стоял выход: вне запущенной сессии круги не записывались
+        // вовсе, только сбрасывался таймер. То есть свободный выезд — а это
+        // большая часть времени на трассе — не давал ни времени круга, ни
+        // лучшего круга, ни секторов, хотя всё нужное для них измеряется
+        // одинаково. Разница между практикой и гонкой не в том, КАК считать, а
+        // в том, что практика ничего не сохраняет (журнал заезда открывается
+        // стартом сессии, см. RaceManager::StartSession).
         if (vehicle.m_is_finished)
         {
             // Just driving after finishing. Ignore laps.
@@ -473,6 +484,14 @@ void RaceManager::Update(float deltaTime)
                 vehicle.m_current_lap_timer = deltaTime * (1.0f - intersectionRatio);
                 vehicle.m_prev_track_progress = vehicle.m_track_progress;
 
+                // Круг начинается ЗДЕСЬ, на линии. Всё, что записано до неё —
+                // выездной круг, и в истории первого боевого круга ему не место:
+                // иначе и линия проезда, и времена секторов считались бы по
+                // куску чужого проезда.
+                const auto out_lap = vehicle.laps.find(vehicle.m_current_lap_number);
+                if (out_lap != vehicle.laps.end())
+                    out_lap->second.samples.clear();
+
                 // Отсюда пойдёт отсчёт первого боевого круга. Момент берём тот
                 // же, что и для зачёта: точку на отрезке, где легла линия.
                 if (crossing.has_source_time)
@@ -539,6 +558,21 @@ void RaceManager::Update(float deltaTime)
                 m_raceTimerRunning = false;
             }
             std::cout << "[SESSION] Session Ended! All cars have finished." << std::endl;
+
+            // Протокол пишется САМ, здесь. Раньше SaveResultsToFile() был
+            // написан, но не вызывался ниоткуда: единственным способом сохранить
+            // результаты оставался Ctrl+S, и заезд, после которого о нём забыли,
+            // пропадал целиком. Заезд объявляют стартом сессии — им же он и
+            // заканчивается, и это единственный момент, когда результат полон.
+            //
+            // На повторе не сохраняем: заезд уже был, и его протокол уже
+            // где-то лежит. Просмотр записи не должен плодить копии — по той же
+            // причине, по которой повтор не открывает журнал телеметрии.
+            if (!m_resultsSaved && !telemetry::replay_is_active())
+            {
+                m_resultsSaved = true;
+                SaveResultsToFile();
+            }
         }
     }
 

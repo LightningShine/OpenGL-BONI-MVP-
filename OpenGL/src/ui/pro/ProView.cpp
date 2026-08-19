@@ -5,6 +5,7 @@
 #include "ProGForce.h"
 #include "ProGForceBars.h"
 #include "ProTrackMap.h"
+#include "ProTrackReport.h"
 #include "ProLaptime.h"
 #include "ProEvents.h"
 #include "ProSectors.h"
@@ -154,6 +155,7 @@ void Render(const ProContext& ctx, float swipeAnim) {
     if (PanelVisible("SessionInfo")) RenderSessionInfoWindow(ctx, vehicleId, sz, panelTopH);
 
     if (PanelVisible("TrackMap"))    RenderTrackMapWindow   (ctx, vehicleId, sz, panelTopH);
+    if (PanelVisible("TrackReport")) RenderTrackReportWindow(ctx, vehicleId, sz, panelTopH);
     if (PanelVisible("Relative"))    RenderRelativeWindow   (ctx, vehicleId, sz, panelTopH);
 
     if (PanelVisible("Events"))      RenderEventsWindow     (ctx, sz, panelTopH);

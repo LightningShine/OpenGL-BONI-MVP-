@@ -21,7 +21,8 @@ static const char* kVisFile = "pro_panels.ini";
 // исходного набора, скрыты: экран и так плотный, а нужны они не всем — кому
 // интересна конкретная перегрузка, включит её в боковом меню.
 static bool defaultVisible(const std::string& key) {
-    return key != "Relative" && key != "GForceLong" && key != "GForceLat";
+    return key != "Relative" && key != "GForceLong" && key != "GForceLat" &&
+           key != "TrackReport";
 }
 
 static void loadVis() {
@@ -78,8 +79,14 @@ static const PanelItem GRP_INFO[] = {
     { "SessionInfo", "Session Info" },   // информация о сессии
     { "Events",      "Events / Log" },   // логи
 };
+// Карты — тоже варианты одного и того же, как и перегрузки: обзорная схема и
+// карта с линией проезда отвечают на разные вопросы об одной трассе.
+static const PanelItem GRP_MAPS[] = {
+    { "TrackMap",    "Track Map"    },   // обзорная схема: где машина сейчас
+    { "TrackReport", "Track Report" },   // линия проезда + слежение
+};
 static const PanelItem GRP_MAP[] = {
-    { "TrackMap", "Track Map"    },      // карта
+    { nullptr,    "Map", GRP_MAPS, IM_ARRAYSIZE(GRP_MAPS) },
     { "Sectors",  "Sectors"      },      // секторы
     { "Relative", "Relative Map" },      // релативная карта (F1)
 };

@@ -1,6 +1,8 @@
 #include "StartStop.h"
 #include "../RaceManager.h"
 #include "../../rendering/Render.h"
+#include "../../network/ReplayPlayer.h"
+#include "../../network/TelemetryIngest.h"
 #include "../../Config.h"
 #include <iostream>
 #include <chrono>
@@ -8,6 +10,19 @@
 void RaceManager::StartSession() {
     ResetSession();
     m_sessionState = SessionState::Active;
+
+    // ЗАПИСЬ ЗАЕЗДА НАЧИНАЕТСЯ ЗДЕСЬ, а не с подключения источника.
+    //
+    // Раньше журнал открывался вместе с приёмником, поэтому каждый свободный
+    // выезд оседал в saves/replays отдельным файлом, и найти среди них
+    // собственно заезд было нечем. Практика теперь считает круги наравне с
+    // гонкой, но на диск не пишется — записью становится то, что оператор
+    // объявил заездом.
+    //
+    // На повторе журнал не открываем: иначе получилась бы запись записи —
+    // повтор тоже поднимает сессию, чтобы круги считались (см. replay_open).
+    if (!telemetry::replay_is_active())
+        telemetry::ingest_start(logging::TelemetryLogSource::Receiver);
     m_raceStartTime = std::chrono::steady_clock::now();
     m_raceTimerRunning = true;
     m_raceElapsedSeconds = 0.0f;
@@ -62,8 +77,17 @@ void RaceManager::StopSession() {
 }
 
 void RaceManager::ResetSession() {
+    // Заезд кончился — закрываем его запись. Дальше идёт практика, а она на
+    // диск не пишется. Деструктор писателя дописывает заголовок и хвост с
+    // трассой, поэтому файл остаётся законченным, даже если сессию сбросили.
+    //
+    // StartSession зовёт ResetSession первой, и это не мешает: там журнал
+    // открывается уже ПОСЛЕ сброса.
+    telemetry::ingest_stop();
+
     m_sessionState = SessionState::Idle;
     m_finishPositions.clear();
+    m_resultsSaved = false;   // следующий заезд сохранит свой протокол
     m_raceTimerRunning = false;
     m_raceElapsedSeconds = 0.0f;
     m_leaderLapsAtStop = 0;

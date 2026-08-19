@@ -1,8 +1,5 @@
-saves/tracks/output 333.txt
 C:/Users/gamer/source/repos/OpenGL-BONI-MVP-/OpenGL/saves/tracks/RULLITIS.txt
 C:/Users/gamer/source/repos/OpenGL-BONI-MVP-/OpenGL/saves/tracks/output 333.txt
-saves/tracks/output_LBTU.txt
 C:/Users/gamer/source/repos/OpenGL-BONI-MVP-/OpenGL/saves/tracks/output_LBTU.txt
-saves/tracks/5school.trk2
 C:/Users/gamer/source/repos/OpenGL-BONI-MVP-/OpenGL/saves/tracks/5school.trk2
-saves/tracks/track_recorded.trk2
+C:/Users/gamer/source/repos/OpenGL-BONI-MVP-/OpenGL/saves/tracks/track_recorded.trk2

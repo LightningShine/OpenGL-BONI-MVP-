@@ -109,7 +109,14 @@ struct LapInfo
 	float gForceX, gForceY;
 	float aceleration, speed;
 	int curentPosition;
-	
+
+	// Где машина была в этот момент — нормализованные координаты, тот же кадр,
+	// что и m_normalized_x/y (без render offset: его накладывает тот, кто
+	// рисует, ровно как для живой позиции). Без них история знает, КОГДА и
+	// НАСКОЛЬКО быстро машина ехала, но не ГДЕ, и построить реальную линию
+	// проезда не из чего — см. панель TRACK REPORT.
+	double x = 0.0;
+	double y = 0.0;
 };
 
 struct CarLapSessions

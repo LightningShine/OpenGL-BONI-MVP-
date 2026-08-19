@@ -259,15 +259,49 @@ namespace {
     constexpr const char* RECENT_LIST_FILE = "recent_files.txt";
     constexpr size_t MAX_RECENT_FILES = 12;
 
+    /// Приводит путь к ОДНОЙ канонической форме: абсолютный, со слэшами вперёд.
+    ///
+    /// Один и тот же трек приходит в список разными путями: из диалога открытия
+    /// — абсолютным, из списка недавних и командной строки — относительным
+    /// (`saves/tracks/...`). Раньше здесь только менялись слэши, поэтому такие
+    /// записи считались разными файлами, и список копил дубликаты одного трека.
     std::string normalizeTrackPath(const std::string& path)
     {
-        std::string normalized = path;
+        namespace fs = std::filesystem;
+
+        std::error_code error;
+        fs::path absolute = fs::absolute(path, error);
+        if (!error)
+        {
+            // weakly_canonical убирает «.» и «..» и разрешает симлинки; файла
+            // может уже не быть — тогда остаётся просто абсолютный путь.
+            const fs::path canonical = fs::weakly_canonical(absolute, error);
+            if (!error && !canonical.empty())
+                absolute = canonical;
+        }
+
+        std::string normalized = error ? path : absolute.string();
         std::replace(normalized.begin(), normalized.end(), '\\', '/');
         return normalized;
     }
 
-    /// Пути в порядке открытия, свежий первым. Отсутствующие файлы отсеиваются:
-    /// трек могли удалить или переименовать между запусками.
+    /// Один и тот же файл или разные. Windows не различает регистр в именах,
+    /// поэтому и здесь он не должен превращать один трек в два.
+    bool isSamePath(const std::string& a, const std::string& b)
+    {
+        if (a.size() != b.size())
+            return false;
+        for (size_t i = 0; i < a.size(); ++i)
+            if (std::tolower(static_cast<unsigned char>(a[i])) !=
+                std::tolower(static_cast<unsigned char>(b[i])))
+                return false;
+        return true;
+    }
+
+    /// Пути в порядке открытия, свежий первым, каждый файл РОВНО ОДИН раз.
+    /// Отсутствующие файлы отсеиваются: трек могли удалить или переименовать
+    /// между запусками. Дубликаты, накопленные прежней версией, схлопываются
+    /// здесь же — остаётся самая свежая запись.
     std::vector<std::string> readRecentList()
     {
         std::vector<std::string> paths;
@@ -277,8 +311,14 @@ namespace {
         {
             if (line.empty())
                 continue;
-            if (std::filesystem::exists(line))
-                paths.push_back(line);
+            if (!std::filesystem::exists(line))
+                continue;
+
+            const std::string normalized = normalizeTrackPath(line);
+            const bool seen = std::any_of(paths.begin(), paths.end(),
+                [&](const std::string& p) { return isSamePath(p, normalized); });
+            if (!seen)
+                paths.push_back(normalized);
         }
         return paths;
     }
@@ -300,8 +340,12 @@ void UI::NoteRecentFile(const std::string& path)
 {
     const std::string normalized = normalizeTrackPath(path);
 
+    // Открыли уже бывший в списке файл — он не добавляется второй раз, а
+    // поднимается наверх. Переполнение срезает самый старый снизу.
     std::vector<std::string> paths = readRecentList();
-    paths.erase(std::remove(paths.begin(), paths.end(), normalized), paths.end());
+    paths.erase(std::remove_if(paths.begin(), paths.end(),
+                               [&](const std::string& p) { return isSamePath(p, normalized); }),
+                paths.end());
     paths.insert(paths.begin(), normalized);
     if (paths.size() > MAX_RECENT_FILES)
         paths.resize(MAX_RECENT_FILES);
@@ -1040,13 +1084,21 @@ void UI::LoadRecentFiles()
     
     // Сначала — то, что реально открывали, в порядке открытия. Это и есть
     // «недавние»: свежий сверху.
+    // Ключ сравнения — путь в нижнем регистре: каталог сканируется отдельно, и
+    // уже открывавшийся трек не должен попасть в список во второй раз только
+    // потому, что в имени другой регистр.
+    auto lower = [](std::string s) {
+        for (char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        return s;
+    };
+
     std::set<std::string> already_listed;
     for (const std::string& path : readRecentList())
     {
         RecentFile file;
         file.path = path;
         file.name = fs::path(path).filename().string();
-        already_listed.insert(file.path);
+        already_listed.insert(lower(file.path));
         m_recentFiles.push_back(file);
     }
 
@@ -1075,7 +1127,7 @@ void UI::LoadRecentFiles()
                     // Convert backslashes to forward slashes for consistency
                     file.path = normalizeTrackPath(file.path);
 
-                    if (already_listed.count(file.path) == 0)
+                    if (already_listed.insert(lower(file.path)).second)
                         m_recentFiles.push_back(file);
                 }
             }

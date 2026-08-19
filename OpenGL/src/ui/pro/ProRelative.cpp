@@ -25,16 +25,21 @@ struct RelCar {
     double      dProg;       // прогресс относительно опорной машины, [-0.5..0.5]
     float       gapTime;     // относительное время, сек (знак = dProg)
     bool        isRef;
+    ImU32       color;       // СВОЙ цвет машины, см. ниже
 };
 
-// Палитра для точек на кольце (опорная всегда золотая, отдельно).
-static const ImU32 RING_PAL[] = {
-    IM_COL32(0x4F, 0x9D, 0xFF, 255), IM_COL32(0x5C, 0xD6, 0x8A, 255),
-    IM_COL32(0xE0, 0x6C, 0x6C, 255), IM_COL32(0xB9, 0x8E, 0xF9, 255),
-    IM_COL32(0x53, 0xC9, 0xC9, 255), IM_COL32(0xE8, 0xA8, 0x4B, 255),
-    IM_COL32(0xD0, 0x6C, 0xB0, 255), IM_COL32(0x9A, 0xC7, 0x4B, 255),
-};
 static constexpr ImU32 REF_COL = IM_COL32(0xDA, 0xA5, 0x40, 255);
+
+/// Цвет машины — её собственный, тот же, каким она нарисована на карте.
+///
+/// Раньше цвет брался из палитры по МЕСТУ в списке, и на каждом обгоне машины
+/// менялись цветами: глазу не за что зацепиться, кольцо превращалось в мигающую
+/// кашу — из-за этого панель и читалась как непонятная. Цвет должен быть
+/// свойством машины, а не её текущего места.
+static ImU32 carColor(const glm::vec3& c)
+{
+    return IM_COL32((int)(c.r * 255.f), (int)(c.g * 255.f), (int)(c.b * 255.f), 255);
+}
 
 static void fmtGap(float g, char* b, size_t n) {
     if (fabsf(g) < 0.0005f) { snprintf(b, n, "0.000"); return; }
@@ -91,6 +96,7 @@ void RenderRelativeWindow(const ProContext& ctx, int32_t vehicleId,
             RelCar c;
             c.id = id; c.name = v.name; c.progress = v.track_progress;
             c.position = 0; c.isRef = (id == vehicleId);
+            c.color = carColor(v.color);
             cars.push_back(std::move(c));
         }
     }
@@ -135,23 +141,39 @@ void RenderRelativeWindow(const ProContext& ctx, int32_t vehicleId,
     float   nSz = nf->FontSize * z;
     float   lSz = lf->FontSize * z;
 
-    // Дорожка кольца тремя цветами секторов (как секторные виджеты: S1 синий,
-    // S2 фиолетовый, S3 красный) — сразу видно, где какой сектор.
-    const ImU32 secCol[3] = { COL_S1, COL_S2, COL_S3 };
+    // Дорожка кольца — БЕЛАЯ, тремя ступенями яркости.
+    //
+    // Цветные секторы (синий/фиолетовый/красный) спорили с точками машин: те
+    // теперь окрашены в собственные цвета машин, и кольцо под ними читалось как
+    // ещё один набор участников. Белый нейтрален, но три белых дуги слились бы
+    // в один круг — поэтому яркость ступенчатая, а между дугами оставлен зазор.
+    // Самая тёмная ступень всё ещё заметно светлее фона панели (#0D0D0D).
+    const ImU32 secCol[3] = {
+        IM_COL32(0xFF, 0xFF, 0xFF, 255),
+        IM_COL32(0xB4, 0xB4, 0xB4, 255),
+        IM_COL32(0x78, 0x78, 0x78, 255),
+    };
     const float ringTh = fmaxf(10.f * z, 7.f);
     const int   SEG = 120;
+
+    // Зазор на стыке дуг — доля сектора, а не пиксели: кольцо меняет размер
+    // вместе с панелью, и зазор обязан меняться с ним.
+    const double SECTOR_GAP = 0.006;
     for (int i = 0; i < SEG; ++i) {
         double p0 = (double)i / SEG, p1 = (double)(i + 1) / SEG;
         int sec = (int)(p0 * 3.0); if (sec > 2) sec = 2;
+
+        // Не рисуем у самых границ сектора — там остаётся тёмный просвет.
+        const double within = p0 * 3.0 - sec;              // 0..1 внутри сектора
+        if (within < SECTOR_GAP * 3.0 || within > 1.0 - SECTOR_GAP * 3.0)
+            continue;
+
         dl->AddLine(ringPos(p0, R), ringPos(p1, R), secCol[sec], ringTh);
     }
-    dl->AddCircle({ cx, cy }, R, IM_COL32(0x10, 0x10, 0x10, 220), 120, 1.6f); // тёмная осевая
 
-    // Границы секторов: риски поперёк дорожки + подписи S1/S2/S3 у середины дуг.
+    // Границы секторов: подписи S1/S2/S3 у середины дуг, в тон своей дуге.
+    // Отдельные риски не нужны — границу теперь показывает сам зазор.
     for (int b = 0; b < 3; ++b) {
-        double bp = (double)b / 3.0;
-        dl->AddLine(ringPos(bp, R - ringTh - 1.f), ringPos(bp, R + ringTh + 1.f),
-                    IM_COL32(0x18, 0x18, 0x18, 255), 2.f);
         double mp = ((double)b + 0.5) / 3.0;
         ImVec2 lp = ringPos(mp, R + 17.f * z);
         char sl[4]; snprintf(sl, sizeof(sl), "S%d", b + 1);
@@ -185,22 +207,23 @@ void RenderRelativeWindow(const ProContext& ctx, int32_t vehicleId,
     // ── Машины на кольце: крупные, с тёмной подложкой и номером ────────────────
     const float dotR    = fmaxf(11.f * z, 9.f);
     const float refDotR = fmaxf(14.f * z, 11.f);
-    int palIdx = 0;
     for (auto& c : cars) {                          // прочие сначала
         if (c.isRef) continue;
         ImVec2 p  = ringPos(c.progress, R);
-        ImU32  col = RING_PAL[palIdx++ % (int)(sizeof(RING_PAL) / sizeof(RING_PAL[0]))];
         dl->AddCircleFilled(p, dotR + 2.5f, IM_COL32(0x08, 0x08, 0x08, 255));
-        dl->AddCircleFilled(p, dotR, col);
+        dl->AddCircleFilled(p, dotR, c.color);
         char nb[8]; snprintf(nb, sizeof(nb), "%d", c.position > 0 ? c.position : c.id);
         float tw = nf->CalcTextSizeA(nSz, FLT_MAX, 0.f, nb).x;
         dl->AddText(nf, nSz, { p.x - tw * 0.5f, p.y - nSz * 0.5f }, IM_COL32(0x08, 0x08, 0x08, 255), nb);
     }
     for (auto& c : cars) {                          // опорная поверх, с именем в центре
         if (!c.isRef) continue;
+        // Выбранная машина — своим же цветом, но крупнее и в белом кольце:
+        // «эта выбрана» не должно перекрашивать её, иначе цвет снова начинает
+        // означать не машину, а состояние.
         ImVec2 p = ringPos(c.progress, R);
         dl->AddCircleFilled(p, refDotR + 3.5f, IM_COL32(0x08, 0x08, 0x08, 255));
-        dl->AddCircleFilled(p, refDotR, REF_COL);
+        dl->AddCircleFilled(p, refDotR, c.color);
         dl->AddCircle(p, refDotR, IM_COL32(0xFF, 0xFF, 0xFF, 255), 24, 2.f);
         char nb[8]; snprintf(nb, sizeof(nb), "%d", c.position > 0 ? c.position : c.id);
         float tw = nf->CalcTextSizeA(nSz, FLT_MAX, 0.f, nb).x;
@@ -221,7 +244,6 @@ void RenderRelativeWindow(const ProContext& ctx, int32_t vehicleId,
     float   rowH = rSz + 9.f * z;
     float   padX = 8.f * z;
     float   ty   = base.y + 4.f;
-    int     palRow = 0;
 
     for (auto& c : cars) {
         if (ty + rowH > base.y + availH) break;
@@ -229,11 +251,10 @@ void RenderRelativeWindow(const ProContext& ctx, int32_t vehicleId,
         if (c.isRef)
             dl->AddRectFilled(rmin, rmax, IM_COL32(0xDA, 0xA5, 0x40, 40));
 
-        // Цветной маркер позиции слева (совпадает с кольцом).
-        ImU32 mcol = c.isRef ? REF_COL
-                             : RING_PAL[palRow % (int)(sizeof(RING_PAL) / sizeof(RING_PAL[0]))];
-        if (!c.isRef) palRow++;
-        dl->AddRectFilled({ towerX + 2.f, ty + 2.f }, { towerX + 5.f, ty + rowH - 2.f }, mcol);
+        // Цветной маркер слева — цвет самой машины, тот же, что и на кольце.
+        // Здесь он раньше брался по НОМЕРУ СТРОКИ, а строки отсортированы по
+        // отставанию: машина меняла цвет всякий раз, когда её обгоняли.
+        dl->AddRectFilled({ towerX + 2.f, ty + 2.f }, { towerX + 5.f, ty + rowH - 2.f }, c.color);
 
         char pb[8]; snprintf(pb, sizeof(pb), "%d", c.position > 0 ? c.position : c.id);
         dl->AddText(nf, rSz, { towerX + padX, ty + (rowH - rSz) * 0.5f },
