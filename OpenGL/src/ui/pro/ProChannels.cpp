@@ -21,7 +21,7 @@ void RenderChannelsWindow(const ProContext& ctx, int32_t vehicleId,
 
     float w = ImGui::GetWindowWidth();
     float z = PanelZoom("Channels");
-    DrawPanelHeader(ctx, "CHANELS", false, nullptr, z, "Channels");
+    DrawPanelHeader(ctx, "CHANELS", false, "Channels");
     ImGui::SetWindowFontScale(z);
 
     // Данные машины — из опубликованного снимка, а не из рабочего состояния
@@ -68,12 +68,14 @@ void RenderChannelsWindow(const ProContext& ctx, int32_t vehicleId,
 
     // Каналы панели — только те, что реально приходят с трекера.
     //
-    // Каналы 0-7 (обороты, передача, газ, тормоз, руль, температуры, топливо)
-    // отсюда убраны: это шина CAN, которой у нас нет, и панель показывала
-    // ЗАШИТЫЕ В КОД числа. Постоянные «9158 rpm» и «92 C» на экране инженера
-    // неотличимы от настоящих данных — а решения по ним принимают всерьёз.
-    // Номера оставшихся каналов не сдвинуты: они привязаны к смыслу канала, и
-    // при появлении CAN нижние номера займут свои места, не переименовывая эти.
+    // Каналы шины CAN (обороты, передача, газ, тормоз, руль, температуры,
+    // топливо) отсюда убраны: такой шины у нас нет, и панель показывала ЗАШИТЫЕ
+    // В КОД числа. Постоянные «9158 rpm» и «92 C» на экране инженера неотличимы
+    // от настоящих данных — а решения по ним принимают всерьёз.
+    //
+    // Нумерация сплошная с единицы: номер здесь — порядок строки в списке, а не
+    // адрес канала в каком-либо протоколе. Дыра в начале (список открывался
+    // восьмёркой) читалась как «шесть каналов из тринадцати потеряны».
     struct Ch { int id; const char* name; const char* val; ImU32 valCol; };
 
     snprintf(vb, sizeof(vb), "%.1f km/h", speed); char vSpeed[24]; snprintf(vSpeed, 24, "%s", vb);
@@ -83,12 +85,12 @@ void RenderChannelsWindow(const ProContext& ctx, int32_t vehicleId,
     char vProg[24];  snprintf(vProg,  24, "%.1f %%", progress * 100.0);
 
     const Ch channels[] = {
-        {  8, "Speed",     vSpeed,      COL_WHITE  },
-        {  9, "gForce Lg", vGLong,      COL_WHITE  },
-        { 10, "gForce Lt", vGLat,       COL_WHITE  },
-        { 11, "Accel",     vAccel,      COL_WHITE  },
-        { 12, "GPS Fix",   fixLabel,    fixCol     },
-        { 13, "Lap Prog",  vProg,       COL_WHITE  },
+        { 1, "Speed",     vSpeed,   COL_WHITE },
+        { 2, "gForce Lg", vGLong,   COL_WHITE },
+        { 3, "gForce Lt", vGLat,    COL_WHITE },
+        { 4, "Accel",     vAccel,   COL_WHITE },
+        { 5, "GPS Fix",   fixLabel, fixCol    },
+        { 6, "Lap Prog",  vProg,    COL_WHITE },
     };
 
     float scrollH = ImGui::GetContentRegionAvail().y;

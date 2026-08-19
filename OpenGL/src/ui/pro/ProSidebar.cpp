@@ -17,10 +17,11 @@ static std::unordered_map<std::string, bool> g_visible;
 static bool g_visLoaded = false;
 static const char* kVisFile = "pro_panels.ini";
 
-// Значение по умолчанию, если ключа ещё нет в файле. Все существующие панели
-// показаны, релативная карта скрыта — чтобы не менять привычный вид с ходу.
+// Значение по умолчанию, если ключа ещё нет в файле. Панели, добавленные позже
+// исходного набора, скрыты: экран и так плотный, а нужны они не всем — кому
+// интересна конкретная перегрузка, включит её в боковом меню.
 static bool defaultVisible(const std::string& key) {
-    return key != "Relative";
+    return key != "Relative" && key != "GForceLong" && key != "GForceLat";
 }
 
 static void loadVis() {
@@ -57,13 +58,23 @@ void SetPanelVisible(const char* key, bool v) {
 void TogglePanel(const char* key) { SetPanelVisible(key, !PanelVisible(key)); }
 
 // ── Определение групп бокового меню ──────────────────────────────────────────
-struct PanelItem { const char* key; const char* label; };
+//
+// Пункт — это либо панель (задан `key`), либо ПОДМЕНЮ (key == nullptr, задан
+// список `items`). Подменю нужно там, где панели — варианты одного и того же:
+// три вида перегрузки в плоском списке выглядели тремя разными вещами, хотя
+// выбирают из них обычно одну.
+struct PanelItem
+{
+    const char*      key;              // nullptr = подменю
+    const char*      label;
+    const PanelItem* items = nullptr;  // содержимое подменю
+    int              count = 0;
+};
 struct MenuGroup { const char* title; int icon; const PanelItem* items; int count; };
 
 // Подписи английские — атлас шрифтов грузится без кириллицы, как и вся PRO-панель.
 static const PanelItem GRP_INFO[] = {
     { "LapList",     "Lap List"     },   // информация о кругах
-    { "LapInfo",     "Lap Info"     },   // информация о круге
     { "SessionInfo", "Session Info" },   // информация о сессии
     { "Events",      "Events / Log" },   // логи
 };
@@ -72,44 +83,72 @@ static const PanelItem GRP_MAP[] = {
     { "Sectors",  "Sectors"      },      // секторы
     { "Relative", "Relative Map" },      // релативная карта (F1)
 };
+// Перегрузки — один пункт с выбором вида: круговая диаграмма показывает обе оси
+// сразу, столбики — по одной оси каждый.
+static const PanelItem GRP_GFORCE[] = {
+    { "GForce",     "Combined"     },    // круговая диаграмма (обе оси)
+    { "GForceLong", "Longitudinal" },    // продольная столбиком
+    { "GForceLat",  "Lateral"      },    // поперечная столбиком
+};
 static const PanelItem GRP_DATA[] = {
-    { "Laptime",  "Laptime"  },          // время круга
-    { "GForce",   "G-Force"  },          // перегрузки
-    { "Channels", "Channels" },          // каналы/графики
+    { "Laptime",  "Laptime"  },                                        // время круга
+    { nullptr,    "G-Force", GRP_GFORCE, IM_ARRAYSIZE(GRP_GFORCE) },   // перегрузки
+    { "Channels", "Channels" },                                        // каналы/графики
 };
 
+// Длина списка берётся у самого списка. Заданная числом, она разошлась с ним
+// при первом же удалении панели, и меню читало элемент за концом массива —
+// приложение вставало намертво на битой строке.
 static const MenuGroup GROUPS[] = {
-    { "INFO",       0, GRP_INFO, 4 },
-    { "MAP",        1, GRP_MAP,  3 },
-    { "DATA",       2, GRP_DATA, 3 },
+    { "INFO",       0, GRP_INFO, IM_ARRAYSIZE(GRP_INFO) },
+    { "MAP",        1, GRP_MAP,  IM_ARRAYSIZE(GRP_MAP)  },
+    { "DATA",       2, GRP_DATA, IM_ARRAYSIZE(GRP_DATA) },
 };
-static const int GROUP_COUNT = 3;
+static const int GROUP_COUNT = IM_ARRAYSIZE(GROUPS);
 
-// Размер fly-out группы (ширина по самой длинной подписи, высота по числу строк).
+// Размер fly-out меню (ширина по самой длинной подписи, высота по числу строк).
 // rowH/hdrH возвращаются наружу, чтобы отрисовка и раскладка совпадали.
-static ImVec2 flyoutSize(const ProContext& ctx, const MenuGroup& g,
+static ImVec2 flyoutSize(const ProContext& ctx, const char* title,
+                         const PanelItem* items, int count,
                          float& rowH, float& hdrH) {
     ImFont* f   = ctx.regular ? ctx.regular : ImGui::GetFont();
     float   fSz = f->FontSize;
     rowH = fSz + 12.f;
     hdrH = fSz + 10.f;
     const float padX = 12.f, dot = 6.f;
-    float maxW = f->CalcTextSizeA(fSz, FLT_MAX, 0.f, g.title).x;
-    for (int i = 0; i < g.count; ++i)
-        maxW = fmaxf(maxW, f->CalcTextSizeA(fSz, FLT_MAX, 0.f, g.items[i].label).x);
+    float maxW = f->CalcTextSizeA(fSz, FLT_MAX, 0.f, title).x;
+    for (int i = 0; i < count; ++i)
+        maxW = fmaxf(maxW, f->CalcTextSizeA(fSz, FLT_MAX, 0.f, items[i].label).x);
     float menuW = maxW + padX * 3.f + dot * 2.f + 18.f;
-    float menuH = hdrH + rowH * g.count + 8.f;
+    float menuH = hdrH + rowH * count + 8.f;
     return { menuW, menuH };
 }
 
-// ── Fly-out меню для одной группы ────────────────────────────────────────────
+static ImVec2 flyoutSize(const ProContext& ctx, const MenuGroup& g,
+                         float& rowH, float& hdrH) {
+    return flyoutSize(ctx, g.title, g.items, g.count, rowH, hdrH);
+}
+
+/// Включена ли хоть одна панель подменю — по этому признаку строка подменю
+/// светится так же, как включённая панель.
+static bool anyVisible(const PanelItem& item) {
+    for (int i = 0; i < item.count; ++i)
+        if (PanelVisible(item.items[i].key)) return true;
+    return false;
+}
+
+// ── Fly-out меню ─────────────────────────────────────────────────────────────
 // Позиция/размер уже посчитаны вызывающим (для геометрической проверки наведения).
-static void drawFlyout(const ProContext& ctx, const MenuGroup& g,
-                       ImVec2 pos, ImVec2 size, float rowH, float hdrH) {
+// Возвращает индекс строки-подменю, над которой стоит курсор (-1, если такой
+// нет): её содержимое рисует вызывающий, вторым уровнем левее.
+static int drawFlyout(const ProContext& ctx, const char* title, const char* id_suffix,
+                      const PanelItem* items, int count,
+                      ImVec2 pos, ImVec2 size, float rowH, float hdrH) {
     ImFont* f    = ctx.regular ? ctx.regular : ImGui::GetFont();
     float   fSz  = f->FontSize;
     const float padX = 12.f, dot = 6.f;
     float menuW = size.x;
+    int   hoveredSub = -1;
 
     ImGui::SetNextWindowPos(pos);
     ImGui::SetNextWindowSize(size);
@@ -118,7 +157,7 @@ static void drawFlyout(const ProContext& ctx, const MenuGroup& g,
     ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(22, 22, 22, 252));
     ImGui::PushStyleColor(ImGuiCol_Border,   IM_COL32(0xDA, 0xA5, 0x40, 120));
 
-    char id[32]; snprintf(id, sizeof(id), "##flyout_%d", g.icon);
+    char id[48]; snprintf(id, sizeof(id), "##flyout_%s", id_suffix);
     ImGui::Begin(id, nullptr,
         ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
         ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse |
@@ -130,16 +169,17 @@ static void drawFlyout(const ProContext& ctx, const MenuGroup& g,
 
     // Заголовок группы — золотистый, Russo.
     ImFont* tf = ctx.russo ? ctx.russo : f;
-    dl->AddText(tf, tf->FontSize, { wp.x + padX, wp.y + 5.f }, IM_COL32(0xDA, 0xA5, 0x40, 255), g.title);
+    dl->AddText(tf, tf->FontSize, { wp.x + padX, wp.y + 5.f }, IM_COL32(0xDA, 0xA5, 0x40, 255), title);
     dl->AddLine({ wp.x, wp.y + hdrH }, { wp.x + menuW, wp.y + hdrH }, IM_COL32(0xDA, 0xA5, 0x40, 90), 1.f);
 
     // Строки-переключатели.
-    for (int i = 0; i < g.count; ++i) {
-        const PanelItem& it = g.items[i];
+    for (int i = 0; i < count; ++i) {
+        const PanelItem& it = items[i];
+        const bool submenu = (it.key == nullptr);
         float ry = wp.y + hdrH + 4.f + i * rowH;
         ImVec2 rmin = { wp.x, ry }, rmax = { wp.x + menuW, ry + rowH };
         bool hov = ImGui::IsMouseHoveringRect(rmin, rmax, false);
-        bool on  = PanelVisible(it.key);
+        bool on  = submenu ? anyVisible(it) : PanelVisible(it.key);
 
         if (hov) dl->AddRectFilled(rmin, rmax, IM_COL32(0x2E, 0x2E, 0x2E, 255));
 
@@ -152,12 +192,22 @@ static void drawFlyout(const ProContext& ctx, const MenuGroup& g,
                       : (hov ? IM_COL32(0xC0, 0xC0, 0xC0, 255) : IM_COL32(0x8A, 0x8A, 0x8A, 255));
         dl->AddText(f, fSz, { wp.x + padX * 2.f + dot * 2.f, ry + (rowH - fSz) * 0.5f }, tc, it.label);
 
-        if (hov && ImGui::IsMouseClicked(0)) TogglePanel(it.key);
+        if (submenu) {
+            // Стрелка ВЛЕВО: подменю раскрывается в ту же сторону, что и само
+            // меню от полосы, — читается как «здесь есть продолжение».
+            const float ax = wp.x + padX * 0.6f, ay = ry + rowH * 0.5f, ah = 4.f;
+            dl->AddTriangleFilled({ ax, ay }, { ax + ah, ay - ah }, { ax + ah, ay + ah }, tc);
+            if (hov) hoveredSub = i;
+        }
+        else if (hov && ImGui::IsMouseClicked(0)) {
+            TogglePanel(it.key);
+        }
     }
 
     ImGui::End();
     ImGui::PopStyleColor(2);
     ImGui::PopStyleVar(2);
+    return hoveredSub;
 }
 
 void RenderSidebar(const ProContext& ctx, ImVec2 vpSz, float topH, float botH) {
@@ -231,10 +281,14 @@ void RenderSidebar(const ProContext& ctx, ImVec2 vpSz, float topH, float botH) {
     // над самим меню. Проверка наведения — ГЕОМЕТРИЧЕСКАЯ: зона тянется от левого
     // края меню до правого края полосы (мостик), так что при переводе мыши с иконки
     // на список нет «мёртвого» зазора, где меню закрывалось бы.
+    static int s_openSub = -1;   // строка-подменю, раскрытая в этом меню
+
     int drawGroup = hoveredIcon >= 0 ? hoveredIcon : s_openGroup;
     if (drawGroup >= 0) {
+        const MenuGroup& group = GROUPS[drawGroup];
+
         float rowH = 0.f, hdrH = 0.f;
-        ImVec2 fsz = flyoutSize(ctx, GROUPS[drawGroup], rowH, hdrH);
+        ImVec2 fsz = flyoutSize(ctx, group, rowH, hdrH);
         ImVec2 anchor = iconAnchor[drawGroup];      // { левый край полосы, центр иконки Y }
         ImVec2 pos = { anchor.x - fsz.x, anchor.y - fsz.y * 0.5f };
         if (pos.y < vp->WorkPos.y + 4.f) pos.y = vp->WorkPos.y + 4.f;
@@ -246,12 +300,45 @@ void RenderSidebar(const ProContext& ctx, ImVec2 vpSz, float topH, float botH) {
         bool overFlyout = m.x >= pos.x && m.x <= wp.x + STRIP_W &&
                           m.y >= pos.y && m.y <= pos.y + fsz.y;
 
-        drawFlyout(ctx, GROUPS[drawGroup], pos, fsz, rowH, hdrH);
+        char suffix[16]; snprintf(suffix, sizeof(suffix), "%d", group.icon);
+        const int hoveredSub = drawFlyout(ctx, group.title, suffix, group.items, group.count,
+                                          pos, fsz, rowH, hdrH);
 
-        if (hoveredIcon >= 0 || overFlyout) s_openGroup = drawGroup;
-        else                                s_openGroup = -1;
+        // ── Второй уровень ───────────────────────────────────────────────────
+        // Раскрыт, пока курсор над своей строкой либо над самим подменю. Как и
+        // на первом уровне, проверка геометрическая: между меню и подменю есть
+        // зазор в пиксель-другой, и на «настоящем» наведении окна подменю
+        // схлопывалось бы ровно в момент перевода мыши.
+        int openSub = (hoveredSub >= 0) ? hoveredSub : s_openSub;
+        bool overSub = false;
+        if (openSub >= 0 && openSub < group.count && group.items[openSub].key == nullptr) {
+            const PanelItem& parent = group.items[openSub];
+
+            float subRowH = 0.f, subHdrH = 0.f;
+            ImVec2 ssz = flyoutSize(ctx, parent.label, parent.items, parent.count,
+                                    subRowH, subHdrH);
+
+            // Верх подменю — на уровне своей строки, но целиком внутри экрана.
+            ImVec2 spos = { pos.x - ssz.x, pos.y + hdrH + 4.f + openSub * rowH - subHdrH - 4.f };
+            if (spos.y < vp->WorkPos.y + 4.f) spos.y = vp->WorkPos.y + 4.f;
+            if (spos.y + ssz.y > vp->WorkPos.y + vp->WorkSize.y - 4.f)
+                spos.y = vp->WorkPos.y + vp->WorkSize.y - ssz.y - 4.f;
+
+            overSub = m.x >= spos.x && m.x <= pos.x + fsz.x &&
+                      m.y >= spos.y && m.y <= spos.y + ssz.y;
+
+            char subSuffix[24]; snprintf(subSuffix, sizeof(subSuffix), "%d_%d", group.icon, openSub);
+            drawFlyout(ctx, parent.label, subSuffix, parent.items, parent.count,
+                       spos, ssz, subRowH, subHdrH);
+        }
+
+        s_openSub = (hoveredSub >= 0 || overSub) ? openSub : -1;
+
+        if (hoveredIcon >= 0 || overFlyout || overSub) s_openGroup = drawGroup;
+        else                                          s_openGroup = -1;
     } else {
         s_openGroup = -1;
+        s_openSub = -1;
     }
 }
 

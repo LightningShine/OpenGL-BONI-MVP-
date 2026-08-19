@@ -19,8 +19,6 @@
 
 extern RaceManager* g_race_manager;
 extern std::vector<SplinePoint> g_smooth_track_points;
-extern std::map<int32_t, Vehicle> g_vehicles;
-extern std::mutex g_vehicles_mutex;
 
 namespace Pro {
 
@@ -44,49 +42,6 @@ static void fmtSector(float s, char* b, size_t n) {
     else       snprintf(b, n, "%.3f", r);
 }
 
-// Time at which each sector boundary (0, 1/3, 2/3, 1) was first crossed in a lap.
-// bt[i] = -1 when not reached yet. Robust to noisy/non-monotonic progress.
-static void crossTimes(const std::vector<LapInfo>& s, float bt[4]) {
-    for (int i = 0; i < 4; ++i) bt[i] = -1.f;
-    if (s.size() < 2) return;
-    double prevMaxP = s.front().progress;
-    float  prevT    = s.front().timefromstart;
-    int    nb       = 0;
-    while (nb <= 3 && (double)nb / 3.0 <= prevMaxP) bt[nb++] = prevT;
-    for (size_t i = 1; i < s.size(); ++i) {
-        double p = s[i].progress; if (p < prevMaxP) p = prevMaxP;
-        float  t = s[i].timefromstart;
-        while (nb <= 3 && (double)nb / 3.0 <= p) {
-            double bp = (double)nb / 3.0, den = p - prevMaxP;
-            double f = den > 1e-9 ? (bp - prevMaxP) / den : 1.0;
-            bt[nb++] = prevT + (t - prevT) * (float)f;
-        }
-        prevMaxP = p; prevT = t;
-    }
-}
-
-// Sector times for a COMPLETED lap. The final boundary (progress 1.0) is rarely
-// sampled exactly — the lap ends at the finish line — so sector 3 is closed off
-// with the lap's recorded total time.
-static void secCompleted(const std::vector<LapInfo>& s, float lapTime,
-                         float out[3], bool v[3]) {
-    float bt[4]; crossTimes(s, bt);
-    if (bt[3] < 0.f && lapTime > 0.f && bt[2] >= 0.f) bt[3] = lapTime;
-    for (int k = 0; k < 3; ++k) {
-        if (bt[k] >= 0.f && bt[k + 1] >= 0.f) { out[k] = bt[k + 1] - bt[k]; v[k] = true; }
-        else { out[k] = 0.f; v[k] = false; }
-    }
-}
-
-static void accMin(float dst[3], bool dv[3], const float z[3], const bool zv[3]) {
-    for (int k = 0; k < 3; ++k)
-        if (zv[k] && (!dv[k] || z[k] < dst[k])) { dst[k] = z[k]; dv[k] = true; }
-}
-static void accMax(float dst[3], bool dv[3], const float z[3], const bool zv[3]) {
-    for (int k = 0; k < 3; ++k)
-        if (zv[k] && (!dv[k] || z[k] > dst[k])) { dst[k] = z[k]; dv[k] = true; }
-}
-
 // All sector-time comparisons for one vehicle, so colorFor stays short.
 struct SecCmp {
     float bestS[3]; bool bestV[3] = { false };   // own best PER SECTOR (all laps)
@@ -106,55 +61,72 @@ static SecStyle colorFor(float secT, const SecCmp& c, int i) {
 }
 
 // Per-vehicle display state so finished-lap sectors persist for HOLD_SECS.
+//
+// Окно удержания живёт по часам ЗАЕЗДА (SessionTimeSeconds), а не по стенным.
+// На повторе стенные часы идут, даже когда запись стоит: панель сама, без
+// единого действия оператора, через десять секунд переключалась с секторов
+// завершённого круга на текущий — то самое «показывает то 15 секунд, то пару».
+// Границы окна храним обе: перемотка назад может унести точку записи ЛЕВЕЕ
+// начала окна, и тогда удержание надо снять, а не держать вечно.
 struct SecHold {
     int  lastLap = INT_MIN;
     bool has     = false;
     char tstr[3][16];
     SecStyle sty[3];
-    std::chrono::steady_clock::time_point holdUntil;
+    float holdFrom  = 0.f;   // секунды заезда
+    float holdUntil = 0.f;
 };
 static std::map<int32_t, SecHold> s_hold;
 
-// Shared with LAP INFO — same freeze/live logic as the map's sector widgets.
+// Секторы одной машины для панелей. Общая точка для карты и LAP INFO.
+//
+// Читает ИЗМЕРЕННЫЕ времена — разности меток пересечения точек замера, — а не
+// разбор накопленного лога телеметрии. Отсюда и главное свойство: сумма
+// секторов равна времени круга, а на одной и той же точке записи числа всегда
+// одни и те же. См. SECTOR_COUNT в Vehicle.h.
 SectorSnapshot GetSectorSnapshot(int32_t vehicleId) {
     SectorSnapshot s;
     for (int i = 0; i < 3; ++i) { s.t[i] = -1.f; s.live[i] = false; s.delta[i] = 0.f; s.hasDelta[i] = false; }
 
-    float curBt[4] = { -1.f, -1.f, -1.f, -1.f };
-    float bestS[3]; bool bestV[3] = { false };
-    float lastS[3]; bool lastV[3] = { false };
+    const std::shared_ptr<const world::Snapshot> snapshot = world::current();
+    const world::VehicleView* v = world::find(*snapshot, vehicleId);
+    if (v == nullptr) return s;
 
-    std::lock_guard<std::mutex> lk(g_vehicles_mutex);
-    auto it = g_vehicles.find(vehicleId);
-    if (it == g_vehicles.end()) return s;
-    Vehicle& v = it->second;
-    auto lapTimeOf = [&](int ln) -> float {
-        auto m = v.m_laps.find(ln);
-        return (m != v.m_laps.end()) ? m->second.lapTime : -1.f;
-    };
-    int   curLap   = v.m_current_lap_number;
-    float curTimer = v.m_current_lap_timer;
-
-    auto cit = v.laps.find(curLap);
-    if (cit != v.laps.end()) crossTimes(cit->second.samples, curBt);
-    for (auto& [ln, sess] : v.laps) {
-        float z[3]; bool zv[3]; secCompleted(sess.samples, lapTimeOf(ln), z, zv);
-        accMin(bestS, bestV, z, zv);
+    // Личный лучший ПО КАЖДОМУ сектору, по завершённым кругам. Лучший сектор и
+    // лучший круг — разные вещи: сектор сравнивается со своим лучшим за сессию.
+    float bestS[3]; bool bestV[3] = { false, false, false };
+    for (const auto& [lapNumber, lap] : v->laps) {
+        for (int i = 0; i < 3; ++i) {
+            const float t = lap.sectors[i];
+            if (t <= 0.f) continue;
+            if (!bestV[i] || t < bestS[i]) { bestS[i] = t; bestV[i] = true; }
+        }
     }
-    auto lit = v.laps.find(curLap - 1);
-    if (lit != v.laps.end()) secCompleted(lit->second.samples, lapTimeOf(curLap - 1), lastS, lastV);
+
+    // Секторы предыдущего круга — ими закрываются клетки, до которых машина на
+    // текущем круге ещё не доехала.
+    const auto prevLap = v->laps.find(v->current_lap_number - 1);
+    const bool hasPrev = (prevLap != v->laps.end());
 
     for (int i = 0; i < 3; ++i) {
-        if (curBt[i] >= 0.f && curBt[i + 1] >= 0.f) {
-            s.t[i] = curBt[i + 1] - curBt[i];
-            if (bestV[i]) { s.delta[i] = s.t[i] - bestS[i]; s.hasDelta[i] = true; }
-        } else if (curBt[i] >= 0.f) {
-            float lt = curTimer - curBt[i];
-            s.t[i] = lt < 0.f ? 0.f : lt;
+        const float done = v->sectors[i];
+
+        if (done > 0.f) {
+            // Сектор этого круга пройден — значение окончательное.
+            s.t[i] = done;
+        } else if (i == v->current_sector && v->has_started_first_lap) {
+            // Идущий сектор: время накапливается от входа в него.
+            s.t[i] = v->current_sector_elapsed;
             s.live[i] = true;
-        } else if (lastV[i]) {
-            s.t[i] = lastS[i];
-            if (bestV[i]) { s.delta[i] = s.t[i] - bestS[i]; s.hasDelta[i] = true; }
+        } else if (hasPrev && prevLap->second.sectors[i] > 0.f) {
+            s.t[i] = prevLap->second.sectors[i];
+        } else {
+            continue;   // данных нет — панель покажет прочерк
+        }
+
+        if (!s.live[i] && bestV[i]) {
+            s.delta[i] = s.t[i] - bestS[i];
+            s.hasDelta[i] = true;
         }
     }
     return s;
@@ -246,7 +218,7 @@ void RenderTrackMapWindow(const ProContext& ctx, int32_t vehicleId,
     float uy = h / UIConfig::BASE_HEIGHT;
 
     float z = PanelZoom("TrackMap");
-    DrawPanelHeader(ctx, "TRACK MAP", false, nullptr, z, "TrackMap");
+    DrawPanelHeader(ctx, "TRACK MAP", false, "TrackMap");
 
     ImDrawList* dl   = ImGui::GetWindowDrawList();
     ImVec2      base = ImGui::GetCursorScreenPos();
@@ -257,12 +229,18 @@ void RenderTrackMapWindow(const ProContext& ctx, int32_t vehicleId,
         const char* rotLbl = "ROTATE";
         ImVec2 wp = ImGui::GetWindowPos();
         ImFont* rf = ctx.russo ? ctx.russo : ImGui::GetFont();
-        float rsz = rf->FontSize;
+        // Кегль и отступы — в пунктах × DPI, как у подписи шапки: надпись живёт
+        // в той же полосе и обязана мерить её мерой.
+        float rsz = ui_scale::points(UIConfig::FONT_PT_RUSSO_SMALL);
         float tw  = rf->CalcTextSizeA(rsz, FLT_MAX, 0.f, rotLbl).x;
-        // Сдвинут левее крестика закрытия (≈22px), чтобы не перекрывались.
-        ImVec2 bmin = {wp.x + w - tw - 42.f, wp.y}, bmax = {wp.x + w - 26.f, wp.y + header_h()};
+        // Левее крестика закрытия ровно на его шаг (см. DrawPanelHeader), плюс
+        // зазор — иначе надпись упирается в крестик.
+        const float gap  = ui_scale::points(28.f);
+        const float textX = wp.x + w - tw - gap;
+        ImVec2 bmin = {textX - ui_scale::points(4.f), wp.y};
+        ImVec2 bmax = {textX + tw + ui_scale::points(4.f), wp.y + header_h()};
         bool hov = ImGui::IsMouseHoveringRect(bmin, bmax, false);
-        dl->AddText(rf, rsz, {wp.x + w - tw - 34.f, wp.y + (header_h() - rsz) * 0.5f},
+        dl->AddText(rf, rsz, {textX, wp.y + (header_h() - rsz) * 0.5f},
                     hov ? COL_WHITE : COL_LABEL, rotLbl);
         if (hov && ImGui::IsMouseClicked(0))
             s_map_rot = (s_map_rot + 1) & 3;
@@ -279,13 +257,18 @@ void RenderTrackMapWindow(const ProContext& ctx, int32_t vehicleId,
 
     dl->AddRectFilled(base, {base.x + mapW, base.y + mapH}, COL_BG);
 
-    // ── Gather lap/sector data under the vehicles lock ─────────────────────────
-    float curBt[4]; for (int i = 0; i < 4; ++i) curBt[i] = -1.f;
+    // ── Секторы и круг: всё из снимка, всё по измеренным временам ─────────────
+    // Ни одного обращения к логу телеметрии: время сектора здесь — разность
+    // меток пересечения точек замера (см. SECTOR_COUNT в Vehicle.h). Поэтому
+    // клетки секторов всегда складываются во время круга, а на повторе не
+    // зависят от того, как оператор пришёл в эту точку записи.
     SecCmp cmp;
-    float lastS[3]; bool lastV[3] = { false };
+    float curS[3];  bool curV[3]  = { false, false, false };   // секторы этого круга
+    float lastS[3]; bool lastV[3] = { false, false, false };   // предыдущего круга
     int   curLapNum = 0;
-    double curProg  = 0.0;
-    float curTimer  = 0.f;
+    int   curSector = 0;
+    float curSectorElapsed = 0.f;
+    bool  started   = false;
     std::string dname = "---";
     char  dnum[8] = "-";
     float lapPrev = g_race_manager ? g_race_manager->GetVehiclePreviousLapTime(vehicleId) : -1.f;
@@ -296,46 +279,49 @@ void RenderTrackMapWindow(const ProContext& ctx, int32_t vehicleId,
                 break;
             }
     {
-        std::lock_guard<std::mutex> lk(g_vehicles_mutex);
-        auto lapTimeOf = [](Vehicle& v, int ln) -> float {
-            auto m = v.m_laps.find(ln);
-            return (m != v.m_laps.end()) ? m->second.lapTime : -1.f;
-        };
-        auto it = g_vehicles.find(vehicleId);
-        if (it != g_vehicles.end()) {
-            Vehicle& v = it->second;
-            dname     = v.name;
-            curLapNum = v.m_current_lap_number;
-            curProg   = v.m_track_progress;
-            curTimer  = v.m_current_lap_timer;
+        const std::shared_ptr<const world::Snapshot> snapshot = world::current();
 
-            auto cit = v.laps.find(curLapNum);
-            if (cit != v.laps.end()) crossTimes(cit->second.samples, curBt);
+        if (const world::VehicleView* v = world::find(*snapshot, vehicleId)) {
+            dname            = v->name;
+            curLapNum        = v->current_lap_number;
+            curSector        = v->current_sector;
+            curSectorElapsed = v->current_sector_elapsed;
+            started          = v->has_started_first_lap;
 
-            // Best PER SECTOR across EVERY lap (theoretical-best sectors), so a slow
-            // sector inside an overall-fast lap is still judged against the fastest
-            // that sector has ever been driven.
-            for (auto& [ln, sess] : v.laps) {
-                float z[3]; bool zv[3]; secCompleted(sess.samples, lapTimeOf(v, ln), z, zv);
-                accMin(cmp.bestS, cmp.bestV, z, zv);
-            }
-            auto lit = v.laps.find(curLapNum - 1);
-            if (lit != v.laps.end()) secCompleted(lit->second.samples, lapTimeOf(v, curLapNum - 1), lastS, lastV);
+            for (int i = 0; i < 3; ++i)
+                if (v->sectors[i] > 0.f) { curS[i] = v->sectors[i]; curV[i] = true; }
+
+            // Личный лучший ПО КАЖДОМУ сектору за все круги: медленный сектор
+            // внутри быстрого круга всё равно судится по лучшему проезду
+            // именно этого сектора.
+            for (const auto& [ln, lap] : v->laps)
+                for (int i = 0; i < 3; ++i)
+                    if (lap.sectors[i] > 0.f &&
+                        (!cmp.bestV[i] || lap.sectors[i] < cmp.bestS[i]))
+                    { cmp.bestS[i] = lap.sectors[i]; cmp.bestV[i] = true; }
+
+            const auto lit = v->laps.find(curLapNum - 1);
+            if (lit != v->laps.end())
+                for (int i = 0; i < 3; ++i)
+                    if (lit->second.sectors[i] > 0.f) { lastS[i] = lit->second.sectors[i]; lastV[i] = true; }
         }
-        // Fastest AND slowest run of each sector across every lap of every car.
-        for (auto& [id, v] : g_vehicles)
-            for (auto& [ln, sess] : v.laps) {
-                float z[3]; bool zv[3]; secCompleted(sess.samples, lapTimeOf(v, ln), z, zv);
-                accMin(cmp.sessS, cmp.sessV, z, zv);
-                accMax(cmp.sessW, cmp.sessWV, z, zv);
-            }
+
+        // Лучший и худший проезд каждого сектора среди всех машин.
+        for (const auto& [id, v] : snapshot->vehicles)
+            for (const auto& [ln, lap] : v.laps)
+                for (int i = 0; i < 3; ++i) {
+                    const float t = lap.sectors[i];
+                    if (t <= 0.f) continue;
+                    if (!cmp.sessV[i]  || t < cmp.sessS[i]) { cmp.sessS[i] = t; cmp.sessV[i] = true; }
+                    if (!cmp.sessWV[i] || t > cmp.sessW[i]) { cmp.sessW[i] = t; cmp.sessWV[i] = true; }
+                }
     }
 
     // ── Sector display: live current lap, finalize on cross, hold 10s ──────────
     char     secBuf[3][16];
     SecStyle secSty[3] = { SEC_NONE, SEC_NONE, SEC_NONE };
     {
-        auto now = std::chrono::steady_clock::now();
+        const float now = SessionTimeSeconds();
         SecHold& H = s_hold[vehicleId];
 
         if (H.lastLap != INT_MIN && curLapNum != H.lastLap) {
@@ -345,28 +331,25 @@ void RenderTrackMapWindow(const ProContext& ctx, int32_t vehicleId,
                                     H.sty[i] = colorFor(lastS[i], cmp, i); }
                     else { snprintf(H.tstr[i], sizeof(H.tstr[i]), "--.---"); H.sty[i] = SEC_NONE; }
                 }
-                H.holdUntil = now + std::chrono::seconds(HOLD_SECS);
+                H.holdFrom  = now;
+                H.holdUntil = now + (float)HOLD_SECS;
                 H.has = true;
             }
         }
         H.lastLap = curLapNum;
 
-        if (H.has && now < H.holdUntil) {
+        if (H.has && now >= H.holdFrom && now < H.holdUntil) {
             for (int i = 0; i < 3; ++i) { snprintf(secBuf[i], sizeof(secBuf[i]), "%s", H.tstr[i]); secSty[i] = H.sty[i]; }
         } else {
-            float sc[3]; bool sv[3];
-            for (int k = 0; k < 3; ++k) {
-                if (curBt[k] >= 0.f && curBt[k + 1] >= 0.f) { sc[k] = curBt[k + 1] - curBt[k]; sv[k] = true; }
-                else { sc[k] = 0.f; sv[k] = false; }
-            }
-            int active = (int)(curProg * 3.0); if (active < 0) active = 0; if (active > 2) active = 2;
+            // Сектор пройден — его измеренное время; идёт сейчас — время от
+            // входа в него; ещё не начинался — прочерк. Третьего не дано, и
+            // «пусто между двумя заполненными» больше не появится.
             for (int i = 0; i < 3; ++i) {
-                if (sv[i]) {
-                    fmtSector(sc[i], secBuf[i], sizeof(secBuf[i]));
-                    secSty[i] = colorFor(sc[i], cmp, i);
-                } else if (i == active && curBt[i] >= 0.f) {
-                    float lt = curTimer - curBt[i]; if (lt < 0.f) lt = 0.f;
-                    fmtSector(lt, secBuf[i], sizeof(secBuf[i]));
+                if (curV[i]) {
+                    fmtSector(curS[i], secBuf[i], sizeof(secBuf[i]));
+                    secSty[i] = colorFor(curS[i], cmp, i);
+                } else if (i == curSector && started) {
+                    fmtSector(curSectorElapsed, secBuf[i], sizeof(secBuf[i]));
                     secSty[i] = SEC_NONE;
                 } else {
                     snprintf(secBuf[i], sizeof(secBuf[i]), "--.---");
@@ -384,12 +367,12 @@ void RenderTrackMapWindow(const ProContext& ctx, int32_t vehicleId,
     char     cardBuf[3][16];
     SecStyle cardSty[3];
     for (int i = 0; i < 3; ++i) {
-        if (curBt[i] >= 0.f && curBt[i + 1] >= 0.f) {          // done this lap → frozen
-            float t = curBt[i + 1] - curBt[i];
+        if (curV[i]) {                                         // done this lap → frozen
+            const float t = curS[i];
             fmtSector(t, cardBuf[i], sizeof(cardBuf[i]));
             cardSty[i] = colorFor(t, cmp, i);
-        } else if (curBt[i] >= 0.f) {                          // running now → live
-            float lt = curTimer - curBt[i]; if (lt < 0.f) lt = 0.f;
+        } else if (i == curSector && started) {                // running now → live
+            const float lt = curSectorElapsed;
             fmtSector(lt, cardBuf[i], sizeof(cardBuf[i]));
             cardSty[i] = SEC_NONE;
         } else if (lastV[i]) {                                 // holds previous lap

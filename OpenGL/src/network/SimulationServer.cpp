@@ -1,5 +1,6 @@
 #include "../network/SimulationServer.h"
 #include "../network/ESP32_Code.h"
+#include "../network/ReplayPlayer.h"
 #include "../network/Server.h"
 #include "../vehicle/Vehicle.h"
 #include "../vehicle/VehicleInterpolator.h"
@@ -347,6 +348,15 @@ namespace {
         return track::is_near_track(g_track_geometry, p, radius_meters);
     }
 
+    /// Нормализованные координаты точки по её широте/долготе.
+    void normalized_from_gps(double lat_deg, double lon_deg, double& out_x, double& out_y)
+    {
+        double easting = 0.0;
+        double northing = 0.0;
+        coordinatesToMeters(lat_deg, lon_deg, easting, northing);
+        getCoordinateDifferenceFromOrigin(easting, northing, out_x, out_y);
+    }
+
     static bool isPositionOnCurrentTrack(double x, double y)
     {
         if (!g_is_map_loaded)
@@ -461,8 +471,40 @@ void telemetryCountPacket()
     g_telemetry_packets_per_second.store(static_cast<uint32_t>(g_pps_count), std::memory_order_relaxed);
 }
 
+bool positionIsNearLoadedTrack(double normalized_x, double normalized_y, double radius_meters)
+{
+    return isPositionNearCurrentTrack(normalized_x, normalized_y, radius_meters);
+}
+
+void normalizedFromGps(double lat_deg, double lon_deg, double& out_x, double& out_y)
+{
+    normalized_from_gps(lat_deg, lon_deg, out_x, out_y);
+}
+
 void processIncomingTelemetry(const TelemetryPacket& packet, bool count_pps)
 {
+    // ------------------------------------------------------------------------
+    // ЧУЖИЕ ИСТОЧНИКИ ВО ВРЕМЯ ПОВТОРА
+    //
+    // Пока идёт повтор, в пайплайне живёт ПРОШЛЫЙ заезд. Любой пакет со стороны
+    // — приёмник, который оператор подключил на ходу, машина, приехавшая на
+    // трассу прямо сейчас, поток с Track Server — добавил бы к нему машину из
+    // настоящего времени. На экране она неотличима от участника записи, и
+    // разобрать потом, что было в заезде, а что приехало сбоку, уже нельзя.
+    //
+    // Проверка стоит ЗДЕСЬ, в единственной точке, куда сходятся все источники.
+    // Закрывать каждый источник по отдельности — значит забыть следующий.
+    if (telemetry::replay_is_active() && !telemetry::replay_is_feeding())
+    {
+        static std::atomic<bool> warned{ false };
+        if (!warned.exchange(true))
+        {
+            std::cout << "[TELEMETRY] Replay is open: live telemetry is ignored "
+                         "until it is closed" << std::endl;
+        }
+        return;
+    }
+
     // If we are in telemetry track creation mode, feed packets into builder.
     // Builder will auto-initialize origin from the first packet.
     if (TelemetryTrackBuilder::IsActive())
@@ -561,16 +603,14 @@ void processIncomingTelemetry(const TelemetryPacket& packet, bool count_pps)
     // so we only treat telemetry as incompatible if it is FAR from the whole circuit.
     // If it is near the track (within a large radius), keep the vehicle alive.
     {
-        const double lat_deg = static_cast<double>(packet.lat) / 1e7;
-        const double lon_deg = static_cast<double>(packet.lon) / 1e7;
-        double easting = 0.0;
-        double northing = 0.0;
-        coordinatesToMeters(lat_deg, lon_deg, easting, northing);
         double nx = 0.0;
         double ny = 0.0;
-        getCoordinateDifferenceFromOrigin(easting, northing, nx, ny);
+        normalized_from_gps(static_cast<double>(packet.lat) / 1e7,
+                            static_cast<double>(packet.lon) / 1e7, nx, ny);
 
-        constexpr double kNearTrackRadiusMeters = 1000.0; // 1km
+        // Тот же критерий, по которому проверяется трасса при открытии повтора:
+        // «наша машина» должна значить одно и то же в обоих местах.
+        constexpr double kNearTrackRadiusMeters = TrackConstants::FOREIGN_VEHICLE_RADIUS_METERS;
         const bool nearTrack = isPositionNearCurrentTrack(nx, ny, kNearTrackRadiusMeters);
         const uint32_t now_ms = getMonotonicTimeMs();
         constexpr uint32_t kFarFromTrackGraceMs = 5000; // debounce for wrong-track / wrong-origin
@@ -685,9 +725,11 @@ void processIncomingTelemetry(const TelemetryPacket& packet, bool count_pps)
             vehicle.m_lat_dd = packet.lat / 1e7;
             vehicle.m_lon_dd = packet.lon / 1e7;
             vehicle.m_speed_kph = packet.speed / 100.0;
-            vehicle.m_acceleration = packet.acceleration / 100.0;
-            vehicle.m_g_force_x = packet.gForceX / 100.0;
-            vehicle.m_g_force_y = packet.gForceY / 100.0;
+            // Ускорение и перегрузки — со знаком, как в конструкторе Vehicle
+            // (см. пояснение там).
+            vehicle.m_acceleration = static_cast<int32_t>(packet.acceleration) / 100.0;
+            vehicle.m_g_force_x = static_cast<int16_t>(packet.gForceX) / 100.0;
+            vehicle.m_g_force_y = static_cast<int16_t>(packet.gForceY) / 100.0;
             vehicle.m_fix_type = packet.fixtype;
 
             coordinatesToMeters(vehicle.m_lat_dd, vehicle.m_lon_dd, 
@@ -793,6 +835,52 @@ void processIncomingTelemetry(const TelemetryPacket& packet, bool count_pps)
                                                                       vehicle.m_packet_utc_ms,
                                                                       fraction);
                         }
+                        vehicle.m_pending_crossings.push_back(crossing);
+                    }
+                }
+            }
+
+            // Промежуточные точки замера — здесь же и по той же схеме, что и
+            // линия: момент пересечения интерполируется между метками двух
+            // пакетов. Именно это делает время сектора измерением, а не оценкой
+            // по накопленному логу (см. SECTOR_COUNT в Vehicle.h).
+            //
+            // Ищем по прогрессу, а не по геометрии: в середине круга прогресс
+            // монотонен и без перехода через ноль, поэтому отрезок либо
+            // содержит точку, либо нет — двух толкований быть не может. Своей
+            // линии на карте для каждого сектора при этом не требуется.
+            if (vehicle.m_has_source_time)
+            {
+                const double prev_progress = vehicle.m_prev_track_progress;
+                const double curr_progress = vehicle.m_track_progress;
+
+                // Только движение вперёд и только внутри круга: переход через
+                // старт/финиш (прогресс падает с ~1 на ~0) разбирает линия, а
+                // рывок назад — это шум позиции, а не проезд.
+                if (curr_progress > prev_progress)
+                {
+                    for (int point = 1; point < SECTOR_COUNT; ++point)
+                    {
+                        const double split = sector_split_position(point);
+                        if (prev_progress >= split || curr_progress < split)
+                            continue;
+
+                        if (vehicle.m_pending_crossings.size() >= MAX_PENDING_CROSSINGS)
+                            break;
+
+                        const double span = curr_progress - prev_progress;
+                        const float fraction = span > 1e-9
+                            ? static_cast<float>((split - prev_progress) / span)
+                            : 0.5f;
+
+                        LineCrossing crossing;
+                        crossing.point_index = point;
+                        crossing.fraction = fraction;
+                        crossing.from_geometry = false;
+                        crossing.has_source_time = true;
+                        crossing.utc_ms = racing::utc_at_fraction(vehicle.m_prev_packet_utc_ms,
+                                                                  vehicle.m_packet_utc_ms,
+                                                                  fraction);
                         vehicle.m_pending_crossings.push_back(crossing);
                     }
                 }

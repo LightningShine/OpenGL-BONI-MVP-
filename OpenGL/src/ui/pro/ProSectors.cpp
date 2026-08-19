@@ -36,21 +36,24 @@ static constexpr float SEC_EPS    = 0.005f; // tie tolerance (s)
 // the samples once, tracking the running-MAX progress, and record the time each
 // zone boundary was first reached. A completed zone's time is then fixed forever,
 // regardless of what the car does later — no flicker on hard braking/acceleration.
-static void zoneTimes(const std::vector<LapInfo>& s,
+// Считается по ПЕРВЫМ `n` сэмплам круга, а не по всему вектору: на повторе в
+// истории лежит и то, что на текущей точке ещё не произошло (см.
+// visibleSampleCount в Vehicle.h).
+static void zoneTimes(const LapInfo* s, size_t n,
                       float out[SEC_ZONES], bool valid[SEC_ZONES]) {
     for (int k = 0; k < SEC_ZONES; ++k) { out[k] = 0.f; valid[k] = false; }
-    if (s.size() < 2) return;
+    if (n < 2) return;
 
     float bt[SEC_ZONES + 1];
     for (int i = 0; i <= SEC_ZONES; ++i) bt[i] = -1.f;
 
-    double prevMaxP = s.front().progress;
-    float  prevT    = s.front().timefromstart;
+    double prevMaxP = s[0].progress;
+    float  prevT    = s[0].timefromstart;
     int    nb       = 0;
     // Boundaries already behind the first sample are reached at lap start.
     while (nb <= SEC_ZONES && (double)nb / SEC_ZONES <= prevMaxP) bt[nb++] = prevT;
 
-    for (size_t i = 1; i < s.size(); ++i) {
+    for (size_t i = 1; i < n; ++i) {
         double p = s[i].progress; if (p < prevMaxP) p = prevMaxP; // running max
         float  t = s[i].timefromstart;
         while (nb <= SEC_ZONES && (double)nb / SEC_ZONES <= p) {
@@ -83,7 +86,7 @@ void RenderSectorsWindow(const ProContext& ctx, int32_t vehicleId,
     float w = ImGui::GetWindowWidth();
     float h = ImGui::GetWindowHeight();
     float z = PanelZoom("Sectors");
-    DrawPanelHeader(ctx, "SECTORS", false, nullptr, z, "Sectors");
+    DrawPanelHeader(ctx, "SECTORS", false, "Sectors");
 
     ImDrawList* dl   = ImGui::GetWindowDrawList();
     ImVec2      base = ImGui::GetCursorScreenPos();
@@ -112,7 +115,10 @@ void RenderSectorsWindow(const ProContext& ctx, int32_t vehicleId,
             // Personal best lap → reference times (full lap → all zones valid)
             if (v.bestlapID >= 0) {
                 auto bit = v.laps.find(v.bestlapID);
-                if (bit != v.laps.end()) zoneTimes(bit->second.samples, bestZ, bestV);
+                if (bit != v.laps.end()) {
+                    const auto& smp = bit->second.samples;
+                    zoneTimes(smp.data(), visibleSampleCount(v, v.bestlapID, smp), bestZ, bestV);
+                }
             }
 
             // F1-style live map: color ONLY the current lap, zone by zone as the
@@ -121,8 +127,11 @@ void RenderSectorsWindow(const ProContext& ctx, int32_t vehicleId,
             // resets each lap. So a slow lap shows green where pace matched and
             // yellow/red only in the mini-sectors where time was actually lost.
             auto cit = v.laps.find(v.m_current_lap_number);
-            if (cit != v.laps.end())
-                zoneTimes(cit->second.samples, dispZ, zValid);
+            if (cit != v.laps.end()) {
+                const auto& smp = cit->second.samples;
+                zoneTimes(smp.data(), visibleSampleCount(v, v.m_current_lap_number, smp),
+                          dispZ, zValid);
+            }
         }
 
         // Overall session best per zone (across every car's best lap)
@@ -131,7 +140,8 @@ void RenderSectorsWindow(const ProContext& ctx, int32_t vehicleId,
             auto bit = v.laps.find(v.bestlapID);
             if (bit == v.laps.end()) continue;
             float z[SEC_ZONES]; bool zv[SEC_ZONES];
-            zoneTimes(bit->second.samples, z, zv);
+            const auto& smp = bit->second.samples;
+            zoneTimes(smp.data(), visibleSampleCount(v, v.bestlapID, smp), z, zv);
             for (int k = 0; k < SEC_ZONES; ++k) {
                 if (!zv[k]) continue;
                 if (!sessV[k] || z[k] < sessZ[k]) { sessZ[k] = z[k]; sessV[k] = true; }

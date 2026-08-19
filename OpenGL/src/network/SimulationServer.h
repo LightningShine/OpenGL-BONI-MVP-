@@ -7,6 +7,15 @@
 // count_pps=false lets a caller that receives MULTIPLE car records in one
 // network packet (Track Server state frame) count the packet itself instead.
 void processIncomingTelemetry(const TelemetryPacket& packet, bool count_pps = true);
+
+/// Находится ли точка (в нормализованных координатах трека) ближе
+/// `radius_meters` к загруженной трассе. false, если трассы нет.
+/// Один и тот же критерий «наша машина» для приёма телеметрии и для проверки,
+/// та ли трасса открыта под запись повтора.
+bool positionIsNearLoadedTrack(double normalized_x, double normalized_y, double radius_meters);
+
+/// Широта/долгота -> нормализованные координаты трека (через UTM и origin карты).
+void normalizedFromGps(double lat_deg, double lon_deg, double& out_x, double& out_y);
 void processIncomingVehicleState(const VehicleStatePacket& packet);
 
 // Count one received packet in the PPS window (used with count_pps=false).

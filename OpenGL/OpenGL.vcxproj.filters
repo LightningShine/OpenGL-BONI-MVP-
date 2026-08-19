@@ -153,7 +153,10 @@
     <ClCompile Include="src\ui\pro\ProGForce.cpp">
       <Filter>src\ui\ProUI</Filter>
     </ClCompile>
-    <ClCompile Include="src\ui\pro\ProLapInfo.cpp">
+    <ClCompile Include="src\ui\pro\ProGForceBars.cpp">
+      <Filter>src\ui\ProUI</Filter>
+    </ClCompile>
+    <ClCompile Include="src\ui\pro\ProSessionInfo.cpp">
       <Filter>src\ui\ProUI</Filter>
     </ClCompile>
     <ClCompile Include="src\ui\pro\ProLapList.cpp">
@@ -291,7 +294,10 @@
     <ClInclude Include="src\ui\pro\ProGForce.h">
       <Filter>src\ui\ProUI</Filter>
     </ClInclude>
-    <ClInclude Include="src\ui\pro\ProLapInfo.h">
+    <ClInclude Include="src\ui\pro\ProGForceBars.h">
+      <Filter>src\ui\ProUI</Filter>
+    </ClInclude>
+    <ClInclude Include="src\ui\pro\ProSessionInfo.h">
       <Filter>src\ui\ProUI</Filter>
     </ClInclude>
     <ClInclude Include="src\ui\pro\ProLapList.h">

@@ -649,8 +649,61 @@ int window_width, int window_height, float horizontalBound, float verticalBound)
     glBindVertexArray(0);
 }
 
-int main()
+// Файлы из командной строки: трасса и/или запись телеметрии.
+//
+// Это рабочий сценарий «привезли карту памяти трекера»: файл `.rjl` открывается
+// сразу, без блужданий по меню, а Windows умеет отдавать путь двойным щелчком —
+// ассоциация в инсталляторе уже зарегистрирована, но до сих пор путь просто
+// игнорировался. Порядок аргументов не важен, разбираем по расширению.
+struct StartupFiles
 {
+	std::string track;
+	std::string recording;
+	double      replay_speed = 1.0;
+	// Демонстрационный заезд без железа: тот же синтетический источник, что и по
+	// клавише G. Идёт через полный тракт приёма, поэтому годится и как проверка
+	// хронометража, и как показ работы на машине без приёмника.
+	double      sim_speed = 0.0;   // 0 = не запускать
+};
+
+static StartupFiles parse_startup_files(int argc, char** argv)
+{
+	StartupFiles files;
+	for (int i = 1; i < argc; ++i)
+	{
+		const std::string arg = argv[i];
+
+		constexpr const char* SPEED_FLAG = "--speed=";
+		if (arg.rfind(SPEED_FLAG, 0) == 0)
+		{
+			const double value = std::atof(arg.c_str() + std::strlen(SPEED_FLAG));
+			if (value > 0.0)
+				files.replay_speed = value;
+			continue;
+		}
+
+		constexpr const char* SIM_FLAG = "--sim";
+		if (arg.rfind(SIM_FLAG, 0) == 0)
+		{
+			const char* value = arg.c_str() + std::strlen(SIM_FLAG);
+			const double multiplier = (*value == '=') ? std::atof(value + 1) : 1.0;
+			files.sim_speed = (multiplier > 0.0) ? multiplier : 1.0;
+			continue;
+		}
+
+		std::string ext = std::filesystem::path(arg).extension().string();
+		for (char& c : ext) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+
+		if (ext == ".rjl")            files.recording = arg;
+		else if (ext == ".trk2" || ext == ".txt") files.track = arg;
+	}
+	return files;
+}
+
+int main(int argc, char** argv)
+{
+	const StartupFiles startup_files = parse_startup_files(argc, argv);
+
 #ifdef _WIN32
 	// Console in UTF-8, otherwise Cyrillic (track/driver names, paths) prints as '?'
 	SetConsoleOutputCP(CP_UTF8);
@@ -953,7 +1006,27 @@ int main()
 	}
 	g_ui = &ui;
 
+	// Как повтору загрузить трассу, встроенную в запись. Знание о загрузке
+	// остаётся здесь, в приложении: модуль повтора о UI по-прежнему не знает.
+	telemetry::replay_set_track_loader([&ui](const std::filesystem::path& track) {
+		ui.HandleDroppedFile(track.string());
+		return g_is_map_loaded.load();
+	});
+
 	std::cout << "[MAIN] UI initialized successfully" << std::endl;
+
+	// Файлы из командной строки открываются НЕ здесь, а в цикле отрисовки.
+	// Здесь ещё не создан RaceManager, а трасса при загрузке отдаёт ему линию
+	// старт/финиша — присвоение молча пропускалось по нулевому указателю, и
+	// хронометраж потом просто стоял. Плюс трассы формата .txt доезжают до GPU
+	// через pending-consume, то есть готовы лишь через кадр-другой.
+	std::string pending_track = startup_files.track;
+	std::string pending_recording = startup_files.recording;
+	bool pending_sim = (startup_files.sim_speed > 0.0);
+
+	// Сколько кадров запись из командной строки ждёт заданную рядом трассу.
+	// Секунды при 60 кадрах — с запасом на загрузку и подъём геометрии на GPU.
+	int track_wait_frames = startup_files.track.empty() ? 0 : 60;
 
 
 
@@ -1143,6 +1216,63 @@ int main()
 			std::cout << "[MAIN] ✓ Track rendering cache built - track should now be visible!" << std::endl;
 		}
 
+		// Трасса из командной строки. Тот же путь, что и у файла, брошенного на
+		// окно: он не только открывает трассу, но и убирает заставку. Без этого
+		// сцена не рисуется, а вместе с ней не выставляется линия старт/финиша.
+		if (!pending_track.empty() && g_race_manager)
+		{
+			std::cout << "[MAIN] Opening track from command line: "
+			          << pending_track << std::endl;
+			ui.HandleDroppedFile(pending_track);
+			pending_track.clear();
+		}
+		if (track_wait_frames > 0)
+			--track_wait_frames;
+
+		// Отложенное открытие записи из командной строки. Трассу не требуем:
+		// запись может нести её внутри и загрузит сама — это и есть сценарий
+		// «привезли карту памяти, на этой машине трассы никогда не было».
+		//
+		// Если трасса задана рядом с записью, ждём, пока она реально встанет:
+		// формат .txt доезжает до GPU через pending-consume, то есть готов лишь
+		// через кадр-другой, а запись, открытая в тот же кадр, видела «трасса не
+		// загружена» и отказывалась — то открывалась, то нет, по настроению.
+		// Ожидание ограничено: если трасса не загрузилась вовсе, запись всё
+		// равно попробует открыться и объяснит отказ.
+		if (!pending_recording.empty() && pending_track.empty() && g_race_manager &&
+		    (g_is_map_loaded || track_wait_frames == 0))
+		{
+			std::cout << "[MAIN] Opening recording from command line: "
+			          << pending_recording << std::endl;
+
+			// Через UI, а не напрямую: причина отказа должна дойти до экрана
+			// так же, как при открытии из меню.
+			ui.OpenReplayFile(pending_recording);
+			if (telemetry::replay_is_active())
+			{
+				telemetry::replay_set_speed(startup_files.replay_speed);
+				telemetry::replay_toggle_pause();   // открывается на паузе — пускаем
+			}
+			pending_recording.clear();
+		}
+
+		// Демонстрационный заезд из командной строки — тоже по готовности трассы:
+		// генератор строит путь по её геометрии.
+		if (pending_sim && g_is_map_loaded)
+		{
+			telemetry::SyntheticScenario scenario;
+			scenario.speed_multiplier = startup_files.sim_speed;
+			telemetry::synthetic_start(scenario);
+
+			// Заезд сразу боевой: иначе круги не считаются вовсе (в состоянии
+			// Idle хронометраж только крутит таймер), и демонстрировать было бы
+			// нечего.
+			if (g_race_manager)
+				g_race_manager->StartSession();
+
+			pending_sim = false;
+		}
+
 		// Calculate delta time
 		auto currentFrameTime = std::chrono::steady_clock::now();
 		float deltaTime = std::chrono::duration<float>(currentFrameTime - lastFrameTime).count();
@@ -1168,10 +1298,6 @@ int main()
 			g_race_manager->Update(deltaTime);
 		}
 
-		// Ровно здесь, после Update: пересечения разобраны, номер круга и
-		// прогресс уже соответствуют точке воспроизведения — по ним и обрезаем
-		// историю телеметрии, оставшуюся от ещё не проигранной части записи.
-		telemetry::replay_trim_history_if_rewound();
 
 		ui.BeginFrame();
 

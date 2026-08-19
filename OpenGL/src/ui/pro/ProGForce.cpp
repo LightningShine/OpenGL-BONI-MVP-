@@ -23,7 +23,7 @@ void RenderGForceWindow(const ProContext& ctx, int32_t vehicleId,
     float w = ImGui::GetWindowWidth();
     float h = ImGui::GetWindowHeight();
     float z = PanelZoom("GForce");
-    DrawPanelHeader(ctx, "G-FORCE", false, nullptr, z, "GForce");
+    DrawPanelHeader(ctx, "G-FORCE", false, "GForce");
 
     // Из снимка — тот же момент заезда, что и у остальных панелей.
     double gx = 0, gy = 0;

@@ -276,8 +276,9 @@
     <ClCompile Include="src\ui\pro\ProView.cpp" />
     <ClCompile Include="src\ui\pro\ProLapList.cpp" />
     <ClCompile Include="src\ui\pro\ProChannels.cpp" />
-    <ClCompile Include="src\ui\pro\ProLapInfo.cpp" />
+    <ClCompile Include="src\ui\pro\ProSessionInfo.cpp" />
     <ClCompile Include="src\ui\pro\ProGForce.cpp" />
+    <ClCompile Include="src\ui\pro\ProGForceBars.cpp" />
     <ClCompile Include="src\ui\pro\ProTrackMap.cpp" />
     <ClCompile Include="src\ui\pro\ProLaptime.cpp" />
     <ClCompile Include="src\ui\pro\ProEvents.cpp" />
@@ -338,8 +339,9 @@
     <ClInclude Include="src\ui\pro\ProView.h" />
     <ClInclude Include="src\ui\pro\ProLapList.h" />
     <ClInclude Include="src\ui\pro\ProChannels.h" />
-    <ClInclude Include="src\ui\pro\ProLapInfo.h" />
+    <ClInclude Include="src\ui\pro\ProSessionInfo.h" />
     <ClInclude Include="src\ui\pro\ProGForce.h" />
+    <ClInclude Include="src\ui\pro\ProGForceBars.h" />
     <ClInclude Include="src\ui\pro\ProTrackMap.h" />
     <ClInclude Include="src\ui\pro\ProLaptime.h" />
     <ClInclude Include="src\ui\pro\ProEvents.h" />

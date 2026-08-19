@@ -167,6 +167,24 @@ void RaceManager::Update(float deltaTime)
                     vehicle.laps[vehicle.m_current_lap_number].lapnumber = vehicle.m_current_lap_number;
                 }
                 auto& currentLapSamples = vehicle.laps[vehicle.m_current_lap_number].samples;
+
+                // Повтор отмотали назад и поехали заново по тому же участку:
+                // всё, что записано ДАЛЬШЕ текущего места, относится к проходу,
+                // которого на этой точке ещё не было. Отбрасываем его здесь, при
+                // перезаписи, а не при самой перемотке: пока оператор просто
+                // мотает туда-сюда, история должна оставаться целой, иначе на
+                // одной и той же точке панель секторов показывает каждый раз
+                // разное время.
+                //
+                // Заодно это держит главный инвариант истории — прогресс внутри
+                // круга возрастает. На нём стоит и двоичный поиск в
+                // visibleSampleCount, и расчёт секторов по running-max.
+                while (!currentLapSamples.empty() &&
+                       currentLapSamples.back().progress > sample.progress)
+                {
+                    currentLapSamples.pop_back();
+                }
+
                 if (currentLapSamples.size() < kMaxSamplesPerLap)
                     currentLapSamples.push_back(sample);
             }
@@ -253,6 +271,37 @@ void RaceManager::Update(float deltaTime)
         const float intersectionRatio = crossing.fraction;
         const bool crossed = crossing.from_geometry;
 
+        // --------------------------------------------------------------------
+        // ПРОМЕЖУТОЧНАЯ ТОЧКА ЗАМЕРА
+        // Закрывает предыдущий сектор разностью меток и открывает следующий.
+        // Круг здесь не трогаем — им занимается точка 0 ниже.
+        // --------------------------------------------------------------------
+        if (crossing.point_index != 0)
+        {
+            // Секторы считаем только внутри боевого круга: до первого проезда
+            // линии отсчитывать не от чего.
+            if (vehicle.m_has_started_first_lap && vehicle.m_sector_start_utc_ms != 0 &&
+                crossing.has_source_time)
+            {
+                const int closed = crossing.point_index - 1;
+                if (closed >= 0 && closed < SECTOR_COUNT)
+                {
+                    const float measured =
+                        utc_elapsed_ms(vehicle.m_sector_start_utc_ms, crossing.utc_ms) / 1000.0f;
+
+                    // Отрицательное или неправдоподобное время — это сбой меток,
+                    // а не быстрый сектор. Лучше показать прочерк, чем число,
+                    // которое пойдёт в рекорды.
+                    if (measured > 0.0f && measured < MAX_PLAUSIBLE_LAP_SECONDS)
+                        vehicle.m_current_lap_sectors[closed] = measured;
+                }
+
+                vehicle.m_sector_start_utc_ms = crossing.utc_ms;
+                vehicle.m_current_sector = crossing.point_index;
+            }
+            continue;
+        }
+
         if (vehicle.m_has_started_first_lap && crossing.armed)
         {
 
@@ -312,8 +361,21 @@ void RaceManager::Update(float deltaTime)
 
                 if (processLap)
                 {
+                    // Последний сектор закрывается самой линией: он идёт от
+                    // предыдущей точки замера до зачёта круга. Поэтому секторы
+                    // и дают в сумме время круга — это разбиение одного и того
+                    // же отрезка, а не независимые измерения.
+                    if (vehicle.m_sector_start_utc_ms != 0 && crossing_utc_valid)
+                    {
+                        const float measured =
+                            utc_elapsed_ms(vehicle.m_sector_start_utc_ms, crossing_utc_ms) / 1000.0f;
+                        if (measured > 0.0f && measured < MAX_PLAUSIBLE_LAP_SECONDS)
+                            vehicle.m_current_lap_sectors[SECTOR_COUNT - 1] = measured;
+                    }
+
                     // Store completed lap
                     LapData lapData(crossingTime, 0);
+                    lapData.sectors = vehicle.m_current_lap_sectors;
                     vehicle.m_laps[vehicle.m_current_lap_number] = lapData;
                     vehicle.m_completed_laps++;
 
@@ -324,10 +386,25 @@ void RaceManager::Update(float deltaTime)
                         vehicle.bestlapID = vehicle.m_current_lap_number;
                     }
 
+                    // Секторы печатаем вместе с кругом: их сумма обязана
+                    // сходиться с временем круга, и это видно прямо в журнале —
+                    // расхождение означает потерянное пересечение, а не
+                    // «панель что-то не так показала».
                     std::cout << "[RACE MANAGER] Vehicle #" << vehicleID
                               << " completed Lap " << vehicle.m_current_lap_number
                               << " in " << std::fixed << std::setprecision(3) << crossingTime << "s"
-                              << " | Total completed: " << vehicle.m_completed_laps << std::endl;
+                              << " | sectors";
+                    float sector_sum = 0.0f;
+                    bool  all_measured = true;
+                    for (int i = 0; i < SECTOR_COUNT; ++i)
+                    {
+                        const float t = lapData.sectors[i];
+                        if (t > 0.0f) { std::cout << " " << t; sector_sum += t; }
+                        else          { std::cout << " --"; all_measured = false; }
+                    }
+                    if (all_measured)
+                        std::cout << " (sum " << sector_sum << ")";
+                    std::cout << " | Total completed: " << vehicle.m_completed_laps << std::endl;
 
                     if (m_sessionState == SessionState::Finishing)
                     {
@@ -353,6 +430,11 @@ void RaceManager::Update(float deltaTime)
             vehicle.m_current_lap_timer = deltaTime * (1.0f - crossing_fraction);
             if (crossing_utc_valid)
                 vehicle.m_lap_start_utc_ms = crossing_utc_ms;
+
+            // Новый круг — новый первый сектор, от того же момента.
+            vehicle.m_current_lap_sectors.fill(SECTOR_TIME_NONE);
+            vehicle.m_current_sector = 0;
+            vehicle.m_sector_start_utc_ms = crossing_utc_valid ? crossing_utc_ms : 0;
         }
         // ====================================================================
         // FIRST LAP START DETECTION
@@ -395,6 +477,11 @@ void RaceManager::Update(float deltaTime)
                 // же, что и для зачёта: точку на отрезке, где легла линия.
                 if (crossing.has_source_time)
                     vehicle.m_lap_start_utc_ms = crossing.utc_ms;
+
+                // Первый сектор начинается там же, где и круг.
+                vehicle.m_current_lap_sectors.fill(SECTOR_TIME_NONE);
+                vehicle.m_current_sector = 0;
+                vehicle.m_sector_start_utc_ms = crossing.has_source_time ? crossing.utc_ms : 0;
 
 
                 std::cout << "[RACE MANAGER] Vehicle #" << vehicleID 
@@ -645,6 +732,15 @@ void RaceManager::PublishSnapshot(const std::vector<VehicleStanding>& standings)
         view.fix_type = vehicle.m_fix_type;
         view.packet_utc_ms = vehicle.m_packet_utc_ms;
         view.laps = vehicle.m_laps;
+
+        view.sectors = vehicle.m_current_lap_sectors;
+        view.current_sector = vehicle.m_current_sector;
+        // Сколько машина едет в текущем секторе — по меткам пакетов, тем же
+        // часам, что и весь остальной хронометраж.
+        view.current_sector_elapsed =
+            (vehicle.m_sector_start_utc_ms != 0 && vehicle.m_has_started_first_lap)
+                ? utc_elapsed_ms(vehicle.m_sector_start_utc_ms, vehicle.m_packet_utc_ms) / 1000.0f
+                : 0.0f;
 
         snapshot->vehicles.emplace(id, std::move(view));
     }

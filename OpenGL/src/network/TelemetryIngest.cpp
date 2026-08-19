@@ -3,6 +3,7 @@
 #include "SimulationServer.h"
 #include "../Config.h"
 #include "../core/AppPaths.h"
+#include "../input/Input.h"   // loaded_track_path
 
 #include <atomic>
 #include <memory>
@@ -35,8 +36,10 @@ bool ingest_start(logging::TelemetryLogSource source)
     // Записи повторов лежат отдельно от текстовых журналов: раньше и то, и
     // другое сыпалось в один каталог, и найти нужный заезд среди сотни
     // console_*.log было нечем.
+    // Файл трассы кладём в запись целиком: повтор перестаёт зависеть от того,
+    // есть ли эта трасса на машине, где его будут смотреть.
     g_writer = std::make_unique<logging::TelemetryLogWriter>(
-        app_paths::replays(), source);
+        app_paths::replays(), source, loaded_track_path());
     return true;
 }
 

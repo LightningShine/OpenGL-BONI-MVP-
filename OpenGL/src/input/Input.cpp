@@ -2,10 +2,37 @@
 #include "Input.h"
 #include "../rendering/Interpolation.h"
 #include "../Config.h"
+#include <filesystem>
 #include <fstream>
 
 MapOrigin g_map_origin;
 std::atomic<bool> g_is_map_loaded = false;
+
+namespace
+{
+	// Пишется в потоке отрисовки при загрузке трассы, читается потоком приёма
+	// при открытии журнала записи — поэтому под мьютексом.
+	std::mutex g_track_name_mutex;
+	std::string g_track_path;
+}
+
+void set_loaded_track(const std::string& path)
+{
+	std::lock_guard<std::mutex> lock(g_track_name_mutex);
+	g_track_path = path;
+}
+
+std::string loaded_track_name()
+{
+	std::lock_guard<std::mutex> lock(g_track_name_mutex);
+	return std::filesystem::path(g_track_path).stem().string();
+}
+
+std::string loaded_track_path()
+{
+	std::lock_guard<std::mutex> lock(g_track_name_mutex);
+	return g_track_path;
+}
 
 void chooseInputMode(std::vector<glm::vec2>& points, std::mutex& points_mutex, std::atomic<bool>& running)
 {

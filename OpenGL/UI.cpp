@@ -8,6 +8,7 @@
 #include "src/rendering/Render.h"
 #include <iostream>
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <glm/glm.hpp>
 #include <glm/gtc/constants.hpp>
@@ -313,10 +314,61 @@ void UI::OpenTrackFile(const std::string& path)
 {
     applyTrackFile(path, m_points, m_pointsMutex);
     NoteRecentFile(path);
+
+    // Имя трассы запоминаем здесь — это единственная точка, через которую
+    // трасса попадает в приложение. Дальше его забирает запись телеметрии и
+    // кладёт в заголовок `.rjl`, чтобы запись знала, к чему относится.
+    set_loaded_track(path);
+}
+
+void UI::OpenReplayFile(const std::string& path)
+{
+    if (!telemetry::replay_open(path))
+    {
+        // Причина отказа обязана дойти до того, кто нажал кнопку: в консоль он
+        // не смотрит, а без объяснения «ничего не произошло» выглядит поломкой.
+        m_replayError = telemetry::replay_last_error();
+        if (m_replayError.empty())
+            m_replayError = "The recording could not be opened.";
+        m_replayRetryPath = path;   // по нему карточка предложит открыть трассу
+        m_showReplayError = true;
+        return;
+    }
+
+    m_replayError.clear();
+    m_replayRetryPath.clear();
+    m_showReplayError = false;
+
+    m_proMode = true;   // транспорт повтора живёт в PRO-навбаре
+
+    // Файл и трасса — в заголовок окна. Это единственное место, которое видно
+    // всегда: панели можно скрыть, навбар — переключить, а спутать открытую
+    // запись с живым заездом нельзя.
+    const telemetry::ReplayStatus status = telemetry::replay_status();
+    std::string title = "RAJAGP PRO - replay: " + status.file_name;
+    if (!status.track_name.empty())
+        title += "  [" + status.track_name + "]";
+    glfwSetWindowTitle(m_window, title.c_str());
+
+    m_showSplash = false;
+    m_closeSplash = true;
 }
 
 void UI::HandleDroppedFile(const std::string& path)
 {
+    // Запись заезда — не трасса: её открывает проигрыватель, и трассу он берёт
+    // из самой записи. Разбор по расширению здесь, потому что через эту точку
+    // проходит всё, что бросают на окно.
+    std::string extension = std::filesystem::path(path).extension().string();
+    std::transform(extension.begin(), extension.end(), extension.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+
+    if (extension == ".rjl")
+    {
+        OpenReplayFile(path);
+        return;
+    }
+
     OpenTrackFile(path);
     m_showSplash = false;
     m_closeSplash = true;
@@ -488,6 +540,174 @@ void UI::RenderNetworkingModal()
 
     ImGui::PopStyleColor(2);
     ImGui::PopStyleVar(3);
+}
+
+void UI::RenderReplayErrorModal()
+{
+    if (!m_showReplayError)
+        return;
+
+    // Карточка построена так же, как окно подключения к серверу: свой заголовок,
+    // фиксированный размер в пунктах × DPI, якорь у нижнего края. Через
+    // BeginPopupModal с авторазмером она растягивалась на пол-экрана — ширину
+    // задавал перенос текста, и читать сообщение было невозможно.
+    ImGuiIO& io = ImGui::GetIO();
+    const ImVec2 dsz = io.DisplaySize;
+
+    float mW = ui_scale::points(520.0f);
+    if (mW > dsz.x * 0.9f) mW = dsz.x * 0.9f;
+
+    const float titleH = ui_scale::points(46.0f);
+    const float padX   = ui_scale::points(18.0f);
+    const float padY   = ui_scale::points(16.0f);
+    const float btnH   = ui_scale::points(38.0f);
+    const float textW  = mW - padX * 2.0f;
+
+    // Высота — по фактически перенесённому тексту: причины разной длины, а
+    // карточка не должна ни обрезать их, ни зиять пустотой.
+    if (m_fontUI) ImGui::PushFont(m_fontUI);
+    const float textH = ImGui::CalcTextSize(m_replayError.c_str(), nullptr, false, textW).y;
+    if (m_fontUI) ImGui::PopFont();
+
+    const float mH = titleH + padY + textH + padY + btnH + padY;
+
+    // Якорь у нижнего края, но карточка обязана поместиться целиком: длинная
+    // причина растит высоту, и при жёсткой привязке к 80% высоты экрана кнопки
+    // уезжали за нижнюю кромку окна.
+    const float margin = ui_scale::points(24.0f);
+    float posY = dsz.y * 0.80f - mH * 0.5f;
+    if (posY + mH > dsz.y - margin) posY = dsz.y - margin - mH;
+    if (posY < margin)              posY = margin;
+
+    const ImVec2 mPos((dsz.x - mW) * 0.5f, posY);
+    const ImVec2 mEnd(mPos.x + mW, mPos.y + mH);
+
+
+    // Клик мимо карточки и Escape закрывают её — как у остальных модалок.
+    if (ImGui::IsMouseClicked(0))
+    {
+        const ImVec2 mouse = ImGui::GetMousePos();
+        if (mouse.x < mPos.x || mouse.x > mEnd.x || mouse.y < mPos.y || mouse.y > mEnd.y)
+            m_showReplayError = false;
+    }
+    if (ImGui::IsKeyPressed(ImGuiKey_Escape))
+        m_showReplayError = false;
+    if (!m_showReplayError)
+        return;
+
+    const ImU32 uSep = IM_COL32(55, 55, 55, 255);
+    const ImU32 uRed = IM_COL32(0xE0, 0x5A, 0x5A, 255);
+
+    ImGui::SetNextWindowPos(mPos);
+    ImGui::SetNextWindowSize(ImVec2(mW, mH));
+    ImGui::SetNextWindowFocus();
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,    ImVec2(0, 0));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding,   0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.0f);
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(UIConfig::MODAL_BG_R, UIConfig::MODAL_BG_G,
+                                                    UIConfig::MODAL_BG_B, UIConfig::MODAL_BG_ALPHA));
+    ImGui::PushStyleColor(ImGuiCol_Border,   ImVec4(0.22f, 0.22f, 0.22f, 1.f));
+
+    // Действие откладываем до ImGui::End(): открытие трассы тянет за собой
+    // повторную попытку, а она переписывает состояние этой же карточки.
+    bool pick_track = false;
+
+    if (ImGui::Begin("##ReplayErrorModal", nullptr,
+        ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+        ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings))
+    {
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+
+        // ── Заголовок ──────────────────────────────────────────────────────
+        const float titleBarBot = mPos.y + titleH;
+        dl->AddRectFilled(mPos, ImVec2(mEnd.x, titleBarBot),
+            IM_COL32((int)(UIConfig::MODAL_TITLE_BG_R * 255),
+                     (int)(UIConfig::MODAL_TITLE_BG_G * 255),
+                     (int)(UIConfig::MODAL_TITLE_BG_B * 255), 255),
+            10.0f, ImDrawFlags_RoundCornersTop);
+        dl->AddLine(ImVec2(mPos.x, titleBarBot), ImVec2(mEnd.x, titleBarBot), uSep, 1.0f);
+        dl->AddRectFilled(ImVec2(mPos.x, mPos.y + 3.f), ImVec2(mPos.x + 4.0f, titleBarBot - 3.f), uRed, 2.0f);
+
+        if (m_fontUBold) ImGui::PushFont(m_fontUBold);
+        {
+            const char* title = "Replay cannot be opened";
+            const ImVec2 size = ImGui::CalcTextSize(title);
+            dl->AddText(ImVec2(mPos.x + padX, mPos.y + (titleH - size.y) * 0.5f),
+                        IM_COL32(235, 235, 235, 255), title);
+        }
+        if (m_fontUBold) ImGui::PopFont();
+
+        // ── Причина ────────────────────────────────────────────────────────
+        if (m_fontUI) ImGui::PushFont(m_fontUI);
+        ImGui::SetCursorPos(ImVec2(padX, titleH + padY));
+        ImGui::PushTextWrapPos(padX + textW);
+        ImGui::TextUnformatted(m_replayError.c_str());
+        ImGui::PopTextWrapPos();
+        if (m_fontUI) ImGui::PopFont();
+
+        // ── Кнопки ─────────────────────────────────────────────────────────
+        if (m_fontUBold) ImGui::PushFont(m_fontUBold);
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 0.0f);
+
+        const float okW    = ui_scale::points(110.0f);
+        const float trackW = ui_scale::points(170.0f);
+        const float btnY   = mH - padY - btnH;
+
+        // «Открыть трассу» — прямо отсюда: почти всегда отказ именно в том, что
+        // трассы записи в приложении нет, и заставлять искать её в меню значит
+        // заставлять начинать всё сначала.
+        if (!m_replayRetryPath.empty())
+        {
+            ImGui::SetCursorPos(ImVec2(padX, btnY));
+            ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.18f, 0.18f, 0.19f, 1.f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.26f, 0.26f, 0.27f, 1.f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.14f, 0.14f, 0.15f, 1.f));
+            ImGui::PushStyleColor(ImGuiCol_Text,          ImVec4(0.90f, 0.90f, 0.90f, 1.f));
+            pick_track = ImGui::Button("Open Track...", ImVec2(trackW, btnH));
+            ImGui::PopStyleColor(4);
+        }
+
+        ImGui::SetCursorPos(ImVec2(mW - padX - okW, btnY));
+        ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(218.f/255.f, 165.f/255.f, 64.f/255.f, 1.f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(238.f/255.f, 185.f/255.f, 84.f/255.f, 1.f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(198.f/255.f, 145.f/255.f, 44.f/255.f, 1.f));
+        ImGui::PushStyleColor(ImGuiCol_Text,          ImVec4(0.07f, 0.07f, 0.07f, 1.f));
+        if (ImGui::Button("OK", ImVec2(okW, btnH)))
+            m_showReplayError = false;
+        ImGui::PopStyleColor(4);
+
+        ImGui::PopStyleVar();
+        if (m_fontUBold) ImGui::PopFont();
+    }
+    ImGui::End();
+
+    ImGui::PopStyleColor(2);
+    ImGui::PopStyleVar(3);
+
+    if (pick_track)
+    {
+        const std::string recording = m_replayRetryPath;
+
+        OPENFILENAMEA ofn = {};
+        char szFile[260] = { 0 };
+
+        ofn.lStructSize = sizeof(ofn);
+        ofn.hwndOwner = glfwGetWin32Window(m_window);
+        ofn.lpstrFile = szFile;
+        ofn.nMaxFile = sizeof(szFile);
+        ofn.lpstrFilter = "Track\0*.trk2;*.txt\0trk2\0*.trk2\0Track TXT\0*.txt\0All Files\0*.*\0";
+        ofn.nFilterIndex = 1;
+        std::string tracksPath = app_paths::tracks().string();
+        ofn.lpstrInitialDir = tracksPath.c_str();
+        ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
+
+        if (GetOpenFileNameA(&ofn))
+        {
+            OpenTrackFile(ofn.lpstrFile);
+            m_showReplayError = false;
+            OpenReplayFile(recording);   // не вышло снова — карточка вернётся с новой причиной
+        }
+    }
 }
 
 void UI::RenderPrototypeToast()
@@ -1396,6 +1616,9 @@ void UI::Render()
     if (m_showSplash)
     {
         RenderSplashWindow();
+        // Записи открывают и с заставки, поэтому сообщение об отказе рисуется
+        // здесь тоже — иначе кнопка на заставке молчала бы.
+        RenderReplayErrorModal();
         return; // Don't render menus during splash
     }
     
@@ -1613,6 +1836,7 @@ void UI::Render()
         s_srv_was_connected = conn;
     }
 
+    RenderReplayErrorModal();
     RenderPrototypeToast();
     RenderNetworkingModal();
     AccountsPanel::Render(m_fontUI, m_fontUBold);
@@ -1880,8 +2104,10 @@ void UI::RenderSplashWindow()
     ImGui::PopStyleVar();
     ImGui::PopStyleColor();
     
-    // Check click outside window
-    if (ImGui::IsMouseClicked(0))
+    // Check click outside window.
+    // Пока показано сообщение об отказе открыть запись, клик по нему считался бы
+    // кликом мимо заставки и закрывал её вместе с ответом.
+    if (ImGui::IsMouseClicked(0) && !m_showReplayError)
     {
         ImVec2 mousePos = ImGui::GetMousePos();
         bool clickedOutside = 
@@ -2014,7 +2240,7 @@ void UI::RenderMainWindow()
 		ImGui::PopFont();
 	}
     
-	// === CREATE TRACK BUTTON ===
+	// === CREATE TRACK / OPEN REPLAY BUTTONS ===
 	// Shared gold color constants – also used by DragDrop hover border
 	const ImVec4 btnCol        = ImVec4(218.0f/255.0f, 165.0f/255.0f,  64.0f/255.0f, 1.0f);
 	const ImVec4 btnHovCol     = ImVec4(238.0f/255.0f, 185.0f/255.0f,  84.0f/255.0f, 1.0f);
@@ -2044,12 +2270,39 @@ void UI::RenderMainWindow()
 		ImGui::SetWindowFontScale(buttonFontSz / btnFont->FontSize);
 	}
 
-	if (ImGui::Button("Create Track", ImVec2(buttonW, buttonH)))
+	// Ряд делится на две кнопки: запись открывается прямо с заставки. Раньше
+	// путь к ней шёл только через верхнее меню, а меню при заставке не
+	// рисуется — сначала приходилось открыть какую-нибудь трассу, хотя своя у
+	// записи уже есть.
+	const float halfGap  = windowSize.x * (9.0f / 557.0f);
+	const float halfBtnW = (buttonW - halfGap) * 0.5f;
+
+	if (ImGui::Button("Create Track", ImVec2(halfBtnW, buttonH)))
 	{
 		TelemetryTrackBuilder::StartLeftEdge();
 		std::cout << "[UI] Dual-edge recording started — drive the LEFT edge.\n";
 		m_showSplash = false;
 		m_closeSplash = true;
+	}
+
+	ImGui::SetCursorPos(ImVec2(buttonX + halfBtnW + halfGap, buttonY));
+	if (ImGui::Button("Open Replay", ImVec2(halfBtnW, buttonH)))
+	{
+		OPENFILENAMEA ofn = {};
+		char szFile[260] = { 0 };
+
+		ofn.lStructSize = sizeof(ofn);
+		ofn.hwndOwner = glfwGetWin32Window(m_window);
+		ofn.lpstrFile = szFile;
+		ofn.nMaxFile = sizeof(szFile);
+		ofn.lpstrFilter = "Recording\0*.rjl\0All Files\0*.*\0";
+		ofn.nFilterIndex = 1;
+		std::string replaysPath = app_paths::replays().string();
+		ofn.lpstrInitialDir = replaysPath.c_str();
+		ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
+
+		if (GetOpenFileNameA(&ofn))
+			OpenReplayFile(ofn.lpstrFile);
 	}
 
 	if (btnFont)
@@ -2535,9 +2788,10 @@ void UI::RenderTopMenu()
                 }
             }
 
-            // Повтор требует уже загруженного трека: в записи лежит только
-            // эфир, а геометрия и origin нужны, чтобы восстановить позиции.
-            if (ImGui::MenuItem("Open Replay...", nullptr, false, g_is_map_loaded))
+            // Трассу заранее не требуем: запись несёт её внутри или называет в
+            // заголовке, и проигрыватель откроет её сам. Пункт, погашенный до
+            // загрузки трассы, заставлял угадывать, какая из них нужна.
+            if (ImGui::MenuItem("Open Replay..."))
             {
                 OPENFILENAMEA ofn = {};
                 char szFile[260] = { 0 };
@@ -2553,19 +2807,14 @@ void UI::RenderTopMenu()
                 ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
 
                 if (GetOpenFileNameA(&ofn))
-                {
-                    if (telemetry::replay_open(ofn.lpstrFile))
-                    {
-                        m_proMode = true;   // транспорт живёт в PRO-навбаре
-                        glfwSetWindowTitle(m_window, "RAJAGP PRO");
-                        m_showSplash = false;
-                        m_closeSplash = true;
-                    }
-                }
+                    OpenReplayFile(ofn.lpstrFile);
             }
 
             if (ImGui::MenuItem("Close Replay", nullptr, false, telemetry::replay_is_active()))
+            {
                 telemetry::replay_close();
+                glfwSetWindowTitle(m_window, m_proMode ? "RAJAGP PRO" : UIConfig::APP_NAME);
+            }
 
             ImGui::Separator();
 
@@ -2789,30 +3038,9 @@ void UI::RenderTopMenu()
         
         if (ImGui::BeginMenu("View"))
         {
-            if (ImGui::MenuItem("Zoom In", "+", false, true)) {
-                void* raw_context = glfwGetWindowUserPointer(m_window);
-                if (raw_context) {
-                    struct AppContextLayout { float* zoom; };
-                    AppContextLayout* ctx = static_cast<AppContextLayout*>(raw_context);
-                    if (ctx && ctx->zoom) *ctx->zoom *= 1.1f;
-                }
-            }
-            if (ImGui::MenuItem("Zoom Out", "-", false, true)) {
-                void* raw_context = glfwGetWindowUserPointer(m_window);
-                if (raw_context) {
-                    struct AppContextLayout { float* zoom; };
-                    AppContextLayout* ctx = static_cast<AppContextLayout*>(raw_context);
-                    if (ctx && ctx->zoom) *ctx->zoom *= 0.9f;
-                }
-            }
-            if (ImGui::MenuItem("Reset View", "Home", false, true)) {
-                void* raw_context = glfwGetWindowUserPointer(m_window);
-                if (raw_context) {
-                    struct AppContextLayout { float* zoom; };
-                    AppContextLayout* ctx = static_cast<AppContextLayout*>(raw_context);
-                    if (ctx && ctx->zoom) *ctx->zoom = 1.0f;
-                }
-            }
+            // Zoom In / Zoom Out / Reset View из меню убраны: масштабом карты
+            // управляют колесом мыши, а клавиши +, - и Home по-прежнему на
+            // месте (см. разбор ввода в UI::BeginFrame).
             if (ImGui::MenuItem("Reset Map", nullptr, false, true)) {
                 if (g_race_manager)
                     g_race_manager->ResetMap();
@@ -2943,11 +3171,29 @@ void UI::RenderTopMenu()
         {
             const telemetry::ReplayStatus status = telemetry::replay_status();
 
+            // Подпись: время в записи и трасса, на которой она сделана. Трасса
+            // здесь потому, что по одному имени файла на экране не видно, к
+            // какой карте относится то, что сейчас показывают.
+            char label_buf[160];
+            if (status.track_name.empty())
+            {
+                snprintf(label_buf, sizeof(label_buf), "%.1f / %.1f s",
+                         status.position_ms / 1000.0f, status.duration_ms / 1000.0f);
+            }
+            else
+            {
+                snprintf(label_buf, sizeof(label_buf), "%.1f / %.1f s   %s",
+                         status.position_ms / 1000.0f, status.duration_ms / 1000.0f,
+                         status.track_name.c_str());
+            }
+
             const float barH = ImGui::GetWindowHeight();
             const float btnH = barH - ui_scale::points(8.f);
             const float btnW = ui_scale::points(34.f);
             const float gap  = ui_scale::points(4.f);
-            const float labelW = ui_scale::points(96.f);
+            // Ширину подписи меряем, а не задаём: имя трассы длины произвольной,
+            // а группа обязана остаться по центру навбара.
+            const float labelW = ImGui::CalcTextSize(label_buf).x + ui_scale::points(8.f);
             const float groupW = btnW * 3.0f + gap * 3.0f + labelW;
 
             // Позицию задаём каждому элементу явно. SameLine внутри меню-бара
@@ -3001,16 +3247,12 @@ void UI::RenderTopMenu()
             // Через ImGui::Text она попадала в раскладку меню-бара, у которой
             // своя вертикаль, и текст упорно вставал не на одном уровне с
             // кнопками. Здесь позиция задаётся явно и совпадает точно.
-            char time_buf[64];
-            snprintf(time_buf, sizeof(time_buf), "%.1f / %.1f s",
-                     status.position_ms / 1000.0f, status.duration_ms / 1000.0f);
-
-            const ImVec2 text_size = ImGui::CalcTextSize(time_buf);
+            const ImVec2 text_size = ImGui::CalcTextSize(label_buf);
             const ImVec2 win_pos = ImGui::GetWindowPos();
             ImGui::GetWindowDrawList()->AddText(
                 ImVec2(win_pos.x + startX + (btnW + gap) * 3.0f,
                        win_pos.y + btnY + (rowH - text_size.y) * 0.5f),
-                IM_COL32(184, 184, 199, 255), time_buf);
+                IM_COL32(184, 184, 199, 255), label_buf);
         }
 
         // === PRO / LITE TOGGLE BUTTON (right side of navbar) ===

@@ -92,8 +92,17 @@ void RaceManager::ResetSession() {
         vehicle.m_distance_laps_behind = 0;
         vehicle.m_lap_start_utc_ms = 0;
         vehicle.m_pending_crossings.clear();
+        vehicle.m_current_lap_sectors.fill(SECTOR_TIME_NONE);
+        vehicle.m_current_sector = 0;
+        vehicle.m_sector_start_utc_ms = 0;
     }
     InvalidateStandingsCache();
+
+    // Публикуем состояние ПОСЛЕ сброса. Панели читают только снимок, поэтому
+    // без публикации они держали бы прежнюю таблицу и круги до следующего
+    // Update — а если машин уже нет, то и до бесконечности.
+    PublishSnapshot({});
+
     std::cout << "[SESSION] Session Reset! All lap data cleared." << std::endl;
 }
 

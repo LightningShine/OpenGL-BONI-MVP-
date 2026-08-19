@@ -3,6 +3,7 @@
 #include "../racing/RaceManager.h"
 #include "../vehicle/Vehicle.h"
 
+#include <array>
 #include <cstdint>
 #include <map>
 #include <memory>
@@ -70,6 +71,16 @@ namespace world
 
         int16_t  fix_type = 0;
         uint32_t packet_utc_ms = 0;
+
+        // Секторы ТЕКУЩЕГО круга: законченные — измеренным временем,
+        // недоехавшие — SECTOR_TIME_NONE. Плюс сектор, в котором машина сейчас,
+        // и сколько она в нём уже едет. Всё считается по меткам пакетов, а не
+        // по кадрам, поэтому на одной и той же точке записи значения одни и те
+        // же — см. SECTOR_COUNT в Vehicle.h.
+        std::array<float, SECTOR_COUNT> sectors{
+            SECTOR_TIME_NONE, SECTOR_TIME_NONE, SECTOR_TIME_NONE };
+        int   current_sector = 0;
+        float current_sector_elapsed = 0.0f;
 
         // Времена завершённых кругов — маленькие, нужны таблицам и панелям.
         std::map<int, LapData> laps;

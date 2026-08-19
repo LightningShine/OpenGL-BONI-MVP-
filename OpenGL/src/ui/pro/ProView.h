@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdint>
 #include "../ui_scale.hpp"
+#include "../UI_Config.h"   // FONT_PT_RUSSO_SMALL — кегль подписи в шапке
 
 struct ProContext {
     ImFont* regular;   // Ubuntu Regular ~12px (menu size)
@@ -41,6 +42,7 @@ static constexpr ImU32 COL_TEXT       = IM_COL32(220, 220, 220, 255);
 static constexpr ImU32 COL_DIM        = IM_COL32(110, 110, 110, 255);
 static constexpr ImU32 COL_LABEL      = IM_COL32(0x51, 0x51, 0x51, 255); // #515151
 static constexpr ImU32 COL_HDR_BG     = IM_COL32( 28,  28,  28, 255);
+static constexpr ImU32 COL_HDR_TEXT   = IM_COL32(210, 210, 210, 255); // подпись шапки — одна на все панели
 static constexpr ImU32 COL_SEP        = IM_COL32( 48,  48,  48, 255);
 static constexpr ImU32 COL_BG         = IM_COL32( 13,  13,  13, 255);
 static constexpr ImU32 COL_BG_PANEL   = IM_COL32( 20,  20,  20, 255);
@@ -71,6 +73,16 @@ extern int g_layout_freeze_frames;
 // paddings by. `key` must be a stable per-panel id (e.g. "LapList").
 float PanelZoom(const char* key);
 
+// ── Часы заезда для панелей ─────────────────────────────────────────────────
+// Секунды текущей точки ЗАЕЗДА, а не времени работы приложения.
+//
+// На повторе это позиция в записи. Разница принципиальна для всего, что живёт
+// во времени: удержание секторов на карте, отметки в журнале событий. Пока они
+// считали по стенным часам, картинка менялась сама по себе на стоящем повторе —
+// оператор смотрит в одну точку записи, а панель через десять секунд показывает
+// другое. По этим же часам события отбрасываются при перемотке назад.
+float SessionTimeSeconds();
+
 // Flags for all floating panels — NoMove/NoResize added when layout is locked
 inline ImGuiWindowFlags PanelFlags() {
     return ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse |
@@ -88,12 +100,17 @@ void TogglePanel(const char* key);
 // ── Panel header ─────────────────────────────────────────────────────────────
 // Draws a dark header bar at the current cursor position using DrawList
 // (does not affect ImGui cursor). Then advances cursor via Dummy.
-// labelFont overrides the default russo font for the header label (e.g. pass ctx.bold)
 // closeKey != nullptr рисует крестик закрытия справа в шапке; клик по нему
 // прячет панель (SetPanelVisible(closeKey, false)) — так окно можно «убрать».
+//
+// ШАПКА ОДИНАКОВА У ВСЕХ ПАНЕЛЕЙ и не подчиняется ни зуму панели, ни выбору
+// шрифта на месте вызова. Раньше подпись бралась шрифтом на усмотрение панели
+// (LAP LIST — жирным Ubuntu, остальные — Russo) и умножалась на зум панели: у
+// растянутой панели заголовок вырастал вдвое, у сжатой скукоживался, и колонка
+// панелей выглядела собранной из четырёх разных программ. Зум панели — про
+// СОДЕРЖИМОЕ; шапка — это рама окна, и рама у всех окон одна.
 inline void DrawPanelHeader(const ProContext& ctx, const char* label,
-                             bool showGear = false, ImFont* labelFont = nullptr,
-                             float scale = 1.f, const char* closeKey = nullptr) {
+                             bool showGear = false, const char* closeKey = nullptr) {
     // Keep every PRO panel on-screen: saved positions from another monitor or a
     // resolution change must not leave windows (half) outside the viewport.
     // Во время DPI-перехода клэмп выключен (см. g_layout_freeze_frames).
@@ -115,30 +132,32 @@ inline void DrawPanelHeader(const ProContext& ctx, const char* label,
     dl->AddRectFilled(p, {p.x + w, p.y + hdrH}, COL_HDR_BG);
     dl->AddLine({p.x, p.y + hdrH}, {p.x + w, p.y + hdrH}, COL_GOLD_DIM, 1.f);
 
-    // Header bar height is fixed per DPI (panel layout depends on it); only the
-    // label font scales with the panel zoom, clamped so it still fits the bar.
-    ImFont* lf  = labelFont ? labelFont : ctx.russo;
-    float   fSz = (lf ? lf->FontSize : ImGui::GetFontSize()) * scale;
-    if (fSz > hdrH - 6.f) fSz = hdrH - 6.f;
-    float   ty  = p.y + (hdrH - fSz) * 0.5f;
-    dl->AddText(lf, fSz, {p.x + 8.f, ty}, IM_COL32(210, 210, 210, 255), label);
+    // Подпись: один шрифт (Russo One), один кегль в пунктах × DPI, один цвет —
+    // как в шапке RELATIVE MAP, взятой за образец. Высота полосы тоже задана в
+    // пунктах, поэтому шапка одинакова и на мониторе с другой плотностью.
+    ImFont*     lf  = ctx.russo;
+    const float fSz = ui_scale::points(UIConfig::FONT_PT_RUSSO_SMALL);
+    const float ty  = p.y + (hdrH - fSz) * 0.5f;
+    dl->AddText(lf, fSz, {p.x + pad_px() * 0.8f, ty}, COL_HDR_TEXT, label);
 
     // Крестик закрытия у правого края; шестерёнка (если есть) уходит левее него.
-    const float closeX = closeKey ? 14.f : 0.f;
+    // Значки тоже в пунктах × DPI: на плотном мониторе крестик, заданный в
+    // пикселях, превращался в точку, хотя полоса вокруг него росла.
+    const float icoR    = ui_scale::points(4.5f);   // половина крестика
+    const float icoStep = ui_scale::points(14.f);   // шаг между значками
     if (showGear) {
-        ImVec2 gc = {p.x + w - 14.f - closeX * 2.f, p.y + hdrH * 0.5f};
-        dl->AddCircle(gc, 6.f, COL_DIM, 8, 1.5f);
-        dl->AddCircleFilled(gc, 2.2f, COL_DIM);
+        ImVec2 gc = {p.x + w - icoStep - (closeKey ? icoStep : 0.f), p.y + hdrH * 0.5f};
+        dl->AddCircle(gc, ui_scale::points(6.f), COL_DIM, 8, ui_scale::points(1.5f));
+        dl->AddCircleFilled(gc, ui_scale::points(2.2f), COL_DIM);
     }
     if (closeKey) {
-        ImVec2 wp = ImGui::GetWindowPos();
-        ImVec2 cc = {wp.x + w - 13.f, p.y + hdrH * 0.5f};
-        const float r = 4.5f;
-        bool hov = ImGui::IsMouseHoveringRect({cc.x - r - 3.f, cc.y - r - 3.f},
-                                              {cc.x + r + 3.f, cc.y + r + 3.f}, false);
+        ImVec2 cc = {p.x + w - icoStep, p.y + hdrH * 0.5f};
+        const float pad = ui_scale::points(3.f);
+        bool hov = ImGui::IsMouseHoveringRect({cc.x - icoR - pad, cc.y - icoR - pad},
+                                              {cc.x + icoR + pad, cc.y + icoR + pad}, false);
         ImU32 xcol = hov ? COL_WHITE : COL_DIM;
-        dl->AddLine({cc.x - r, cc.y - r}, {cc.x + r, cc.y + r}, xcol, 1.6f);
-        dl->AddLine({cc.x - r, cc.y + r}, {cc.x + r, cc.y - r}, xcol, 1.6f);
+        dl->AddLine({cc.x - icoR, cc.y - icoR}, {cc.x + icoR, cc.y + icoR}, xcol, ui_scale::points(1.6f));
+        dl->AddLine({cc.x - icoR, cc.y + icoR}, {cc.x + icoR, cc.y - icoR}, xcol, ui_scale::points(1.6f));
         if (hov && ImGui::IsMouseClicked(0)) SetPanelVisible(closeKey, false);
     }
 

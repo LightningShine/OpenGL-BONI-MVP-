@@ -33,6 +33,10 @@ public:
     void RenderHelpModal();
     void RenderAutoStopModal();
     void RenderPrototypeToast();
+
+    /// Сообщение о том, почему не открылась запись. Рисуется поверх всего,
+    /// включая заставку: отказ приходит именно оттуда, где записи и открывают.
+    void RenderReplayErrorModal();
     void EndFrame();
     
     // Access to UI elements
@@ -54,6 +58,19 @@ public:
     // Handles .trk2 (binary dual-edge) and .txt (legacy) automatically.
     void HandleDroppedFile(const std::string& path);
 
+    /// Открывает запись заезда и переключает окно в PRO — там живёт транспорт
+    /// повтора. Трассу не требует: её достаёт из записи сам проигрыватель.
+    /// При отказе показывает причину на экране, а не только в консоли.
+    /// Публичная: запись приходит и из меню, и перетаскиванием, и аргументом
+    /// командной строки.
+    void OpenReplayFile(const std::string& path);
+
+    /// Открывает трек и поднимает его в начало списка недавних.
+    /// Все места, откуда открывается файл, обязаны идти через неё — иначе
+    /// список снова разойдётся с реальным порядком открытия. Публичная: файл
+    /// приходит и перетаскиванием, и аргументом командной строки.
+    void OpenTrackFile(const std::string& path);
+
     bool IsProMode() const { return m_proMode || m_swipeAnim > 0.f; }
 
     // Race Status Bar rendering
@@ -74,6 +91,12 @@ private:
     bool m_showSplash;
     bool m_closeSplash;
     bool m_show_help_modal;
+
+    // Отказ открыть запись: текст причины, признак показа карточки и путь к
+    // самой записи — по нему кнопка «Open Track...» повторяет попытку.
+    std::string m_replayError;
+    std::string m_replayRetryPath;
+    bool m_showReplayError = false;
     
     // Auto Stop config
     int m_autostop_laps = 1;
@@ -165,11 +188,6 @@ private:
     bool LoadTextureFromFile(const char* filename, void** out_texture, int* out_width, int* out_height);
     void LoadResources();
     void LoadRecentFiles();
-
-    /// Открывает трек и поднимает его в начало списка недавних.
-    /// Все места, откуда открывается файл, обязаны идти через неё — иначе
-    /// список снова разойдётся с реальным порядком открытия.
-    void OpenTrackFile(const std::string& path);
 
     /// Поднимает путь в начало списка недавних и сохраняет его на диск.
     void NoteRecentFile(const std::string& path);

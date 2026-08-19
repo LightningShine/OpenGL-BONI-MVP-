@@ -28,49 +28,52 @@ extern std::vector<SplinePoint> g_smooth_track_points;
 // ============================================================================
 float CalculateLapTimeDiffInternal(int vehicleID)
 {
-    // 1. Get best lap time from vehicle by ID
-    // 2. Get current lap time from vehicle by ID
-    // 3. Calculate the difference between current lap time and best lap time
-    // 3.1 Find current track progress from vehicle by ID
-    // 3.2 Compare current track progress with the track progress at the best lap time
-    // 4. Return the time difference
-
+    // Отставание от собственного лучшего круга — по ТОЧКАМ ЗАМЕРА, а не по логу
+    // телеметрии.
+    //
+    // Раньше здесь искали в сэмплах лучшего круга момент, когда он был на
+    // текущем прогрессе, и вычитали. Пока лог полон, это работало; но лог
+    // пишется по кадрам и на повторе может быть неполным — а при неполном
+    // двоичный поиск упирался в первый сэмпл, время отсчёта получалось нулевым,
+    // и панель показывала отставание, равное всему времени круга (+45.9 при
+    // круге 46.1). Хуже того, число выглядело правдоподобно.
+    //
+    // Считаем из того, что измерено: сумма пройденных секторов этого круга
+    // минус сумма тех же секторов лучшего круга. Значение обновляется на каждой
+    // точке замера и между ними держится — ровно как секторное отставание в
+    // телетрансляции. Оно всегда определено, не зависит от лога и на финише
+    // сходится с разностью времён кругов.
     if (g_vehicles.find(vehicleID) == g_vehicles.end()) return 0.0f;
-    auto& vehicle = g_vehicles.at(vehicleID);
+    const auto& vehicle = g_vehicles.at(vehicleID);
 
-    int bestLapID = vehicle.bestlapID;
+    const int bestLapID = vehicle.bestlapID;
+    if (bestLapID < 0) return 0.0f;
 
-    if (bestLapID == -1 || vehicle.laps.find(bestLapID) == vehicle.laps.end()) return 0.0f;
+    const auto bestLap = vehicle.m_laps.find(bestLapID);
+    if (bestLap == vehicle.m_laps.end()) return 0.0f;
 
-    const auto& bestLapSamples = vehicle.laps.at(bestLapID).samples;
-    if (bestLapSamples.empty()) return 0.0f;
+    // Сколько секторов текущего круга уже закрыто. m_current_sector — номер
+    // сектора, в котором машина едет сейчас.
+    const int completed = vehicle.m_current_sector;
+    if (completed <= 0) return 0.0f;   // круг только начался, сравнивать нечего
 
-    double currentProgress = vehicle.m_track_progress;  // Use m_track_progress (0.0-1.0)
-    double currentTime = vehicle.m_current_lap_timer;
-
-    // Binary search for closest sample at current progress
-    auto it = std::lower_bound(bestLapSamples.begin(), bestLapSamples.end(), currentProgress,
-        [](const LapInfo& s, double val) {
-            return s.progress < val;
-        });
-
-    // Edge case: current progress beyond best lap samples
-    if (it == bestLapSamples.end())
+    float current_sum = 0.0f;
+    float best_sum    = 0.0f;
+    for (int i = 0; i < completed && i < SECTOR_COUNT; ++i)
     {
-        return (float)(currentTime - bestLapSamples.back().timefromstart);
+        const float current = vehicle.m_current_lap_sectors[i];
+        const float best    = bestLap->second.sectors[i];
+
+        // Нет измерения хотя бы с одной стороны — сравнивать не с чем. Лучше
+        // ноль, чем правдоподобное, но неверное число.
+        if (current <= 0.0f || best <= 0.0f)
+            return 0.0f;
+
+        current_sum += current;
+        best_sum    += best;
     }
 
-    // Edge case: current progress before first sample
-    if (it == bestLapSamples.begin()) {
-        return (float)(currentTime - it->timefromstart);
-    }
-
-    // Linear interpolation between two samples
-    auto prevIt = std::prev(it);
-    double t = (currentProgress - prevIt->progress) / (it->progress - prevIt->progress);
-    double interpolatedBestTime = prevIt->timefromstart + (it->timefromstart - prevIt->timefromstart) * t;
-
-    return (float)(currentTime - interpolatedBestTime);
+    return current_sum - best_sum;
 }
 
 // ============================================================================

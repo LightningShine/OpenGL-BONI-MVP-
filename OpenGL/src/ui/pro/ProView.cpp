@@ -1,14 +1,16 @@
 #include "ProView.h"
 #include "ProLapList.h"
 #include "ProChannels.h"
-#include "ProLapInfo.h"
+#include "ProSessionInfo.h"
 #include "ProGForce.h"
+#include "ProGForceBars.h"
 #include "ProTrackMap.h"
 #include "ProLaptime.h"
 #include "ProEvents.h"
 #include "ProSectors.h"
 #include "ProRelative.h"
 #include "../../core/WorldSnapshot.h"
+#include "../../network/ReplayPlayer.h"
 #include "../../vehicle/Vehicle.h"
 #include "../../racing/RaceManager.h"
 #include "../../racing/StopReset/StartStop.h"
@@ -76,6 +78,16 @@ float PanelZoom(const char* key) {
     return sc;
 }
 
+float SessionTimeSeconds() {
+    // На повторе часы сессии показывают, сколько оператор смотрит запись, а не
+    // когда событие случилось в заезде: сессия стартует в момент открытия
+    // файла. Поэтому берём позицию в записи.
+    if (telemetry::replay_is_active())
+        return telemetry::replay_status().position_ms / 1000.0f;
+
+    return g_race_manager ? g_race_manager->GetRaceElapsedTime() : 0.f;
+}
+
 static int32_t getDisplayVehicleId() {
     if (g_focused_vehicle_id != -1) return g_focused_vehicle_id;
     if (g_race_manager) {
@@ -139,7 +151,6 @@ void Render(const ProContext& ctx, float swipeAnim) {
     // Панели рисуются только если включены в боковом меню (McLaren-style).
     if (PanelVisible("LapList"))     RenderLapListWindow    (ctx, vehicleId, sz, panelTopH);
     if (PanelVisible("Channels"))    RenderChannelsWindow   (ctx, vehicleId, sz, panelTopH);
-    if (PanelVisible("LapInfo"))     RenderLapInfoWindow    (ctx, vehicleId, sz, panelTopH);
     if (PanelVisible("SessionInfo")) RenderSessionInfoWindow(ctx, vehicleId, sz, panelTopH);
 
     if (PanelVisible("TrackMap"))    RenderTrackMapWindow   (ctx, vehicleId, sz, panelTopH);
@@ -147,6 +158,8 @@ void Render(const ProContext& ctx, float swipeAnim) {
 
     if (PanelVisible("Events"))      RenderEventsWindow     (ctx, sz, panelTopH);
     if (PanelVisible("GForce"))      RenderGForceWindow     (ctx, vehicleId, sz, panelTopH);
+    if (PanelVisible("GForceLong"))  RenderGForceLongWindow (ctx, vehicleId, sz, panelTopH);
+    if (PanelVisible("GForceLat"))   RenderGForceLatWindow  (ctx, vehicleId, sz, panelTopH);
     if (PanelVisible("Sectors"))     RenderSectorsWindow    (ctx, vehicleId, sz, panelTopH);
     if (PanelVisible("Laptime"))     RenderLaptimeWindow    (ctx, vehicleId, sz, panelTopH);
 

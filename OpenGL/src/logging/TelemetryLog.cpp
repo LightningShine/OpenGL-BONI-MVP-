@@ -1,6 +1,9 @@
 #include "TelemetryLog.h"
 
+#include "../input/Input.h"   // loaded_track_name
+
 #include <atomic>
+#include <cctype>
 #include <chrono>
 #include <condition_variable>
 #include <cstdio>
@@ -53,19 +56,77 @@ namespace
                                      local.tm_mday);
     }
 
-    /// Имя файла: сортировка по имени совпадает с сортировкой по времени.
-    std::string make_log_file_name()
+    // Сколько символов имени трассы попадает в имя файла. Ограничение не от
+    // файловой системы, а от читаемости списка: длинное имя вытесняет из поля
+    // зрения дату, ради которой список и сортируют.
+    constexpr size_t MAX_TRACK_NAME_IN_FILE = 40;
+
+    /// Имя трассы, пригодное для имени файла: всё, что не буква и не цифра,
+    /// становится подчёркиванием. Байты старше 0x7F пропускаем как есть — имя
+    /// пришло из файловой системы в той же узкой кодировке и вернётся в неё же.
+    std::string sanitize_track_name(const std::string& name)
+    {
+        std::string result;
+        result.reserve(name.size());
+        for (const unsigned char symbol : name)
+        {
+            const bool allowed = std::isalnum(symbol) != 0 || symbol == '-' ||
+                                 symbol == '_' || symbol >= 0x80;
+            result.push_back(allowed ? static_cast<char>(symbol) : '_');
+        }
+        if (result.size() > MAX_TRACK_NAME_IN_FILE)
+            result.resize(MAX_TRACK_NAME_IN_FILE);
+
+        while (!result.empty() && result.back() == '_')
+            result.pop_back();
+        return result;
+    }
+
+    /// Имя файла: трасса, потом дата и время.
+    ///
+    /// Трасса стоит ПЕРВОЙ, потому что по списку записей надо видеть, к какой
+    /// карте каждая относится: открыть запись на чужой трассе всё равно нельзя,
+    /// а дата об этом не говорит ничего. Сортировка по времени внутри одной
+    /// трассы сохраняется — ГГГГММДД_ЧЧММСС сортируется как число.
+    std::string make_log_file_name(const std::string& track_name)
     {
         const std::time_t seconds = std::chrono::system_clock::to_time_t(
             std::chrono::system_clock::now());
         std::tm local{};
         localtime_s(&local, &seconds);
 
+        // Трассы может не быть (так пишет трекер) — тогда остаётся прежнее имя.
+        std::string prefix = sanitize_track_name(track_name);
+        if (prefix.empty())
+            prefix = "telemetry";
+
         char buffer[64];
-        std::snprintf(buffer, sizeof(buffer), "telemetry_%04d%02d%02d_%02d%02d%02d.rjl",
+        std::snprintf(buffer, sizeof(buffer), "_%04d%02d%02d_%02d%02d%02d.rjl",
                       local.tm_year + 1900, local.tm_mon + 1, local.tm_mday,
                       local.tm_hour, local.tm_min, local.tm_sec);
-        return buffer;
+        return prefix + buffer;
+    }
+
+    /// Формат трассы по расширению файла.
+    TrackFormat track_format_of(const std::filesystem::path& file)
+    {
+        std::string ext = file.extension().string();
+        for (char& c : ext) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        return (ext == ".trk2") ? TrackFormat::DualEdgeTrk2 : TrackFormat::CentreLineTxt;
+    }
+
+    /// Где кончаются записи. При встроенной трассе дальше идёт хвост, и читать
+    /// его как пакеты нельзя — иначе и проверка, и повтор увидят мусор.
+    uint64_t records_end_offset(const TelemetryLogHeader& header, uint64_t file_size)
+    {
+        if (header.track_embedded != 0 && header.record_count > 0)
+        {
+            const uint64_t end = sizeof(TelemetryLogHeader) +
+                                 static_cast<uint64_t>(header.record_count) * RECORD_SIZE;
+            if (end <= file_size)
+                return end;
+        }
+        return file_size;
     }
 
     uint32_t read_utc_ms(const uint8_t* payload_after_magic)
@@ -97,10 +158,15 @@ TelemetryLogStats verify_telemetry_log(const std::filesystem::path& path)
     if (!stats.header_valid)
         return stats;
 
+    std::error_code size_error;
+    const uint64_t file_size = std::filesystem::file_size(path, size_error);
+    const uint64_t records_end = records_end_offset(header, size_error ? UINT64_MAX : file_size);
+
     std::vector<uint8_t> record(RECORD_SIZE);
     rajagp::TelemetryPacket packet{};
 
-    while (stream.read(reinterpret_cast<char*>(record.data()), RECORD_SIZE))
+    while (static_cast<uint64_t>(stream.tellg()) + RECORD_SIZE <= records_end &&
+           stream.read(reinterpret_cast<char*>(record.data()), RECORD_SIZE))
     {
         ++stats.records_total;
         // Проверяем ровно тем же кодом, что и приём с порта: одна реализация
@@ -134,6 +200,12 @@ struct TelemetryLogReader::Impl
     // поиском.
     std::vector<uint32_t> elapsed_ms;
 
+    // Встроенная трасса из хвоста файла (см. TrackTrailerHeader).
+    bool                 track_present = false;
+    TrackFormat          track_format = TrackFormat::CentreLineTxt;
+    std::vector<uint8_t> track_bytes;
+    std::string          track_file_name;
+
     size_t count() const { return elapsed_ms.size(); }
 };
 
@@ -156,6 +228,11 @@ TelemetryLogReader::TelemetryLogReader(const std::filesystem::path& path)
         return;
     }
 
+    std::error_code size_error;
+    const uint64_t file_size = std::filesystem::file_size(path, size_error);
+    const uint64_t records_end = records_end_offset(impl_->header,
+                                                    size_error ? UINT64_MAX : file_size);
+
     std::vector<uint8_t> record(RECORD_SIZE);
     rajagp::TelemetryPacket packet{};
 
@@ -169,7 +246,8 @@ TelemetryLogReader::TelemetryLogReader(const std::filesystem::path& path)
     uint32_t previous_elapsed = 0;
     bool first = true;
 
-    while (stream.read(reinterpret_cast<char*>(record.data()), RECORD_SIZE))
+    while (static_cast<uint64_t>(stream.tellg()) + RECORD_SIZE <= records_end &&
+           stream.read(reinterpret_cast<char*>(record.data()), RECORD_SIZE))
     {
         if (std::memcmp(record.data(), RAJA_MAGIC_BYTES, sizeof(RAJA_MAGIC_BYTES)) != 0 ||
             !rajagp::parseRajaPayload(record.data() + sizeof(RAJA_MAGIC_BYTES), packet))
@@ -204,10 +282,46 @@ TelemetryLogReader::TelemetryLogReader(const std::filesystem::path& path)
         impl_->elapsed_ms.push_back(elapsed);
     }
 
+    // Хвост с трассой. Его отсутствие — не ошибка: так пишет трекер на карту
+    // памяти, и так же выглядят все записи, сделанные до появления хвоста.
+    if (impl_->header.track_embedded != 0 && !size_error && records_end < file_size)
+    {
+        stream.clear();
+        stream.seekg(static_cast<std::streamoff>(records_end), std::ios::beg);
+
+        TrackTrailerHeader trailer{};
+        stream.read(reinterpret_cast<char*>(&trailer), sizeof(trailer));
+        if (stream.gcount() == static_cast<std::streamsize>(sizeof(trailer)) &&
+            trailer.magic == TRACK_TRAILER_MAGIC &&
+            trailer.payload_size > 0 &&
+            records_end + sizeof(trailer) + trailer.payload_size <= file_size)
+        {
+            impl_->track_bytes.resize(trailer.payload_size);
+            stream.read(reinterpret_cast<char*>(impl_->track_bytes.data()), trailer.payload_size);
+            if (stream.gcount() == static_cast<std::streamsize>(trailer.payload_size))
+            {
+                impl_->track_present = true;
+                impl_->track_format = static_cast<TrackFormat>(trailer.format);
+                impl_->track_file_name = std::string(
+                    trailer.file_name,
+                    strnlen(trailer.file_name, sizeof(trailer.file_name)));
+            }
+            else
+            {
+                impl_->track_bytes.clear();
+            }
+        }
+        else
+        {
+            std::cerr << "[TELEMETRY-LOG] Embedded track is damaged, ignoring it" << std::endl;
+        }
+    }
+
     impl_->valid = true;
     std::cout << "[TELEMETRY-LOG] Loaded " << path.filename().string() << ": "
               << impl_->count() << " records, "
-              << (duration_ms() / 1000.0) << "s" << std::endl;
+              << (duration_ms() / 1000.0) << "s"
+              << (impl_->track_present ? ", track embedded" : "") << std::endl;
 }
 
 TelemetryLogReader::~TelemetryLogReader() = default;
@@ -238,6 +352,28 @@ uint32_t TelemetryLogReader::record_utc_ms(size_t index) const
 {
     const uint8_t* bytes = record(index);
     return bytes ? read_utc_ms(bytes + sizeof(RAJA_MAGIC_BYTES)) : 0;
+}
+
+bool TelemetryLogReader::has_embedded_track() const
+{
+    return impl_ && impl_->track_present;
+}
+
+TrackFormat TelemetryLogReader::embedded_track_format() const
+{
+    return impl_ ? impl_->track_format : TrackFormat::CentreLineTxt;
+}
+
+const std::vector<uint8_t>& TelemetryLogReader::embedded_track_bytes() const
+{
+    static const std::vector<uint8_t> empty;
+    return impl_ ? impl_->track_bytes : empty;
+}
+
+const std::string& TelemetryLogReader::embedded_track_file_name() const
+{
+    static const std::string empty;
+    return impl_ ? impl_->track_file_name : empty;
 }
 
 uint32_t TelemetryLogReader::record_elapsed_ms(size_t index) const
@@ -288,6 +424,13 @@ struct TelemetryLogWriter::Impl
 
     uint32_t first_utc_ms = 0;
     uint32_t last_utc_ms = 0;
+    std::string track_name;
+
+    // Копия файла трассы. Снимается ОДИН раз при открытии записи: трассу могут
+    // сменить по ходу, а запись обязана нести ту, на которой сделана.
+    std::vector<uint8_t> track_bytes;
+    TrackFormat          track_format = TrackFormat::CentreLineTxt;
+    std::string          track_file_name;
 
     void writer_loop();
     void write_header(bool finalize);
@@ -301,9 +444,17 @@ void TelemetryLogWriter::Impl::write_header(bool finalize)
     header.record_size = static_cast<uint16_t>(RECORD_SIZE);
     header.utc_date = local_date_yyyymmdd();
     header.source = static_cast<uint8_t>(source);
-    header.track_embedded = 0;
-    // TODO: заполнять track_name, когда в приложении появится имя текущего трека
-    // (сейчас загруженный трек нигде не хранится под именем).
+    // Хвост дописывается при закрытии, поэтому в промежуточном заголовке его
+    // ещё нет: оборванная запись честно скажет, что трассы в ней нет.
+    header.track_embedded = (finalize && !track_bytes.empty()) ? 1 : 0;
+
+    // Имя трассы — чтобы запись знала, к чему относится. Без него файл с карты
+    // памяти трекера остаётся набором координат, который не к чему привязать:
+    // повтор требует загруженной трассы, а какой именно — приходилось помнить.
+    // Поле фиксированной длины, поэтому имя обрезаем и всегда закрываем нулём.
+    const std::string track = track_name;
+    const size_t copied = track.copy(header.track_name, sizeof(header.track_name) - 1);
+    header.track_name[copied] = 0;
 
     if (finalize)
     {
@@ -350,7 +501,8 @@ void TelemetryLogWriter::Impl::writer_loop()
 }
 
 TelemetryLogWriter::TelemetryLogWriter(const std::filesystem::path& directory,
-                                       TelemetryLogSource source)
+                                       TelemetryLogSource source,
+                                       const std::filesystem::path& track_file)
     : impl_(std::make_unique<Impl>())
 {
     std::error_code error;
@@ -364,7 +516,25 @@ TelemetryLogWriter::TelemetryLogWriter(const std::filesystem::path& directory,
     }
 
     impl_->source = source;
-    impl_->path = directory / make_log_file_name();
+    impl_->track_name = loaded_track_name();
+
+    if (!track_file.empty())
+    {
+        std::ifstream track(track_file, std::ios::in | std::ios::binary);
+        if (track)
+        {
+            impl_->track_bytes.assign(std::istreambuf_iterator<char>(track),
+                                      std::istreambuf_iterator<char>());
+            impl_->track_format = track_format_of(track_file);
+            impl_->track_file_name = track_file.filename().string();
+        }
+        else
+        {
+            std::cerr << "[TELEMETRY-LOG] Cannot read track " << track_file.string()
+                      << ", recording without it" << std::endl;
+        }
+    }
+    impl_->path = directory / make_log_file_name(impl_->track_name);
     impl_->stream.open(impl_->path, std::ios::out | std::ios::binary | std::ios::trunc);
     if (!impl_->stream.is_open())
     {
@@ -393,6 +563,29 @@ TelemetryLogWriter::~TelemetryLogWriter()
     impl_->queue_ready.notify_all();
     if (impl_->worker.joinable())
         impl_->worker.join();
+
+    // Порядок важен: сперва хвост в конец файла, потом заголовок — он ссылается
+    // на хвост признаком track_embedded, и признак не должен появиться раньше
+    // самих данных.
+    if (!impl_->track_bytes.empty())
+    {
+        TrackTrailerHeader trailer{};
+        trailer.magic = TRACK_TRAILER_MAGIC;
+        trailer.version = 1;
+        trailer.format = static_cast<uint16_t>(impl_->track_format);
+        trailer.payload_size = static_cast<uint32_t>(impl_->track_bytes.size());
+        const size_t copied = impl_->track_file_name.copy(trailer.file_name,
+                                                          sizeof(trailer.file_name) - 1);
+        trailer.file_name[copied] = 0;
+
+        impl_->stream.seekp(0, std::ios::end);
+        impl_->stream.write(reinterpret_cast<const char*>(&trailer), sizeof(trailer));
+        impl_->stream.write(reinterpret_cast<const char*>(impl_->track_bytes.data()),
+                            static_cast<std::streamsize>(impl_->track_bytes.size()));
+
+        std::cout << "[TELEMETRY-LOG] Embedded track " << impl_->track_file_name
+                  << " (" << impl_->track_bytes.size() << " bytes)" << std::endl;
+    }
 
     impl_->write_header(true);
     impl_->stream.close();

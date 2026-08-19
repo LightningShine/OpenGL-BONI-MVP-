@@ -1,4 +1,5 @@
 #include "ProEvents.h"
+#include "../../core/WorldSnapshot.h"
 #include "../../racing/RaceManager.h"
 #include "../../vehicle/Vehicle.h"
 #include "../../network/ReplayPlayer.h"
@@ -13,18 +14,16 @@
 #include <cstdio>
 
 extern RaceManager* g_race_manager;
-extern std::map<int32_t, Vehicle> g_vehicles;
-extern std::mutex g_vehicles_mutex;
 
 namespace Pro {
 
 // ── Event colors ─────────────────────────────────────────────────────────────
-static constexpr ImU32 EV_OVERALL = IM_COL32(0xBB,0x8E,0xF9,255); // purple — session best
-static constexpr ImU32 EV_PBLAP   = IM_COL32(0x00,0xD2,0x6E,255); // green  — personal best lap
-static constexpr ImU32 EV_PBSEC   = IM_COL32(0x00,0xBC,0xFF,255); // cyan   — personal best sector
-static constexpr ImU32 EV_LEAD    = IM_COL32(0xDA,0xA5,0x40,255); // gold   — leader change
-static constexpr ImU32 EV_INFO    = IM_COL32(0xC8,0xC8,0xC8,255); // gray   — race info
-static constexpr ImU32 EV_STOP    = IM_COL32(0xFF,0x4B,0x4B,255); // red    — stop
+static constexpr ImU32 EV_OVERALL = IM_COL32(0xBB,0x8E,0xF9,255); // purple - session best
+static constexpr ImU32 EV_PBLAP   = IM_COL32(0x00,0xD2,0x6E,255); // green  - personal best lap
+static constexpr ImU32 EV_PBSEC   = IM_COL32(0x00,0xBC,0xFF,255); // cyan   - personal best sector
+static constexpr ImU32 EV_LEAD    = IM_COL32(0xDA,0xA5,0x40,255); // gold   - leader change
+static constexpr ImU32 EV_INFO    = IM_COL32(0xC8,0xC8,0xC8,255); // gray   - race info
+static constexpr ImU32 EV_STOP    = IM_COL32(0xFF,0x4B,0x4B,255); // red    - stop
 
 static void fmtSec(float s, char* b, size_t n) {
     if (s <= 0.f) { snprintf(b, n, "--.---"); return; }
@@ -33,36 +32,8 @@ static void fmtSec(float s, char* b, size_t n) {
     else       snprintf(b, n, "%.3f", r);
 }
 
-// Robust per-sector times for a lap (running-max progress, lap time closes S3).
-static void crossTimes(const std::vector<LapInfo>& s, float bt[4]) {
-    for (int i = 0; i < 4; ++i) bt[i] = -1.f;
-    if (s.size() < 2) return;
-    double prevMaxP = s.front().progress;
-    float  prevT    = s.front().timefromstart;
-    int    nb       = 0;
-    while (nb <= 3 && (double)nb / 3.0 <= prevMaxP) bt[nb++] = prevT;
-    for (size_t i = 1; i < s.size(); ++i) {
-        double p = s[i].progress; if (p < prevMaxP) p = prevMaxP;
-        float  t = s[i].timefromstart;
-        while (nb <= 3 && (double)nb / 3.0 <= p) {
-            double bp = (double)nb / 3.0, den = p - prevMaxP;
-            double f = den > 1e-9 ? (bp - prevMaxP) / den : 1.0;
-            bt[nb++] = prevT + (t - prevT) * (float)f;
-        }
-        prevMaxP = p; prevT = t;
-    }
-}
-static void secCompleted(const std::vector<LapInfo>& s, float lapTime, float out[3], bool v[3]) {
-    float bt[4]; crossTimes(s, bt);
-    if (bt[3] < 0.f && lapTime > 0.f && bt[2] >= 0.f) bt[3] = lapTime;
-    for (int k = 0; k < 3; ++k) {
-        if (bt[k] >= 0.f && bt[k + 1] >= 0.f) { out[k] = bt[k + 1] - bt[k]; v[k] = true; }
-        else { out[k] = 0.f; v[k] = false; }
-    }
-}
-
 // ── Event log + detection state ─────────────────────────────────────────────
-struct LogEvent { char time[12]; std::string text; ImU32 col; };
+struct LogEvent { char time[12]; float t; std::string text; ImU32 col; };
 static std::deque<LogEvent> s_log;
 
 struct EvtState { float bestLap = -1.f; float bestSec[3] = { -1.f, -1.f, -1.f }; };
@@ -76,6 +47,7 @@ static bool         s_init           = false;
 static void pushEvent(float sessT, std::string text, ImU32 col) {
     if (sessT < 0.f) sessT = 0.f;
     LogEvent e;
+    e.t = sessT;
     int m = (int)(sessT / 60.f), s = (int)sessT % 60;
     snprintf(e.time, sizeof(e.time), "%02d:%02d", m, s);
     e.text = std::move(text);
@@ -84,36 +56,54 @@ static void pushEvent(float sessT, std::string text, ImU32 col) {
     while (s_log.size() > 120) s_log.pop_back();
 }
 
-static void resetTracking() {
+// Сбрасывает только НАБЛЮДАТЕЛЯ - рекорды, относительно которых решается, что
+// событие произошло. Журнал не трогает: это две разные вещи, и путать их
+// нельзя. Наблюдатель обязан соответствовать текущей точке заезда, а журнал —
+// это то, что на этой точке уже успело произойти.
+static void resetDetector() {
     s_prev.clear();
     s_sessBestLap = -1.f;
     for (int k = 0; k < 3; ++k) s_sessBestSec[k] = -1.f;
     s_leader = INT_MIN;
+}
+
+static void resetTracking() {
+    resetDetector();
     s_log.clear();
 }
+
 
 // Poll vehicle/race state once per frame and append any new events.
 static void detectEvents() {
     if (!g_race_manager) return;
 
-    // Журнал — это НАКОПЛЕННАЯ по ходу заезда история, а не срез состояния:
-    // лучшие круги и секторы в нём выведены из того, что уже было показано.
-    // После отката повтора назад всё накопленное относится к ещё не
-    // проигранной части записи — журнал начинаем заново, иначе он отчитывается
-    // о рекордах из будущего, а при движении вперёд молчит про них повторно.
+    const float  sessT = SessionTimeSeconds();   // часы ЗАЕЗДА, см. ProView.h
+    SessionState st    = g_race_manager->GetSessionState();
+
+    // Перемотка назад. Журнал НЕ очищаем - оператор для того и мотает, чтобы
+    // разобрать, что случилось до этого момента. Убираем ровно то, чего на
+    // текущей точке ещё не произошло: записи новее её. Они лежат в голове
+    // очереди, потому что свежее событие кладётся первым.
     {
         static uint64_t s_rewind_seen = 0;
         const uint64_t rewinds = telemetry::replay_rewind_revision();
         if (rewinds != s_rewind_seen) {
             s_rewind_seen = rewinds;
-            resetTracking();
-            s_init = false;   // рекорды на новой точке пересеиваются молча
+
+            constexpr float EVENT_TIME_EPS = 0.25f;
+            while (!s_log.empty() && s_log.front().t > sessT + EVENT_TIME_EPS)
+                s_log.pop_front();
+
+            // А вот наблюдателя пересеиваем: рекорды откатились вместе с
+            // состоянием машин, и сравнивать надо с ними. Иначе при движении
+            // вперёд те же самые рекорды второй раз не объявятся - с точки
+            // зрения наблюдателя они уже достигнуты.
+            resetDetector();
+            s_init = false;   // пересев идёт молча, без записей в журнал
         }
     }
-    float        sessT = g_race_manager->GetRaceElapsedTime();
-    SessionState st    = g_race_manager->GetSessionState();
 
-    // Race flag changes (Track Server) — race-control events in the log.
+    // Race flag changes (Track Server) - race-control events in the log.
     // The first observed flag is adopted silently (connecting is not a change).
     {
         static std::string s_flagPrev;
@@ -138,23 +128,31 @@ static void detectEvents() {
     std::vector<Snap> snaps;
     int32_t leader = INT_MIN; double leadProg = -1.0;
     {
-        std::lock_guard<std::mutex> lk(g_vehicles_mutex);
-        auto lapTimeOf = [](Vehicle& v, int ln) -> float {
-            auto m = v.m_laps.find(ln); return (m != v.m_laps.end()) ? m->second.lapTime : -1.f;
-        };
-        for (auto& [id, v] : g_vehicles) {
+        // Рекорды считаем ТОЛЬКО по завершённым секторам с измеренным временем.
+        //
+        // Раньше здесь разбирался лог телеметрии, и лучший сектор брался в том
+        // числе из НЕДОЕХАННОГО круга: пока машина едет, его «время сектора»
+        // всё уменьшается, каждый кадр оказывается новым рекордом - отсюда и
+        // сыпались одинаковые строки пачками, да ещё и с прочерком вместо
+        // времени. Законченный сектор неизменяем, поэтому событие про него
+        // может произойти ровно один раз.
+        const std::shared_ptr<const world::Snapshot> snapshot = world::current();
+
+        for (const auto& [id, v] : snapshot->vehicles) {
             Snap s;
             s.id = id;
-            s.name = (v.name.empty() || v.name == "Unknown") ? ("CAR " + std::to_string(v.m_id)) : v.name;
-            s.bestLap = v.m_best_lap_time;
+            s.name = (v.name.empty() || v.name == "Unknown") ? ("CAR " + std::to_string(id)) : v.name;
+            s.bestLap = v.best_lap_time;
             for (int k = 0; k < 3; ++k) { s.sec[k] = -1.f; s.secV[k] = false; }
-            for (auto& [ln, sess] : v.laps) {
-                float z[3]; bool zv[3]; secCompleted(sess.samples, lapTimeOf(v, ln), z, zv);
-                for (int k = 0; k < 3; ++k)
-                    if (zv[k] && (!s.secV[k] || z[k] < s.sec[k])) { s.sec[k] = z[k]; s.secV[k] = true; }
+            for (const auto& [ln, lap] : v.laps) {
+                for (int k = 0; k < 3; ++k) {
+                    const float t = lap.sectors[k];
+                    if (t <= 0.f) continue;
+                    if (!s.secV[k] || t < s.sec[k]) { s.sec[k] = t; s.secV[k] = true; }
+                }
             }
-            s.prog = v.m_total_progress;
-            s.started = v.m_has_started_first_lap;
+            s.prog = v.total_progress;
+            s.started = v.has_started_first_lap;
             if (s.started && s.prog > leadProg) { leadProg = s.prog; leader = id; }
             snaps.push_back(std::move(s));
         }
@@ -194,19 +192,20 @@ static void detectEvents() {
         if (s.bestLap > 0.f && (pv.bestLap < 0.f || s.bestLap < pv.bestLap - eps)) {
             char tb[16]; fmtSec(s.bestLap, tb, sizeof(tb));
             bool overall = (s_sessBestLap < 0.f || s.bestLap < s_sessBestLap - eps);
-            if (overall) { s_sessBestLap = s.bestLap; pushEvent(sessT, "Fastest lap — " + s.name + "  " + tb, EV_OVERALL); }
-            else         pushEvent(sessT, "Personal best lap — " + s.name + "  " + tb, EV_PBLAP);
+            if (overall) { s_sessBestLap = s.bestLap; pushEvent(sessT, "Fastest lap - " + s.name + "  " + tb, EV_OVERALL); }
+            else         pushEvent(sessT, "Personal best lap - " + s.name + "  " + tb, EV_PBLAP);
             pv.bestLap = s.bestLap;
         }
 
         for (int k = 0; k < 3; ++k) {
-            if (s.secV[k] && (pv.bestSec[k] < 0.f || s.sec[k] < pv.bestSec[k] - eps)) {
+            if (s.secV[k] && s.sec[k] > 0.f &&
+                (pv.bestSec[k] < 0.f || s.sec[k] < pv.bestSec[k] - eps)) {
                 char tb[16]; fmtSec(s.sec[k], tb, sizeof(tb));
                 bool overall = (s_sessBestSec[k] < 0.f || s.sec[k] < s_sessBestSec[k] - eps);
                 char head[24];
-                if (overall) { s_sessBestSec[k] = s.sec[k]; snprintf(head, sizeof(head), "Fastest S%d — ", k + 1);
+                if (overall) { s_sessBestSec[k] = s.sec[k]; snprintf(head, sizeof(head), "Fastest S%d - ", k + 1);
                                pushEvent(sessT, std::string(head) + s.name + "  " + tb, EV_OVERALL); }
-                else { snprintf(head, sizeof(head), "Best S%d — ", k + 1);
+                else { snprintf(head, sizeof(head), "Best S%d - ", k + 1);
                        pushEvent(sessT, std::string(head) + s.name + "  " + tb, EV_PBSEC); }
                 pv.bestSec[k] = s.sec[k];
             }
@@ -237,7 +236,7 @@ void RenderEventsWindow(const ProContext& ctx, ImVec2 vpSz, float topH) {
 
     float w = ImGui::GetWindowWidth();
     float z = PanelZoom("Events");
-    DrawPanelHeader(ctx, "EVENTS", false, nullptr, z, "Events");
+    DrawPanelHeader(ctx, "EVENTS", false, "Events");
 
     float scrollH = ImGui::GetContentRegionAvail().y;
     ImGui::BeginChild("##evScroll", {w, scrollH}, false);

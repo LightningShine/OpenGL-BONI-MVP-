@@ -64,7 +64,7 @@ void RenderRelativeWindow(const ProContext& ctx, int32_t vehicleId,
     float w = ImGui::GetWindowWidth();
     float h = ImGui::GetWindowHeight();
     float z = PanelZoom("Relative");
-    DrawPanelHeader(ctx, "RELATIVE MAP", false, nullptr, z, "Relative");
+    DrawPanelHeader(ctx, "RELATIVE MAP", false, "Relative");
 
     // Опорное время круга: собственный лучший или предыдущий; фолбэк 30 с.
     float refLap = 30.f;

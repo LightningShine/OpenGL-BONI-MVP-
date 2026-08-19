@@ -65,6 +65,27 @@ int g_focused_vehicle_id = -1;  // -1 = лидер (дефолт)
 bool g_show_vehicle_names = true; // show TLA names above vehicles
 
 // ✅ Генератор уникальных ID
+size_t visibleSampleCount(const Vehicle& vehicle, int lapNumber,
+                          const std::vector<LapInfo>& samples)
+{
+    // Круга ещё не было: он целиком в непроигранной части записи.
+    if (lapNumber > vehicle.m_current_lap_number)
+        return 0;
+
+    // Круг пройден целиком — виден весь.
+    if (lapNumber < vehicle.m_current_lap_number)
+        return samples.size();
+
+    // Текущий круг виден до места, где машина стоит сейчас. Прогресс внутри
+    // круга возрастает, поэтому границу ищем двоичным поиском: панели читают
+    // историю каждый кадр, и перебирать её целиком нельзя.
+    const auto cut = std::upper_bound(
+        samples.begin(), samples.end(), vehicle.m_track_progress,
+        [](double progress, const LapInfo& sample) { return progress < sample.progress; });
+
+    return static_cast<size_t>(cut - samples.begin());
+}
+
 int32_t generateVehicleID()
 {
     static std::atomic<int32_t> nextID(1);
@@ -230,9 +251,16 @@ Vehicle::Vehicle(int32_t race_id, const TelemetryPacket& packet)
     m_lat_dd = packet.lat / 1e7;
     m_lon_dd = packet.lon / 1e7;
     m_speed_kph = packet.speed / 100.0;
-    m_acceleration = packet.acceleration / 100.0;
-    m_g_force_x = packet.gForceX / 100.0;
-    m_g_force_y = packet.gForceY / 100.0;
+    // Ускорение — тоже со знаком: торможение это отрицательное ускорение, и
+    // прочтение беззнаковым превращало его в десятки миллионов м/с².
+    m_acceleration = static_cast<int32_t>(packet.acceleration) / 100.0;
+    // Перегрузка со ЗНАКОМ: в пакете поле беззнаковое, но торможение и левый
+    // поворот — это отрицательные значения, и трекер кладёт их дополнительным
+    // кодом. Для любой физически возможной перегрузки (до 327 g) прочтение как
+    // int16 совпадает с прежним, а отрицательные перестают превращаться в
+    // сотни g.
+    m_g_force_x = static_cast<int16_t>(packet.gForceX) / 100.0;
+    m_g_force_y = static_cast<int16_t>(packet.gForceY) / 100.0;
     m_fix_type = packet.fixtype;
     m_id = race_id;
     m_device_id = packet.ID;

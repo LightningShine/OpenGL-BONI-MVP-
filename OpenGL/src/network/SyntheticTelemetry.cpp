@@ -132,11 +132,111 @@ namespace
         return true;
     }
 
+    // ── Динамика синтетической машины ───────────────────────────────────────
+    //
+    // Раньше машина шла по трассе с постоянной скоростью, и перегрузки в пакете
+    // были нулями: панели перегрузок нечем было проверить, а «идеально ровный»
+    // заезд не похож ни на один настоящий. Теперь скорость ограничена
+    // поворотом — как её ограничивает сцепление у реальной машины, — и обе
+    // перегрузки считаются из движения, а не выдумываются.
+
+    constexpr double G = 9.81;                  // м/с²
+    constexpr double MAX_LATERAL_G = 0.9;       // держит поворот, пока не сорвётся
+    constexpr double MAX_ACCEL_G   = 0.5;       // разгон
+    constexpr double MAX_BRAKE_G   = 0.9;       // торможение
+    constexpr double MIN_SPEED_FRACTION = 0.25; // ниже этой доли заданной скорости не тормозим
+    // Поперечная перегрузка меряется на участке ДЛИННЕЕ шага полилинии трассы:
+    // трасса записана десятками точек, поворот в ней — излом в одной вершине, и
+    // на коротком участке кривизна в этом изломе взлетает до значений, которых у
+    // машины с её инерцией быть не может. Окно в несколько метров сглаживает
+    // излом так же, как его сглаживает сама машина.
+    constexpr float  CURVATURE_LOOK_M  = 6.0f;  // на чём меряется текущий поворот
+    constexpr float  BRAKING_LOOK_M    = 16.0f; // на сколько вперёд «смотрит водитель»
+    constexpr int    BRAKING_SAMPLES   = 8;     // точек в окне торможения
+
+    // Насколько плавно машина возвращается к заданной скорости после поворота.
+    // Разгон «на всю» до самой цели и есть источник дребезга: цель чуть уплыла —
+    // тяга скачет с полного газа на полный тормоз и обратно.
+    constexpr double SPEED_TAU_SECONDS = 0.6;
+
+    // Предел РЫВКА (производной ускорения). Ни водитель, ни машина не меняют
+    // тягу мгновенно, а именно мгновенные переключения давали в панели скачки
+    // ±0.5 g по несколько раз в секунду при почти постоянной скорости.
+    constexpr double MAX_JERK_MPS3 = 6.0;
+
+    /// Поворот пути на участке `look_meters` вперёд, радианы.
+    /// Знак — против часовой стрелки (левый поворот), как у atan2.
+    float turn_ahead(const TrackPath& path, float distance, float look_meters)
+    {
+        const float look = look_meters / static_cast<float>(MapConstants::MAP_SIZE);
+
+        glm::vec2 position, tangent, position_ahead, tangent_ahead;
+        sample_path(path, distance, position, tangent);
+        sample_path(path, distance + look, position_ahead, tangent_ahead);
+
+        const float cross = tangent.x * tangent_ahead.y - tangent.y * tangent_ahead.x;
+        const float dot   = tangent.x * tangent_ahead.x + tangent.y * tangent_ahead.y;
+        return std::atan2(cross, dot);
+    }
+
+    /// Кривизна пути (1/м) на коротком участке впереди.
+    double curvature_ahead(const TrackPath& path, float distance, float look_meters)
+    {
+        return std::fabs(static_cast<double>(turn_ahead(path, distance, look_meters))) /
+               static_cast<double>(look_meters);
+    }
+
+    /// Поворот на участке ВОКРУГ точки: половина окна назад, половина вперёд.
+    /// Симметричное окно нужно, чтобы перегрузка не «включалась» скачком в
+    /// момент, когда излом полилинии попадает в поле зрения, и не пропадала так
+    /// же резко: машина проходит вершину постепенно, и мерить надо так же.
+    float turn_around(const TrackPath& path, float distance, float window_meters)
+    {
+        const float half = 0.5f * window_meters / static_cast<float>(MapConstants::MAP_SIZE);
+        return turn_ahead(path, distance - half, window_meters);
+    }
+
+    /// Самый крутой поворот в окне торможения и расстояние до него.
+    ///
+    /// Берётся МАКСИМУМ, а не среднее: среднее размазывает апекс — длинный
+    /// пологий вход гасит короткую шпильку, и машина въезжает в неё, не тормозя.
+    /// Расстояние нужно, чтобы тормозить ровно с той силой, которой хватает к
+    /// приезду в поворот, а не «в пол» при первом же его появлении в окне.
+    struct CornerAhead
+    {
+        double curvature = 0.0;    // 1/м
+        float  distance_m = 0.0f;  // до начала этого участка
+    };
+
+    CornerAhead peak_corner_ahead(const TrackPath& path, float distance)
+    {
+        const float step = BRAKING_LOOK_M / BRAKING_SAMPLES;
+        CornerAhead corner;
+        for (int i = 0; i < BRAKING_SAMPLES; ++i)
+        {
+            const float offset = step * i;
+            const double curvature = curvature_ahead(path, distance + offset, step);
+            if (curvature > corner.curvature)
+            {
+                corner.curvature = curvature;
+                corner.distance_m = offset;
+            }
+        }
+        return corner;
+    }
+
     /// Собирает проводной пакет с настоящим CRC и дописывает его в поток.
+    /// Перегрузки идут дополнительным кодом в беззнаковых полях — так их читает
+    /// приём (см. Vehicle.cpp), иначе торможение стало бы сотнями g.
     void append_packet(std::vector<uint8_t>& stream, uint32_t device_id, uint8_t seq,
                        uint32_t utc_ms, double lat, double lon, double speed_kph,
-                       int16_t fix_type)
+                       double accel_mps2, double g_long, double g_lat, int16_t fix_type)
     {
+        const auto to_wire_g = [](double value) {
+            const double hundredths = std::clamp(value * 100.0, -32000.0, 32000.0);
+            return static_cast<uint16_t>(static_cast<int16_t>(std::lround(hundredths)));
+        };
+
         rajagp::RajaTelemetryPacket wire{};
         wire.magic = rajagp::PacketMagic::RAJA;
         wire.device_id = device_id;
@@ -145,9 +245,10 @@ namespace
         wire.lat = static_cast<int32_t>(lat * 1e7);
         wire.lon = static_cast<int32_t>(lon * 1e7);
         wire.speed = static_cast<uint32_t>(speed_kph * 100.0);
-        wire.acceleration = 0;
-        wire.gForceX = 0;
-        wire.gForceY = 0;
+        wire.acceleration = static_cast<uint32_t>(
+            static_cast<int32_t>(std::lround(accel_mps2 * 100.0)));
+        wire.gForceX = to_wire_g(g_lat);    // поперечная: + вправо
+        wire.gForceY = to_wire_g(g_long);   // продольная: + разгон
         wire.fix_type = fix_type;
         wire.crc = rajagp::crc16_ccitt_false(reinterpret_cast<const uint8_t*>(&wire),
                                              sizeof(wire) - sizeof(wire.crc));
@@ -159,8 +260,10 @@ namespace
     struct SyntheticCar
     {
         uint32_t device_id = 0;
-        double   speed_kph = 0.0;
-        float    distance = 0.0f;   // вдоль трека, нормализованные единицы
+        double   target_speed_kph = 0.0;   // на прямой, из сценария
+        double   speed_mps = 0.0;          // текущая: падает в повороте
+        double   accel_mps2 = 0.0;         // текущая тяга/торможение
+        float    distance = 0.0f;          // вдоль трека, нормализованные единицы
         uint8_t  seq = 0;
     };
 
@@ -192,7 +295,8 @@ std::vector<uint8_t> build_synthetic_stream(const SyntheticScenario& scenario,
             const double share = (cars.size() > 1)
                                      ? static_cast<double>(i) / static_cast<double>(cars.size() - 1)
                                      : 0.0;
-            cars[i].speed_kph = scenario.base_speed_kph + share * scenario.speed_spread_kph;
+            cars[i].target_speed_kph = scenario.base_speed_kph + share * scenario.speed_spread_kph;
+            cars[i].speed_mps = cars[i].target_speed_kph / 3.6;
             // Стартовая расстановка по трассе, как на решётке.
             cars[i].distance = path.total_length *
                                static_cast<float>(i) / static_cast<float>(cars.size()) * 0.05f;
@@ -221,8 +325,53 @@ std::vector<uint8_t> build_synthetic_stream(const SyntheticScenario& scenario,
                 SyntheticCar& car = cars[i];
 
                 // Физика считается всегда: потеря пакета не останавливает машину.
-                const double meters_per_second = car.speed_kph / 3.6;
-                car.distance += static_cast<float>(meters_per_second * delta_seconds /
+                //
+                // Скорость держится на заданной, пока позволяет поворот: впереди
+                // крутой вираж — машина тормозит до той скорости, на которой
+                // поперечная перегрузка ещё в пределах сцепления, за виражом
+                // разгоняется обратно. Отсюда берутся обе перегрузки: продольная
+                // из изменения скорости, поперечная из скорости и кривизны.
+                const double target_mps = car.target_speed_kph / 3.6;
+                const CornerAhead corner = peak_corner_ahead(path, car.distance);
+
+                double corner_mps = target_mps;
+                if (corner.curvature > 1e-5)
+                    corner_mps = std::sqrt(MAX_LATERAL_G * G / corner.curvature);
+                corner_mps = std::clamp(corner_mps, target_mps * MIN_SPEED_FRACTION, target_mps);
+
+                // Нужное ускорение: тормозим ровно настолько, чтобы к повороту
+                // скорость упала до проходимой (v² = v0² + 2·a·s), а на выходе
+                // возвращаемся к заданной плавно, а не полным газом до упора.
+                double wanted_accel;
+                if (car.speed_mps > corner_mps)
+                {
+                    const double to_corner = std::fmax(static_cast<double>(corner.distance_m), 1.0);
+                    wanted_accel = (corner_mps * corner_mps - car.speed_mps * car.speed_mps) /
+                                   (2.0 * to_corner);
+                }
+                else
+                {
+                    wanted_accel = (target_mps - car.speed_mps) / SPEED_TAU_SECONDS;
+                }
+                wanted_accel = std::clamp(wanted_accel, -MAX_BRAKE_G * G, MAX_ACCEL_G * G);
+
+                // Тяга меняется не мгновенно — отсюда гладкая продольная кривая.
+                const double jerk_limit = MAX_JERK_MPS3 * delta_seconds;
+                car.accel_mps2 += std::clamp(wanted_accel - car.accel_mps2, -jerk_limit, jerk_limit);
+
+                car.speed_mps = std::fmax(0.5, car.speed_mps + car.accel_mps2 * delta_seconds);
+
+                const double accel_mps2 = car.accel_mps2;
+                const double g_long = accel_mps2 / G;
+
+                // Поперечная: a = v²·κ. Знак — по стороне поворота, вправо
+                // положительный (так подписана шкала панели).
+                const double turn = -static_cast<double>(
+                    turn_around(path, car.distance, CURVATURE_LOOK_M));
+                const double g_lat = (car.speed_mps * car.speed_mps) *
+                                     (turn / CURVATURE_LOOK_M) / G;
+
+                car.distance += static_cast<float>(car.speed_mps * delta_seconds /
                                                    MapConstants::MAP_SIZE);
 
                 const bool is_gap_car = (scenario.gap_car_index >= 0) &&
@@ -266,7 +415,7 @@ std::vector<uint8_t> build_synthetic_stream(const SyntheticScenario& scenario,
 
                 append_packet(stream, car.device_id, car.seq++,
                               static_cast<uint32_t>(static_cast<uint64_t>(stamp) % MS_PER_DAY),
-                              lat, lon, car.speed_kph,
+                              lat, lon, car.speed_mps * 3.6, accel_mps2, g_long, g_lat,
                               degraded ? static_cast<int16_t>(1) : static_cast<int16_t>(4));
             }
         }
@@ -348,6 +497,15 @@ bool synthetic_start(const SyntheticScenario& scenario)
     if (!g_is_map_loaded)
     {
         std::cerr << "[SYNTH] Cannot start: no track loaded" << std::endl;
+        return false;
+    }
+
+    // Зеркало проверки в replay_open. Тракт приёма и так отбросит эти пакеты,
+    // пока открыт повтор, но генератор при этом открыл бы НОВУЮ запись и писал
+    // бы в неё заезд, которого никто не видит.
+    if (replay_is_active())
+    {
+        std::cerr << "[SYNTH] Cannot start: a replay is open, close it first" << std::endl;
         return false;
     }
 
