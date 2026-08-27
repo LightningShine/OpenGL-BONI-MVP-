@@ -1,4 +1,5 @@
 #pragma once
+#include "LapTypes.h"          // SECTOR_COUNT, LapData, LapInfo, CarLapSessions
 #include "../input/Input.h"
 #include "../network/Server.h"
 #include "../Config.h"
@@ -23,49 +24,10 @@ extern bool g_show_vehicle_names; // true = show TLA names above vehicles
 // проезда. При свёрнутом окне кадров нет вовсе, и терялись все.
 //
 // RaceManager разбирает накопленные события и ведёт по ним гоночную логику.
+//
+// Разбиение круга на секторы точками замера и типы результата круга — в
+// LapTypes.h (SECTOR_COUNT, LapData, LapInfo).
 // ============================================================================
-// ТОЧКИ ХРОНОМЕТРАЖА
-//
-// Круг разбит на SECTOR_COUNT секторов точками замера. Точка 0 — линия
-// старт/финиша, точки 1..N-1 — промежуточные, стоят на фиксированных долях
-// круга. Одинаковые для всех машин и всех кругов.
-//
-// Так устроены все системы, которым верят: у MyLaps это физические петли в
-// покрытии (каждый проезд над петлёй — запись «трекер + метка времени»), у
-// MoTeC — split points по дистанции круга. Время сектора там ВСЕГДА разность
-// двух меток пересечения, а не результат разбора накопленной истории.
-//
-// У нас было наоборот: секторы считались по логу телеметрических сэмплов —
-// искали, между какими замерами прогресс перешёл через 1/3 и 2/3. Отсюда всё
-// и ломалось. Лог пишется по кадрам, поэтому его плотность зависит от FPS и
-// скорости воспроизведения; на повторе часть лога относится к ещё не сыгранной
-// части записи; при неполном логе граница сектора не находится вовсе. Один
-// сектор показывал 2.778, соседний — пусто, а круг при этом 46.190 — при том,
-// что секторы обязаны давать в сумме круг.
-//
-// Теперь сектор — это интервал между двумя пересечениями, с метками из
-// gps_utc_ms. Свойства получаются сами собой:
-//   * сумма секторов равна кругу ПО ПОСТРОЕНИЮ — это разбиение одного отрезка;
-//   * время не зависит ни от кадров, ни от скорости повтора, ни от того, каким
-//     путём оператор пришёл в эту точку записи;
-//   * законченный сектор неизменяем, поэтому «рекорд сектора» срабатывает один
-//     раз, а не каждый кадр;
-//   * живой заезд, повтор с ПК и запись с карты памяти трекера дают одни и те
-//     же числа: считается всё из одного и того же потока пакетов.
-// ============================================================================
-inline constexpr int SECTOR_COUNT = 3;
-
-/// Время сектора не измерено. Ноль для этого не годится: он и сам по себе
-/// осмысленное значение, и именно из-за него в журнал сыпались рекорды с
-/// прочерком вместо времени.
-inline constexpr float SECTOR_TIME_NONE = -1.0f;
-
-/// Доля круга, на которой стоит точка замера `index` (0 — старт/финиш).
-inline double sector_split_position(int index)
-{
-	return static_cast<double>(index) / static_cast<double>(SECTOR_COUNT);
-}
-
 struct LineCrossing
 {
 	float    fraction = 0.0f;        // доля отрезка, на которой легла линия
@@ -81,53 +43,6 @@ struct LineCrossing
 	// хронометраж разбирает проезды подряд и ничего не путает.
 	int      point_index = 0;
 };
-
-struct LapData
-{
-	float lapTime;                              // Lap time in seconds
-	int positionAtFinish;                       // Position when crossing line
-	std::vector<glm::vec2> telemetryPoints;     // Placeholder for future telemetry
-
-	// Времена секторов круга. SECTOR_TIME_NONE — сектор не был измерен (машина
-	// заехала в середине круга, пропал сигнал). В сумме дают lapTime.
-	std::array<float, SECTOR_COUNT> sectors;
-
-	LapData() : lapTime(0.0f), positionAtFinish(0) { sectors.fill(SECTOR_TIME_NONE); }
-	LapData(float time, int position) : lapTime(time), positionAtFinish(position)
-	{
-		sectors.fill(SECTOR_TIME_NONE);
-	}
-};
-
-
-struct LapInfo
-{
-	float timefromstart;
-	double progress;
-	std::chrono::steady_clock::time_point timestamp;
-	double total_progress;
-	float gForceX, gForceY;
-	float aceleration, speed;
-	int curentPosition;
-
-	// Где машина была в этот момент — нормализованные координаты, тот же кадр,
-	// что и m_normalized_x/y (без render offset: его накладывает тот, кто
-	// рисует, ровно как для живой позиции). Без них история знает, КОГДА и
-	// НАСКОЛЬКО быстро машина ехала, но не ГДЕ, и построить реальную линию
-	// проезда не из чего — см. панель TRACK REPORT.
-	double x = 0.0;
-	double y = 0.0;
-};
-
-struct CarLapSessions
-{
-	int lapnumber;
-	int globalLapnumber;
-	std::vector<LapInfo> samples;
-};
-
-
-
 
 class Vehicle
 {
@@ -172,7 +87,9 @@ public:
 	// ========================================================================
 	std::map<int, LapData> m_laps;
 	float m_current_lap_timer = 0.0f;
-	int m_current_lap_number = RaceConstants::LAP_START_NUMBER;
+	// Машина появляется НА ВЫЕЗДНОМ круге: боевой отсчёт открывает первое
+	// пересечение линии (см. RaceConstants::OUT_LAP_NUMBER).
+	int m_current_lap_number = RaceConstants::OUT_LAP_NUMBER;
 	int m_completed_laps = 0;
 	double m_total_progress = 0.0;
 	bool m_has_started_first_lap = false;

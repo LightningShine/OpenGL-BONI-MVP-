@@ -1,5 +1,6 @@
 #include "ProTrackReport.h"
 #include "../../Config.h"
+#include "../../network/ReplayPlayer.h"
 #include "../../core/WorldSnapshot.h"
 #include "../../rendering/Interpolation.h"
 #include "../../vehicle/Vehicle.h"
@@ -147,87 +148,24 @@ void RenderTrackReportWindow(const ProContext& ctx, int32_t vehicleId,
     static ColorMode s_mode   = ColorMode::Speed;
     static bool      s_follow = false;
 
-    ImFont*     hf   = ctx.russo ? ctx.russo : ImGui::GetFont();
-    const float hsz  = ui_scale::points(UIConfig::FONT_PT_RUSSO_SMALL);
     const float hgap = ui_scale::points(28.f);
-
-    // Рисует надпись-кнопку правым краем в `rightEdge`, возвращает её левый край
-    // и сообщает о клике. Одна точка на отрисовку и на попадание мышью: считать
-    // прямоугольник дважды — верный способ развести их при первой же правке.
-    //
-    // Надписи серые, как и подпись шапки: это служебные переключатели, а не
-    // данные. Включённое состояние показывает яркость, а не другой цвет —
-    // золотом на этом экране выделены значения, и спорить с ними шапка не должна.
-    // `arrow` дорисовывает треугольник: у надписи, за которой открывается
-    // список, должен быть признак, что она раскрывается.
-    auto headerButton = [&](const char* label, bool active, bool arrow, float rightEdge,
-                            bool& clicked) -> float {
-        const float tw   = hf->CalcTextSizeA(hsz, FLT_MAX, 0.f, label).x;
-        const float ah   = arrow ? ui_scale::points(4.f) : 0.f;
-        const float gap  = arrow ? ui_scale::points(5.f) : 0.f;
-        const float full = tw + gap + (arrow ? ah * 2.f : 0.f);
-        const float x    = rightEdge - full;
-        const float grow = ui_scale::points(4.f);
-        const bool hov = ImGui::IsMouseHoveringRect({ x - grow, wp.y },
-                                                    { x + full + grow, wp.y + header_h() }, false);
-
-        const ImU32 col = (active || hov) ? COL_HDR_TEXT : COL_LABEL;
-        const float ty  = wp.y + (header_h() - hsz) * 0.5f;
-        dl->AddText(hf, hsz, { x, ty }, col, label);
-
-        if (arrow) {
-            const float ax = x + tw + gap;
-            const float ay = wp.y + header_h() * 0.5f;
-            dl->AddTriangleFilled({ ax, ay - ah * 0.5f }, { ax + ah * 2.f, ay - ah * 0.5f },
-                                  { ax + ah, ay + ah * 0.9f }, col);
-        }
-
-        clicked = hov && ImGui::IsMouseClicked(0);
-        return x;
-    };
 
     // Кнопка слежения — у правого края, левее крестика закрытия.
     bool followClicked = false;
-    const float followX = headerButton("FOLLOW", s_follow, false, wp.x + w - hgap, followClicked);
+    const float followX = HeaderButton(ctx, "FOLLOW", s_follow, false, wp.x + w - hgap,
+                                       followClicked);
     if (followClicked) s_follow = !s_follow;
 
     // Кнопка режима окраски — левее слежения. Подпись и есть текущий режим, а
     // клик открывает список: перебор по кругу заставлял щёлкать вслепую, пока не
     // попадётся нужный, и не показывал, из чего вообще выбирают.
     bool modeClicked = false;
-    const float modeX = headerButton(modeLabel(s_mode), false, /*arrow=*/true,
+    const float modeX = HeaderButton(ctx, modeLabel(s_mode), false, /*arrow=*/true,
                                      followX - ui_scale::points(14.f), modeClicked);
     if (modeClicked) ImGui::OpenPopup("##trackReportMode");
 
-    // Список оформлен ТЕМИ ЖЕ константами, что и выпадающие меню навбара
-    // (UIConfig::DROPDOWN_*). Свой набор цветов здесь означал бы, что в одном
-    // приложении два разных выпадающих меню, и разойтись им достаточно одной
-    // правки палитры.
-    const ImVec2 dsz = ImGui::GetIO().DisplaySize;
     ImGui::SetNextWindowPos({ modeX - ui_scale::points(8.f), wp.y + header_h() });
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,
-                        { UIConfig::DROPDOWN_PADDING_X * dsz.x,
-                          UIConfig::DROPDOWN_PADDING_Y * dsz.y });
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, UIConfig::DROPDOWN_BORDER_SIZE);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding,   UIConfig::DROPDOWN_ROUNDING);
-    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,
-                        { UIConfig::DROPDOWN_ITEM_SPACING_X * dsz.x,
-                          UIConfig::DROPDOWN_ITEM_SPACING_Y * dsz.y });
-    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,
-                        { UIConfig::DROPDOWN_ITEM_PADDING_X * dsz.x,
-                          UIConfig::DROPDOWN_ITEM_PADDING_Y * dsz.y });
-    ImGui::PushStyleColor(ImGuiCol_PopupBg, ImVec4(UIConfig::DROPDOWN_BG_R, UIConfig::DROPDOWN_BG_G,
-                                                   UIConfig::DROPDOWN_BG_B, UIConfig::DROPDOWN_BG_ALPHA));
-    ImGui::PushStyleColor(ImGuiCol_Border,  ImVec4(UIConfig::DROPDOWN_BORDER_R, UIConfig::DROPDOWN_BORDER_G,
-                                                   UIConfig::DROPDOWN_BORDER_B, 1.f));
-    ImGui::PushStyleColor(ImGuiCol_Text,    ImVec4(UIConfig::DROPDOWN_TEXT_R, UIConfig::DROPDOWN_TEXT_G,
-                                                   UIConfig::DROPDOWN_TEXT_B, 1.f));
-    ImGui::PushStyleColor(ImGuiCol_Header,  ImVec4(UIConfig::DROPDOWN_HOVER_R, UIConfig::DROPDOWN_HOVER_G,
-                                                   UIConfig::DROPDOWN_HOVER_B, 1.f));
-    ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(UIConfig::DROPDOWN_HOVER_R, UIConfig::DROPDOWN_HOVER_G,
-                                                         UIConfig::DROPDOWN_HOVER_B, 1.f));
-    ImGui::PushStyleColor(ImGuiCol_HeaderActive,  ImVec4(UIConfig::DROPDOWN_ACTIVE_R, UIConfig::DROPDOWN_ACTIVE_G,
-                                                         UIConfig::DROPDOWN_ACTIVE_B, 1.f));
+    PushDropdownStyle();
     if (ImGui::BeginPopup("##trackReportMode")) {
         // Шрифт тот же, что у пунктов навбара.
         if (ctx.regular) ImGui::PushFont(ctx.regular);
@@ -237,8 +175,7 @@ void RenderTrackReportWindow(const ProContext& ctx, int32_t vehicleId,
         if (ctx.regular) ImGui::PopFont();
         ImGui::EndPopup();
     }
-    ImGui::PopStyleColor(6);
-    ImGui::PopStyleVar(5);
+    PopDropdownStyle();
 
     const float mapH = h - header_h() - 2.f;
     const ImVec2 mapMin = base;
@@ -274,26 +211,38 @@ void RenderTrackReportWindow(const ProContext& ctx, int32_t vehicleId,
     std::vector<TrailPoint> trail;
     float trailSpeedMin = FLT_MAX, trailSpeedMax = 0.f, trailGMax = 0.f;
     {
+        // Линия проезда — КРУГ ЦЕЛИКОМ, а не по точку просмотра. На повторе
+        // разбирают уже случившийся заезд, и обрезанная линия отвечает на
+        // вопрос «где машина побывала» ровно наполовину; только что начавшийся
+        // круг выглядел бы пустым, хотя в записи он есть весь.
+        //
+        // Поэтому на повторе источник — журнал записи (построен при открытии,
+        // перемоткой не задевается), а в живом заезде — история самой машины:
+        // там впереди машины данных не существует.
+        auto collect = [&](const std::vector<LapInfo>& samples) {
+            trail.reserve(samples.size());
+            for (const LapInfo& s : samples) {
+                if (s.x == 0.0 && s.y == 0.0) continue;   // сэмпл до появления координат
+                TrailPoint p;
+                p.pos   = { (float)s.x, (float)s.y };
+                p.speed = s.speed;
+                p.g     = sqrtf(s.gForceX * s.gForceX + s.gForceY * s.gForceY);
+                trail.push_back(p);
+            }
+        };
+
         std::lock_guard<std::mutex> lk(g_vehicles_mutex);
         const auto it = g_vehicles.find(vehicleId);
         if (it != g_vehicles.end()) {
             const Vehicle& v = it->second;
-            const auto lap = v.laps.find(v.m_current_lap_number);
-            if (lap != v.laps.end()) {
-                const auto& smp = lap->second.samples;
-                // Ровно та часть круга, что УЖЕ проехана на текущей точке: на
-                // повторе в истории лежит и то, что случится дальше.
-                const size_t n = visibleSampleCount(v, v.m_current_lap_number, smp);
-                trail.reserve(n);
-                for (size_t i = 0; i < n; ++i) {
-                    const LapInfo& s = smp[i];
-                    if (s.x == 0.0 && s.y == 0.0) continue;   // сэмпл до этой правки
-                    TrailPoint p;
-                    p.pos   = { (float)s.x, (float)s.y };
-                    p.speed = s.speed;
-                    p.g     = sqrtf(s.gForceX * s.gForceX + s.gForceY * s.gForceY);
-                    trail.push_back(p);
-                }
+            const telemetry::VehicleJournal* journal = telemetry::replay_journal(vehicleId);
+
+            if (journal != nullptr) {
+                const auto lap = journal->lap_samples.find(v.m_current_lap_number);
+                if (lap != journal->lap_samples.end()) collect(lap->second);
+            } else {
+                const auto lap = v.laps.find(v.m_current_lap_number);
+                if (lap != v.laps.end()) collect(lap->second.samples);
             }
         }
     }

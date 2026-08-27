@@ -239,7 +239,7 @@ void RenderEventsWindow(const ProContext& ctx, ImVec2 vpSz, float topH) {
     DrawPanelHeader(ctx, "EVENTS", false, "Events");
 
     float scrollH = ImGui::GetContentRegionAvail().y;
-    ImGui::BeginChild("##evScroll", {w, scrollH}, false);
+    ImGui::BeginChild("##evScroll", {w, scrollH}, false, ImGuiWindowFlags_NoNav);
 
     float fSz  = (ctx.russo   ? ctx.russo->FontSize   : ImGui::GetFontSize()) * z;
     float fReg = (ctx.regular ? ctx.regular->FontSize : ImGui::GetFontSize()) * z;

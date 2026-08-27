@@ -21,6 +21,13 @@ static const char* kVisFile = "pro_panels.ini";
 // исходного набора, скрыты: экран и так плотный, а нужны они не всем — кому
 // интересна конкретная перегрузка, включит её в боковом меню.
 static bool defaultVisible(const std::string& key) {
+    // Дорожки панели GRAPHS хранятся в том же файле — это тоже «показывать или
+    // нет», и заводить ради них второй такой же файл незачем. По умолчанию
+    // включены три: скорость и обе перегрузки. Остальные добавляет тот, кому
+    // они нужны, иначе окно превращается в стопку полосок в пару пикселей.
+    if (key.rfind("Gr.", 0) == 0)
+        return key == "Gr.Speed" || key == "Gr.GLong" || key == "Gr.GLat";
+
     return key != "Relative" && key != "GForceLong" && key != "GForceLat" &&
            key != "TrackReport";
 }
@@ -100,7 +107,8 @@ static const PanelItem GRP_GFORCE[] = {
 static const PanelItem GRP_DATA[] = {
     { "Laptime",  "Laptime"  },                                        // время круга
     { nullptr,    "G-Force", GRP_GFORCE, IM_ARRAYSIZE(GRP_GFORCE) },   // перегрузки
-    { "Channels", "Channels" },                                        // каналы/графики
+    { "Channels", "Channels" },                                        // текущие значения каналов
+    { "Graphs",   "Graphs"   },                                        // те же каналы графиком по кругу
 };
 
 // Длина списка берётся у самого списка. Заданная числом, она разошлась с ним

@@ -177,7 +177,14 @@ TelemetryLogStats verify_telemetry_log(const std::filesystem::path& path)
             ++stats.records_valid;
         }
     }
-    stats.trailing_bytes = static_cast<uint64_t>(stream.gcount());
+    // Остаток — это то, чего не хватило до целой записи, и считать его надо
+    // АРИФМЕТИКОЙ, а не через gcount(). Цикл выходит по условию на позицию, до
+    // чтения, поэтому gcount() держит длину ПОСЛЕДНЕЙ УДАЧНОЙ записи — то есть
+    // ровно RECORD_SIZE. Из-за этого самопроверка кричала «VERIFY FAILED» на
+    // каждом правильно записанном файле: тридцать семь байт «хвоста» там, где
+    // файл кончается ровно на границе записи.
+    const uint64_t consumed = sizeof(TelemetryLogHeader) + stats.records_total * RECORD_SIZE;
+    stats.trailing_bytes = (records_end > consumed) ? (records_end - consumed) : 0;
 
     return stats;
 }

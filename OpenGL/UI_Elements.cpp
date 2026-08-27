@@ -649,9 +649,15 @@ void UIElements::drawLeaderboard()
         float hy = panel_y;
         dl->AddRectFilled(ImVec2(panel_x, hy), ImVec2(panel_x + panel_w, hy + header_row_h), col_header_bg);
 
-        int leader_lap = standings[0].currentLapNumber;
+        // До первого пересечения линии лидер идёт по ВЫЕЗДНОМУ кругу (номер
+        // ноль). «Current Lap 0» — не то, что хочет прочитать зритель: гонка
+        // ещё не началась, и табло должно говорить именно это.
+        const int leader_lap = standings[0].currentLapNumber;
         char buf[64];
-        snprintf(buf, sizeof(buf), "Current Lap %d", leader_lap);
+        if (leader_lap < RaceConstants::LAP_START_NUMBER)
+            snprintf(buf, sizeof(buf), "Formation Lap");
+        else
+            snprintf(buf, sizeof(buf), "Current Lap %d", leader_lap);
         drawCenteredText(font_header, fs_header, col_text,
                          panel_x, hy, panel_w, header_row_h, buf);
     }

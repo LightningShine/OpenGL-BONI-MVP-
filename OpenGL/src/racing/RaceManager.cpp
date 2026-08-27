@@ -104,8 +104,17 @@ void RaceManager::Update(float deltaTime)
     if (!g_is_map_loaded || !m_lineInitialized)
         return;
 
-    if (m_sessionState == SessionState::Ended)
-        return;
+    // ЗАЕЗД ЗАКРЫТ — ЗАЧЁТ, А НЕ НАБЛЮДЕНИЕ.
+    //
+    // Здесь стоял выход из Update, и вместе с зачётом выключалось ВСЁ, включая
+    // публикацию снимка в конце. Интерфейс после финиша замирал целиком: машина
+    // стояла на карте, каналы держали последние значения, TRACK REPORT и графики
+    // обрывались на середине круга — при живом трекере и полном эфире.
+    //
+    // Теперь круги, места и рекорды закрыты (порядок после клетчатого флага
+    // обязан остаться тем, каким его зафиксировал финиш), а телеметрия идёт и
+    // снимок публикуется, пока идут пакеты.
+    const bool scoring_closed = (m_sessionState == SessionState::Ended);
 
     if (m_sessionState == SessionState::Active)
     {
@@ -150,14 +159,37 @@ void RaceManager::Update(float deltaTime)
         //
         // В практике история тоже ведётся: панели там работают наравне с гонкой,
         // разница только в том, что практика не пишется на диск.
+        //
+        // ФИНИШ ИСТОРИЮ НЕ ОСТАНАВЛИВАЕТ. Клетчатый флаг закрывает ЗАЧЁТ —
+        // круги, места, рекорды. Машина при этом продолжает ехать, и данные с
+        // неё идут ровно до тех пор, пока идут пакеты. Пока запись обрывалась на
+        // финише, TRACK REPORT замирал с машиной посреди трассы, а графики
+        // упирались в стену — при живом трекере и полном эфире.
         // ====================================================================
-        if (!vehicle.m_is_finished)
         {
             constexpr float kTelemetrySampleInterval = 0.1f; // 10 Hz
             constexpr size_t kMaxSamplesPerLap = 36000;       // 1 hour cap per lap
             vehicle.m_telemetry_sample_timer += deltaTime;
 
-            if (vehicle.m_telemetry_sample_timer >= kTelemetrySampleInterval)
+            // ЗАМЕР НА ЛИНИИ ОТКЛАДЫВАЕМ.
+            //
+            // Пересечения разбираются НИЖЕ в этой же Update, а пакеты за ними
+            // уже приняты: если в очереди лежит проезд старт/финиша, машина
+            // физически на новом круге — прогресс у неё обнулился, — а номер
+            // круга ещё старый. Такой замер ложился в закончившийся круг и,
+            // поскольку история упорядочена по прогрессу, вставал в его НАЧАЛО,
+            // затирая первый замер вместе с его меткой времени.
+            //
+            // По этой метке список кругов и перематывает запись на начало
+            // круга: выбрав второй круг, оператор попадал на начало третьего, а
+            // график рисовал прямую через всё полотно от подменённой точки.
+            // Пропущенный замер не теряется — таймер не сбрасываем, и следующая
+            // Update запишет его уже в новый круг.
+            bool lap_boundary_pending = false;
+            for (const LineCrossing& pending : vehicle.m_pending_crossings)
+                if (pending.point_index == 0) { lap_boundary_pending = true; break; }
+
+            if (vehicle.m_telemetry_sample_timer >= kTelemetrySampleInterval && !lap_boundary_pending)
             {
                 vehicle.m_telemetry_sample_timer = 0.0f;
 
@@ -172,6 +204,19 @@ void RaceManager::Update(float deltaTime)
                 sample.speed = static_cast<float>(vehicle.m_speed_kph);
                 sample.x = vehicle.m_normalized_x;
                 sample.y = vehicle.m_normalized_y;
+                sample.lat_dd = vehicle.m_lat_dd;
+                sample.lon_dd = vehicle.m_lon_dd;
+                // Курс машина держит в радианах; в градусы 0..360 приводим
+                // здесь, а не у потребителя: замер — это уже данные, и каждый
+                // читающий их не обязан помнить единицу.
+                {
+                    double heading = vehicle.m_heading * 180.0 / 3.14159265358979323846;
+                    heading = std::fmod(heading, 360.0);
+                    if (heading < 0.0) heading += 360.0;
+                    sample.heading_deg = heading;
+                }
+                sample.fix_type = vehicle.m_fix_type;
+                sample.utc_ms = vehicle.m_packet_utc_ms;
                 sample.curentPosition = 0; // Updated after standings sort
 
                 if (vehicle.laps.find(vehicle.m_current_lap_number) == vehicle.laps.end())
@@ -182,23 +227,27 @@ void RaceManager::Update(float deltaTime)
                 auto& currentLapSamples = vehicle.laps[vehicle.m_current_lap_number].samples;
 
                 // Повтор отмотали назад и поехали заново по тому же участку:
-                // всё, что записано ДАЛЬШЕ текущего места, относится к проходу,
-                // которого на этой точке ещё не было. Отбрасываем его здесь, при
-                // перезаписи, а не при самой перемотке: пока оператор просто
-                // мотает туда-сюда, история должна оставаться целой, иначе на
-                // одной и той же точке панель секторов показывает каждый раз
-                // разное время.
+                // сэмпл на это место уже записан. Новый ЗАМЕЩАЕТ ближайший
+                // следующий, а не отбрасывает весь хвост за собой.
                 //
-                // Заодно это держит главный инвариант истории — прогресс внутри
-                // круга возрастает. На нём стоит и двоичный поиск в
-                // visibleSampleCount, и расчёт секторов по running-max.
-                while (!currentLapSamples.empty() &&
-                       currentLapSamples.back().progress > sample.progress)
-                {
-                    currentLapSamples.pop_back();
-                }
+                // Хвост отбрасывался раньше — и круг, давно проеденный целиком,
+                // схлопывался до точки просмотра при каждом проигрывании: на
+                // повторе оператор смотрит уже случившийся заезд, а график и
+                // линия проезда показывали только то, до чего доиграла запись.
+                // Данные при этом те же самые: те же пакеты дают тот же сэмпл,
+                // поэтому замещение ничего не искажает.
+                //
+                // Инвариант истории — прогресс внутри круга возрастает —
+                // держится ровно так же: слева от места вставки прогресс не
+                // больше нового, справа строго больше. На нём стоит и двоичный
+                // поиск в visibleSampleCount, и расчёт секторов по running-max.
+                const auto at = std::upper_bound(
+                    currentLapSamples.begin(), currentLapSamples.end(), sample.progress,
+                    [](double progress, const LapInfo& existing) { return progress < existing.progress; });
 
-                if (currentLapSamples.size() < kMaxSamplesPerLap)
+                if (at != currentLapSamples.end())
+                    *at = sample;
+                else if (currentLapSamples.size() < kMaxSamplesPerLap)
                     currentLapSamples.push_back(sample);
             }
         }
@@ -265,9 +314,38 @@ void RaceManager::Update(float deltaTime)
         // одинаково. Разница между практикой и гонкой не в том, КАК считать, а
         // в том, что практика ничего не сохраняет (журнал заезда открывается
         // стартом сессии, см. RaceManager::StartSession).
-        if (vehicle.m_is_finished)
+        if (vehicle.m_is_finished || scoring_closed)
         {
-            // Just driving after finishing. Ignore laps.
+            // Заезд для этой машины окончен: круги в зачёт не идут, места не
+            // меняются, рекорды не пишутся. Отсюда не уходит ничего ни в
+            // таблицу, ни в журнал, ни в протокол.
+            //
+            // Но номер круга и таймер круга — это НЕ зачёт, это адрес и ось
+            // времени для истории телеметрии: номер выбирает корзину в
+            // Vehicle::laps, таймер даёт sample.timefromstart. Пока они стояли,
+            // все сэмплы после финиша ложились в только что закрытый круг с
+            // одним и тем же временем и затирали его с начала.
+            for (const LineCrossing& crossing : crossings)
+            {
+                if (crossing.point_index != 0 || !crossing.armed)
+                    continue;
+
+                vehicle.m_current_lap_number++;
+                vehicle.m_current_lap_timer = 0.0f;
+                if (crossing.has_source_time)
+                    vehicle.m_lap_start_utc_ms = crossing.utc_ms;
+            }
+
+            if (vehicle.m_has_source_time && vehicle.m_lap_start_utc_ms != 0)
+            {
+                vehicle.m_current_lap_timer =
+                    utc_elapsed_ms(vehicle.m_lap_start_utc_ms, vehicle.m_packet_utc_ms) / 1000.0f;
+            }
+            else
+            {
+                vehicle.m_current_lap_timer += deltaTime;
+            }
+
             vehicle.m_total_progress = vehicle.m_completed_laps + vehicle.m_track_progress;
             continue;
         }
@@ -426,10 +504,13 @@ void RaceManager::Update(float deltaTime)
                         std::cout << "[RACE MANAGER] Vehicle #" << vehicleID
                                   << " HAS FINISHED! pos=" << m_finishPositions[vehicleID] << std::endl;
                     }
-                    else
-                    {
-                        vehicle.m_current_lap_number++;
-                    }
+
+                    // Номер круга растёт и на финише. В зачёт круг после
+                    // клетчатого флага не идёт (машина помечена финишировавшей,
+                    // выше по коду для неё всё выключено), но ехать она
+                    // продолжает — и её телеметрии нужна своя корзина, иначе
+                    // круг заезда затирается кругом возвращения в боксы.
+                    vehicle.m_current_lap_number++;
                 }
                 // else: car not yet allowed to finish — timer resets below, it retries next crossing
             }
@@ -484,13 +565,18 @@ void RaceManager::Update(float deltaTime)
                 vehicle.m_current_lap_timer = deltaTime * (1.0f - intersectionRatio);
                 vehicle.m_prev_track_progress = vehicle.m_track_progress;
 
-                // Круг начинается ЗДЕСЬ, на линии. Всё, что записано до неё —
-                // выездной круг, и в истории первого боевого круга ему не место:
-                // иначе и линия проезда, и времена секторов считались бы по
-                // куску чужого проезда.
-                const auto out_lap = vehicle.laps.find(vehicle.m_current_lap_number);
-                if (out_lap != vehicle.laps.end())
-                    out_lap->second.samples.clear();
+                // ВЫЕЗДНОЙ КРУГ ЗАКРЫВАЕТСЯ ЗДЕСЬ И ОСТАЁТСЯ ЛЕЖАТЬ.
+                //
+                // Боевой круг начинается на линии, поэтому в его историю то,
+                // что было до неё, попасть не должно — но и пропасть не должно
+                // тоже. Раньше здесь стоял samples.clear() на корзине первого
+                // круга: выездной проезд уничтожался, и посмотреть прогревочный
+                // круг было нельзя даже на повторе, где он записан целиком.
+                //
+                // Теперь просто переводим номер: всё, что накоплено, остаётся
+                // кругом OUT_LAP_NUMBER, а первый боевой начинает с чистой
+                // корзины.
+                vehicle.m_current_lap_number = RaceConstants::LAP_START_NUMBER;
 
                 // Отсюда пойдёт отсчёт первого боевого круга. Момент берём тот
                 // же, что и для зачёта: точку на отрезке, где легла линия.
@@ -537,6 +623,15 @@ void RaceManager::Update(float deltaTime)
         // Example: Lap 2, progress 0.35 -> total_progress = 2.35
         // ====================================================================
         vehicle.m_total_progress = vehicle.m_completed_laps + vehicle.m_track_progress;
+    }
+
+    // Заезд закрыт: таблица, дельты и рекорды дальше не считаются — порядок
+    // зафиксирован финишем. Снимок при этом публикуем, иначе панели держали бы
+    // последний кадр заезда навсегда (см. scoring_closed выше).
+    if (scoring_closed)
+    {
+        PublishPositionsOnly();
+        return;
     }
 
     // Check if everyone finished

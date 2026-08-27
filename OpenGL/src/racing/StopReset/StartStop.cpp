@@ -101,7 +101,7 @@ void RaceManager::ResetSession() {
         vehicle.m_laps.clear();
         vehicle.laps.clear(); // Clear telemetry samples
         vehicle.m_current_lap_timer = 0.0f;
-        vehicle.m_current_lap_number = RaceConstants::LAP_START_NUMBER;
+        vehicle.m_current_lap_number = RaceConstants::OUT_LAP_NUMBER;
         vehicle.m_completed_laps = 0;
         vehicle.m_total_progress = 0.0;
         vehicle.m_has_started_first_lap = false;

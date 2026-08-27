@@ -180,6 +180,9 @@
     <ClCompile Include="src\ui\pro\ProTrackReport.cpp">
       <Filter>src\ui\ProUI</Filter>
     </ClCompile>
+    <ClCompile Include="src\ui\pro\ProGraphs.cpp">
+      <Filter>src\ui\ProUI</Filter>
+    </ClCompile>
     <ClCompile Include="src\ui\pro\ProView.cpp">
       <Filter>src\ui\ProUI</Filter>
     </ClCompile>
@@ -234,6 +237,9 @@
       <Filter>src\rendering</Filter>
     </ClInclude>
     <ClInclude Include="src\vehicle\Vehicle.h">
+      <Filter>src\vehicle</Filter>
+    </ClInclude>
+    <ClInclude Include="src\vehicle\LapTypes.h">
       <Filter>src\vehicle</Filter>
     </ClInclude>
     <ClInclude Include="src\network\ESP32_Code.h">
@@ -319,6 +325,9 @@
       <Filter>src\ui\ProUI</Filter>
     </ClInclude>
     <ClInclude Include="src\ui\pro\ProTrackReport.h">
+      <Filter>src\ui\ProUI</Filter>
+    </ClInclude>
+    <ClInclude Include="src\ui\pro\ProGraphs.h">
       <Filter>src\ui\ProUI</Filter>
     </ClInclude>
     <ClInclude Include="src\ui\pro\ProView.h">

@@ -45,6 +45,8 @@
 #include "src/track/TelemetryTrackBuilder.h"
 #include "src/ui/TrackReviewPanel.h"
 #include "src/ui/ui_scale.hpp"
+#include "src/logging/TelemetryExport.h"
+#include "src/logging/CsvImport.h"
 
 void RenderRaceMenu();
 
@@ -70,6 +72,408 @@ bool g_show_autostop_modal = false;
 
 #pragma comment(lib, "Ws2_32.lib")
 #endif
+
+// ============================================================================
+// ВЫГРУЗКА В .vbo
+//
+// Собирает замеры выбранной машины и отдаёт их писателю (logging::export_vbo).
+// Источник — журнал записи, если открыт повтор, и история живой машины иначе:
+// журнал полон с первой секунды и перемоткой не задевается, поэтому выгрузка
+// не зависит от того, до какого места доиграла запись.
+// ============================================================================
+namespace
+{
+    /// Машина, про которую сейчас говорит экран: выбранная оператором, иначе
+    /// лидер. Выгружать «все машины разом» смысла нет — файл .vbo описывает
+    /// один проезд, и анализаторы читают его именно так.
+    int32_t export_vehicle_id()
+    {
+        if (g_focused_vehicle_id != -1) return g_focused_vehicle_id;
+        if (g_race_manager)
+        {
+            const auto standings = g_race_manager->GetStandings();
+            if (!standings.empty()) return standings.front().vehicleID;
+        }
+        std::lock_guard<std::mutex> lock(g_vehicles_mutex);
+        return g_vehicles.empty() ? -1 : g_vehicles.begin()->first;
+    }
+
+    /// Имя машины и трассы для шапки файла.
+    void export_labels(int32_t vehicleId, std::string& vehicleName, std::string& venue)
+    {
+        {
+            std::lock_guard<std::mutex> lock(g_vehicles_mutex);
+            const auto it = g_vehicles.find(vehicleId);
+            if (it != g_vehicles.end()) vehicleName = it->second.name;
+        }
+        if (telemetry::replay_is_active())
+            venue = telemetry::replay_status().track_name;
+    }
+
+    /// Замеры машины по кругам — ВЕСЬ ЗАЕЗД.
+    ///
+    /// Отдельного круга здесь нет намеренно. Анализатору отдают сессию целиком:
+    /// круги он режет сам по номеру круга (канал Lap), а сравнение кругов между
+    /// собой — половина работы разбора, и файл из одного круга её отбирает.
+    std::map<int, std::vector<LapInfo>> collect_export_samples(int32_t vehicleId)
+    {
+        std::map<int, std::vector<LapInfo>> laps;
+
+        if (const telemetry::VehicleJournal* journal = telemetry::replay_journal(vehicleId))
+        {
+            laps = journal->lap_samples;
+        }
+        else
+        {
+            std::lock_guard<std::mutex> lock(g_vehicles_mutex);
+            const auto it = g_vehicles.find(vehicleId);
+            if (it != g_vehicles.end())
+                for (const auto& [lap_number, session] : it->second.laps)
+                    laps[lap_number] = session.samples;
+        }
+
+        return laps;
+    }
+
+    /// Формат выгрузки. В меню он называется РАСШИРЕНИЕМ, а не фирмой: файл
+    /// .vbo читает не только VBOX, а .csv — не только MoTeC, и подпись именем
+    /// одной программы сужает пункт до неё же.
+    enum class ExportFormat { Vbo, Csv };
+
+    /// Спрашивает имя файла и пишет выгрузку. Отказ показываем в консоли —
+    /// молча не сработавший пункт меню неотличим от сломанного.
+    void run_telemetry_export(HWND owner, ExportFormat format)
+    {
+        const bool  vbo       = (format == ExportFormat::Vbo);
+        const char* extension = vbo ? "vbo" : "csv";
+        const int32_t vehicleId = export_vehicle_id();
+        if (vehicleId == -1)
+        {
+            std::cerr << "[EXPORT] Nothing to export: no vehicle on track." << std::endl;
+            return;
+        }
+
+        std::string vehicleName, venue;
+        export_labels(vehicleId, vehicleName, venue);
+
+        // Имя по умолчанию — трасса и машина: по нему видно, что внутри, не
+        // открывая файл.
+        std::string suggested = venue.empty() ? std::string("session") : venue;
+        if (!vehicleName.empty()) suggested += "_" + vehicleName;
+        for (char& c : suggested)
+            if (c == ' ' || c == '\\' || c == '/' || c == ':') c = '_';
+        suggested += ".";
+        suggested += extension;
+
+        char file_name[MAX_PATH] = {0};
+        snprintf(file_name, sizeof(file_name), "%s", suggested.c_str());
+
+        OPENFILENAMEA ofn = {};
+        ofn.lStructSize = sizeof(ofn);
+        ofn.hwndOwner   = owner;
+        ofn.lpstrFile   = file_name;
+        ofn.nMaxFile    = sizeof(file_name);
+        ofn.lpstrFilter = vbo ? "VBO data\0*.vbo\0All Files\0*.*\0"
+                              : "CSV data\0*.csv\0All Files\0*.*\0";
+        ofn.nFilterIndex = 1;
+        ofn.lpstrDefExt = extension;
+        const std::string initial = app_paths::results().string();
+        ofn.lpstrInitialDir = initial.c_str();
+        ofn.Flags = OFN_OVERWRITEPROMPT | OFN_NOCHANGEDIR;
+
+        if (!GetSaveFileNameA(&ofn))
+            return;
+
+        logging::ExportMeta meta;
+        meta.venue   = venue;
+        meta.vehicle = vehicleName;
+        if (telemetry::replay_is_active())
+            meta.date_yyyymmdd = telemetry::replay_status().date_yyyymmdd;
+
+        const logging::ExportSamples samples = collect_export_samples(vehicleId);
+
+        std::string error;
+        const bool written = vbo
+            ? logging::export_vbo(ofn.lpstrFile, meta, samples, &error)
+            : logging::export_motec_csv(ofn.lpstrFile, meta, samples, &error);
+        if (!written)
+            std::cerr << "[EXPORT] Export failed: " << error << std::endl;
+    }
+}
+
+// ============================================================================
+// ИМПОРТ ЧУЖОЙ ТЕЛЕМЕТРИИ ИЗ CSV
+//
+// Окно привязки: слева наши величины, справа колонки чужого файла. Догадка по
+// именам колонок делается сразу, оператор её только правит — а править обычно
+// нечего, потому что «Latitude» называется «Latitude» у всех.
+//
+// Результат импорта — обычная запись .rjl, которая открывается тем же
+// replay_open. Ничего специфичного для импорта дальше по коду нет.
+// ============================================================================
+namespace
+{
+    logging::CsvTable   g_csv_table;
+    logging::CsvMapping g_csv_mapping;
+    std::string         g_csv_error;
+    bool                g_csv_open_pending = false;
+
+    constexpr const char* CSV_UNMAPPED = "(not mapped)";
+
+    void open_csv_import(HWND owner)
+    {
+        OPENFILENAMEA ofn = {};
+        char file_name[MAX_PATH] = {0};
+
+        ofn.lStructSize = sizeof(ofn);
+        ofn.hwndOwner   = owner;
+        ofn.lpstrFile   = file_name;
+        ofn.nMaxFile    = sizeof(file_name);
+        ofn.lpstrFilter = "CSV data\0*.csv\0Text table\0*.txt\0All Files\0*.*\0";
+        ofn.nFilterIndex = 1;
+        const std::string initial = app_paths::replays().string();
+        ofn.lpstrInitialDir = initial.c_str();
+        ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
+
+        if (!GetOpenFileNameA(&ofn))
+            return;
+
+        g_csv_error.clear();
+        // Окно открываем в любом случае: если файл не разобрался, причина
+        // должна быть на экране, а не только в консоли.
+        logging::read_csv(ofn.lpstrFile, g_csv_table, &g_csv_error);
+        if (!g_csv_table.empty())
+            g_csv_mapping = logging::guess_mapping(g_csv_table);
+        g_csv_open_pending = true;
+    }
+
+    void csv_column_combo(logging::CsvChannel channel)
+    {
+        const int current = g_csv_mapping.of(channel);
+        const char* preview = (current >= 0 && current < static_cast<int>(g_csv_table.columns.size()))
+            ? g_csv_table.columns[current].c_str()
+            : CSV_UNMAPPED;
+
+        ImGui::PushID(static_cast<int>(channel));
+        ImGui::SetNextItemWidth(-FLT_MIN);
+        if (ImGui::BeginCombo("##column", preview))
+        {
+            if (ImGui::Selectable(CSV_UNMAPPED, current < 0))
+                g_csv_mapping.set(channel, -1);
+
+            for (size_t i = 0; i < g_csv_table.columns.size(); ++i)
+            {
+                // Имена колонок повторяются (две «Time» в одном файле — обычное
+                // дело), поэтому идентификатор берём от индекса, а не от текста.
+                ImGui::PushID(static_cast<int>(i));
+                if (ImGui::Selectable(g_csv_table.columns[i].c_str(),
+                                      current == static_cast<int>(i)))
+                    g_csv_mapping.set(channel, static_cast<int>(i));
+                ImGui::PopID();
+            }
+            ImGui::EndCombo();
+        }
+        ImGui::PopID();
+    }
+
+    /// Отступы окна. ОБЯЗАТЕЛЬНЫ, а не для красоты.
+    ///
+    /// Общий стиль приложения задаёт ItemSpacing ДОЛЕЙ ОТ РАЗМЕРА ЭКРАНА — на
+    /// рабочем разрешении это тысячи пикселей. Каждая область интерфейса гасит
+    /// его у себя (PRO-панели, выпадающие меню), и окно на обычных виджетах
+    /// ImGui обязано делать то же: иначе второй элемент уезжает на километр
+    /// вниз, а окно с автоподбором размера раздувается на пол-экрана. Ровно так
+    /// это окно и открылось в первый раз — чёрный прямоугольник с одним именем
+    /// файла в углу.
+    ///
+    /// Парная к ней pop_modal_style() снимает ровно столько же.
+    void push_modal_style()
+    {
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,
+                            ImVec2(ui_scale::points(14.f), ui_scale::points(12.f)));
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,
+                            ImVec2(ui_scale::points(7.f), ui_scale::points(4.f)));
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,
+                            ImVec2(ui_scale::points(8.f), ui_scale::points(6.f)));
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemInnerSpacing,
+                            ImVec2(ui_scale::points(6.f), ui_scale::points(4.f)));
+        ImGui::PushStyleVar(ImGuiStyleVar_CellPadding,
+                            ImVec2(ui_scale::points(6.f), ui_scale::points(3.f)));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding,  0.f);
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding,   0.f);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.f);
+
+        ImGui::PushStyleColor(ImGuiCol_PopupBg,       ImVec4(UIConfig::MODAL_BG_R, UIConfig::MODAL_BG_G,
+                                                             UIConfig::MODAL_BG_B, 1.f));
+        ImGui::PushStyleColor(ImGuiCol_Border,        ImVec4(0.22f, 0.22f, 0.22f, 1.f));
+        ImGui::PushStyleColor(ImGuiCol_FrameBg,       ImVec4(0.10f, 0.10f, 0.10f, 1.f));
+        ImGui::PushStyleColor(ImGuiCol_FrameBgHovered,ImVec4(0.16f, 0.16f, 0.16f, 1.f));
+        ImGui::PushStyleColor(ImGuiCol_FrameBgActive, ImVec4(0.20f, 0.20f, 0.20f, 1.f));
+        ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.16f, 0.16f, 0.16f, 1.f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.855f, 0.647f, 0.251f, 1.f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.855f, 0.647f, 0.251f, 1.f));
+        ImGui::PushStyleColor(ImGuiCol_Header,        ImVec4(0.20f, 0.20f, 0.20f, 1.f));
+        ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.26f, 0.26f, 0.26f, 1.f));
+        ImGui::PushStyleColor(ImGuiCol_HeaderActive,  ImVec4(0.30f, 0.30f, 0.30f, 1.f));
+        ImGui::PushStyleColor(ImGuiCol_TableRowBg,    ImVec4(0.f, 0.f, 0.f, 0.f));
+        ImGui::PushStyleColor(ImGuiCol_TableRowBgAlt, ImVec4(1.f, 1.f, 1.f, 0.02f));
+        // Полоса заголовка своя: по умолчанию ImGui красит её синим, и окно
+        // выглядит чужим среди панелей приложения.
+        ImGui::PushStyleColor(ImGuiCol_TitleBg,          ImVec4(0.11f, 0.11f, 0.11f, 1.f));
+        ImGui::PushStyleColor(ImGuiCol_TitleBgActive,    ImVec4(0.11f, 0.11f, 0.11f, 1.f));
+        ImGui::PushStyleColor(ImGuiCol_TitleBgCollapsed, ImVec4(0.11f, 0.11f, 0.11f, 1.f));
+    }
+
+    void pop_modal_style()
+    {
+        ImGui::PopStyleColor(16);
+        ImGui::PopStyleVar(8);
+    }
+
+    void render_csv_import_modal(ImFont* font)
+    {
+        if (g_csv_open_pending)
+        {
+            ImGui::OpenPopup("Import telemetry CSV");
+            g_csv_open_pending = false;
+        }
+
+        const ImVec2 centre(ImGui::GetIO().DisplaySize.x * 0.5f,
+                            ImGui::GetIO().DisplaySize.y * 0.5f);
+        ImGui::SetNextWindowPos(centre, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+        // Размер ЗАДАН, а не подобран по содержимому: строк в таблице ровно
+        // столько, сколько величин, и раздуваться окну не от чего.
+        ImGui::SetNextWindowSize(ImVec2(ui_scale::points(660.f), ui_scale::points(470.f)),
+                                 ImGuiCond_Appearing);
+
+        push_modal_style();
+        if (ImGui::BeginPopupModal("Import telemetry CSV", nullptr,
+                                   ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings))
+        {
+            if (font) ImGui::PushFont(font);
+            if (g_csv_table.empty())
+            {
+                ImGui::TextWrapped("%s", g_csv_error.empty()
+                    ? "The file could not be read." : g_csv_error.c_str());
+                ImGui::Separator();
+                if (ImGui::Button("Close")) ImGui::CloseCurrentPopup();
+                if (font) ImGui::PopFont();
+                ImGui::EndPopup();
+                pop_modal_style();
+                return;
+            }
+
+            ImGui::TextUnformatted(g_csv_table.source.filename().string().c_str());
+            ImGui::TextDisabled("%zu columns, %zu rows",
+                                g_csv_table.columns.size(), g_csv_table.rows.size());
+            ImGui::Separator();
+
+            if (ImGui::BeginTable("##csvMap", 3,
+                    ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg))
+            {
+                ImGui::TableSetupColumn("Channel", ImGuiTableColumnFlags_WidthFixed,
+                                        ui_scale::points(100.f));
+                ImGui::TableSetupColumn("Column");
+                ImGui::TableSetupColumn("Note", ImGuiTableColumnFlags_WidthFixed,
+                                        ui_scale::points(235.f));
+
+                for (int i = 0; i < static_cast<int>(logging::CsvChannel::Count); ++i)
+                {
+                    const auto channel = static_cast<logging::CsvChannel>(i);
+                    ImGui::TableNextRow();
+
+                    // Непривязанная обязательная величина подсвечена красным:
+                    // кнопка импорта в этом состоянии выключена, и должно быть
+                    // видно, из-за чего именно.
+                    ImGui::TableSetColumnIndex(0);
+                    if (logging::csv_channel_required(channel) && g_csv_mapping.of(channel) < 0)
+                        ImGui::TextColored(ImVec4(1.f, 0.4f, 0.4f, 1.f), "%s",
+                                           logging::csv_channel_label(channel));
+                    else
+                        ImGui::TextUnformatted(logging::csv_channel_label(channel));
+
+                    ImGui::TableSetColumnIndex(1);
+                    csv_column_combo(channel);
+
+                    ImGui::TableSetColumnIndex(2);
+                    ImGui::TextDisabled("%s", logging::csv_channel_hint(channel));
+                }
+                ImGui::EndTable();
+            }
+
+            ImGui::Separator();
+
+            // Формат времени и единица скорости в файле не написаны, а ошибка в
+            // них не видна ни в одной колонке: заезд просто выйдет длиной в
+            // сутки или скорость впятеро меньше настоящей. Поэтому спрашиваем.
+            const char* time_formats[] = { "seconds from start", "time of day (hh:mm:ss)",
+                                           "UTC hhmmss.ss", "unix seconds", "unix milliseconds" };
+            int time_format = static_cast<int>(g_csv_mapping.time_format);
+            ImGui::SetNextItemWidth(ui_scale::points(220.f));
+            if (ImGui::Combo("Time format", &time_format, time_formats, IM_ARRAYSIZE(time_formats)))
+                g_csv_mapping.time_format = static_cast<logging::CsvTimeFormat>(time_format);
+
+            const char* speed_units[] = { "km/h", "m/s", "mph" };
+            int speed_unit = static_cast<int>(g_csv_mapping.speed_unit);
+            ImGui::SetNextItemWidth(ui_scale::points(220.f));
+            if (ImGui::Combo("Speed unit", &speed_unit, speed_units, IM_ARRAYSIZE(speed_units)))
+                g_csv_mapping.speed_unit = static_cast<logging::CsvSpeedUnit>(speed_unit);
+
+            ImGui::SetNextItemWidth(ui_scale::points(220.f));
+            ImGui::InputInt("Vehicle number", &g_csv_mapping.vehicle_id);
+            if (g_csv_mapping.vehicle_id < 1)  g_csv_mapping.vehicle_id = 1;
+            if (g_csv_mapping.vehicle_id > 99) g_csv_mapping.vehicle_id = 99;
+
+            if (!g_csv_error.empty())
+            {
+                ImGui::Separator();
+                ImGui::TextColored(ImVec4(1.f, 0.4f, 0.4f, 1.f), "%s", g_csv_error.c_str());
+            }
+
+            ImGui::Separator();
+
+            const bool ready =
+                g_csv_mapping.of(logging::CsvChannel::Time) >= 0 &&
+                g_csv_mapping.of(logging::CsvChannel::Latitude) >= 0 &&
+                g_csv_mapping.of(logging::CsvChannel::Longitude) >= 0;
+
+            ImGui::BeginDisabled(!ready);
+            if (ImGui::Button("Import", ImVec2(ui_scale::points(120.f), 0.f)))
+            {
+                std::filesystem::path replay;
+                g_csv_error.clear();
+                if (logging::convert_csv_to_replay(g_csv_table, g_csv_mapping,
+                                                   app_paths::replays(), replay, &g_csv_error))
+                {
+                    // Открываем сразу: импорт без просмотра результата — это
+                    // файл, про который неизвестно, получился он или нет.
+                    if (telemetry::replay_open(replay))
+                    {
+                        g_csv_table = logging::CsvTable{};
+                        ImGui::CloseCurrentPopup();
+                    }
+                    else
+                    {
+                        g_csv_error = telemetry::replay_last_error();
+                    }
+                }
+            }
+            ImGui::EndDisabled();
+
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel", ImVec2(ui_scale::points(120.f), 0.f)))
+            {
+                g_csv_table = logging::CsvTable{};
+                ImGui::CloseCurrentPopup();
+            }
+
+            if (font) ImGui::PopFont();
+            ImGui::EndPopup();
+        }
+        pop_modal_style();
+    }
+}
+
 
 // (GNS globals removed — networking is TrackServerClient now)
 
@@ -1894,6 +2298,7 @@ void UI::Render()
     AccountsPanel::Render(m_fontUI, m_fontUBold);
     SettingsPanel::Render(m_fontRegular, m_fontUBold);
     RenderAutoStopModal();
+    render_csv_import_modal(m_fontUI);
 
     // Render help modal if open
     RenderHelpModal();
@@ -2862,10 +3267,35 @@ void UI::RenderTopMenu()
                     OpenReplayFile(ofn.lpstrFile);
             }
 
+            // Чужая телеметрия. Таблицу отдают все логгеры, поэтому один пункт
+            // закрывает RaceChrono, TrackAddict, RaceBox, VBOX CSV и остальных:
+            // какая колонка что означает, спрашиваем в окне привязки.
+            if (ImGui::MenuItem("Import Telemetry CSV...", nullptr, false,
+                                !telemetry::replay_is_active()))
+                open_csv_import(glfwGetWin32Window(m_window));
+
             if (ImGui::MenuItem("Close Replay", nullptr, false, telemetry::replay_is_active()))
             {
                 telemetry::replay_close();
                 glfwSetWindowTitle(m_window, m_proMode ? "RAJAGP PRO" : UIConfig::APP_NAME);
+            }
+
+            ImGui::Separator();
+
+            // Выгрузка в открытые форматы: телеметрия заезда нужна не только
+            // нашим панелям. Пункты названы РАСШИРЕНИЕМ — файл переживёт любую
+            // из программ, которые его сегодня читают, и привязывать пункт меню
+            // к имени одной из них незачем.
+            if (ImGui::BeginMenu("Export Telemetry"))
+            {
+                const HWND owner = glfwGetWin32Window(m_window);
+
+                if (ImGui::MenuItem(".VBO..."))
+                    run_telemetry_export(owner, ExportFormat::Vbo);
+                if (ImGui::MenuItem(".CSV..."))
+                    run_telemetry_export(owner, ExportFormat::Csv);
+
+                ImGui::EndMenu();
             }
 
             ImGui::Separator();

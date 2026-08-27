@@ -1,15 +1,16 @@
 #include "ProLapList.h"
+#include "../../core/WorldSnapshot.h"
 #include "../../racing/RaceManager.h"
+#include "../../network/ReplayPlayer.h"
 #include "../../vehicle/Vehicle.h"
 #include <imgui.h>
 #include <cmath>
 #include <cstdio>
+#include <mutex>
 
 extern RaceManager* g_race_manager;
 
 namespace Pro {
-
-static int s_selected_lap = -1;
 
 // ── Palette ───────────────────────────────────────────────────────────────────
 static constexpr ImU32 LL_BG_SEL    = IM_COL32(0x29, 0x29, 0x29, 255);
@@ -49,8 +50,20 @@ void RenderLapListWindow(const ProContext& ctx, int32_t vehicleId,
     float w = ImGui::GetWindowWidth();
     float z = PanelZoom("LapList");
 
-    // Panel title — Ubuntu Bold
-    DrawPanelHeader(ctx, "LAP LIST", false, "LapList");
+    // ЧЬИ ЭТО КРУГИ — В ШАПКЕ.
+    //
+    // Список без имени машины читается как «круги заезда», и пока панель молча
+    // переезжала с машины на машину, подмену было нечем заметить: цифры просто
+    // становились другими. Имя стоит рядом с временами и отвечает на вопрос
+    // сразу, а не после разбирательства.
+    char title[64] = "LAP LIST";
+    {
+        const std::shared_ptr<const world::Snapshot> snapshot = world::current();
+        if (const world::VehicleView* v = world::find(*snapshot, vehicleId))
+            if (!v->name.empty())
+                snprintf(title, sizeof(title), "LAP LIST   %s", v->name.c_str());
+    }
+    DrawPanelHeader(ctx, title, false, "LapList");
 
     float regSz   = (ctx.regular ? ctx.regular->FontSize : ImGui::GetFontSize()) * z;
     float russoSz = (ctx.russo   ? ctx.russo->FontSize   : ImGui::GetFontSize()) * z;
@@ -87,7 +100,9 @@ void RenderLapListWindow(const ProContext& ctx, int32_t vehicleId,
 
     // ── Scrollable rows ───────────────────────────────────────────────────────
     float scrollH = ImGui::GetContentRegionAvail().y;
-    ImGui::BeginChild("##lapScroll", {w, scrollH}, false);
+    // NoNav и здесь: строки списка кликабельны, а сфокусированное окно с
+    // элементами забирает клавиатуру у транспорта повтора (см. PanelFlags).
+    ImGui::BeginChild("##lapScroll", {w, scrollH}, false, ImGuiWindowFlags_NoNav);
 
     // Thread-safe snapshot — the network thread mutates the live lap map, so we
     // copy under the lock rather than iterating a borrowed pointer.
@@ -102,6 +117,41 @@ void RenderLapListWindow(const ProContext& ctx, int32_t vehicleId,
         curTime  = g_race_manager->GetVehicleCurrentLapTime(vehicleId);
     }
 
+    // Подсвечена РОВНО ОДНА строка — тот круг, который сейчас разбирают панели
+    // (см. AnalysisLap). Раньше подсветок было две — «выбранная» и «где стоит
+    // запись», — и по списку было не понять, чьи данные на экране.
+    const int shownLap = AnalysisLap(vehicleId);
+
+    // На повторе список берётся из журнала записи: там ВСЕ круги заезда, а не
+    // только те, до которых доиграла запись. Оператор мотает её взад-вперёд
+    // именно затем, чтобы разобрать заезд целиком, — список, меняющийся от
+    // того, каким путём он пришёл в эту точку, для разбора бесполезен.
+    // Строки живого круга при этом нет: круг уже лежит в списке со своим
+    // итоговым временем, а где мы сейчас — показывает подсветка.
+    const telemetry::VehicleJournal* journal = telemetry::replay_journal(vehicleId);
+    if (journal != nullptr) {
+        laps     = journal->lap_times;
+        bestTime = journal->best_lap_time;
+    }
+
+    // ЕСТЬ ЛИ ВЫЕЗДНОЙ КРУГ.
+    //
+    // В списке времён его нет и быть не может: круг до линии не измеряется (см.
+    // RaceConstants::OUT_LAP_NUMBER). Но телеметрия у него есть, и узнать про
+    // него можно только по ней — поэтому спрашиваем историю замеров напрямую.
+    size_t outLapSamples = 0;
+    if (journal != nullptr) {
+        const auto found = journal->lap_samples.find(RaceConstants::OUT_LAP_NUMBER);
+        if (found != journal->lap_samples.end()) outLapSamples = found->second.size();
+    } else {
+        std::lock_guard<std::mutex> lock(g_vehicles_mutex);
+        const auto vehicle = g_vehicles.find(vehicleId);
+        if (vehicle != g_vehicles.end()) {
+            const auto found = vehicle->second.laps.find(RaceConstants::OUT_LAP_NUMBER);
+            if (found != vehicle->second.laps.end()) outLapSamples = found->second.samples.size();
+        }
+    }
+
     // ── Row draw helper ───────────────────────────────────────────────────────
     // IMPORTANT: always call ImGui::GetWindowDrawList() INSIDE the lambda so
     // we draw to the child window's draw list, not the parent's.
@@ -109,8 +159,7 @@ void RenderLapListWindow(const ProContext& ctx, int32_t vehicleId,
                        ImU32 timeCol, ImU32 gapCol, bool isCurrent) {
         ImVec2     p    = ImGui::GetCursorScreenPos();
         ImDrawList* dl  = ImGui::GetWindowDrawList(); // child's draw list
-        bool isSel  = (s_selected_lap == lapNum);
-        bool active = isCurrent || isSel;
+        bool active = isCurrent;
         bool hov    = !active &&
                       ImGui::IsMouseHoveringRect(p, {p.x + w, p.y + ROW_H}) &&
                       !ImGui::IsAnyItemActive();
@@ -143,33 +192,67 @@ void RenderLapListWindow(const ProContext& ctx, int32_t vehicleId,
             : ImGui::CalcTextSize(gapStr).x;
         dl->AddText(ctx.regular, regSz, {p.x + GAP_R - gW, ty}, gapCol, gapStr);
 
-        // Click-to-select
         ImGui::PushID(lapNum);
         ImGui::SetCursorScreenPos(p);
         ImGui::InvisibleButton("##r", {w, ROW_H});
-        if (ImGui::IsItemClicked())
-            s_selected_lap = (s_selected_lap == lapNum) ? -1 : lapNum;
+        if (ImGui::IsItemClicked() && journal != nullptr) {
+            // Выбор — БЕЗ переключателя: щёлкнул по кругу, панели показывают
+            // его. Второй щелчок по той же строке снимал выбор, и панели молча
+            // возвращались к кругу повтора — с виду то же самое нажатие давало
+            // разный результат.
+            SelectAnalysisLap(lapNum);
+
+            // Заодно ставим запись на начало круга: добираться с десятого круга
+            // на третий, мотая руками, — работа ни о чём, а список кругов и
+            // есть оглавление заезда. Метку берём у ПЕРВОГО ПО ВРЕМЕНИ замера
+            // круга: история упорядочена по прогрессу, и полагаться на порядок
+            // хранения тут нельзя.
+            const auto samples = journal->lap_samples.find(lapNum);
+            if (samples != journal->lap_samples.end() && !samples->second.empty()) {
+                uint32_t start_utc = 0;
+                for (const LapInfo& sample : samples->second)
+                    if (sample.utc_ms != 0 && (start_utc == 0 || sample.utc_ms < start_utc))
+                        start_utc = sample.utc_ms;
+                if (start_utc != 0)
+                    telemetry::replay_seek_to_utc(start_utc);
+            }
+        }
         ImGui::PopID();
     };
 
     char tb[32], gb[32];
     bool hasLaps = !laps.empty();
 
-    // ── Out-lap placeholder ───────────────────────────────────────────────────
-    if (!hasLaps && curTime <= 0.f) {
+    // ── Выездной круг ─────────────────────────────────────────────────────────
+    //
+    // Круг ноль — то, что машина проехала ДО первого пересечения линии:
+    // прогревочный проезд, выезд из боксов, круг знакомства. Времени у него нет
+    // и в зачёт он не идёт, но телеметрия настоящая, и эта строка — единственный
+    // способ до неё добраться: щелчок по ней перекидывает запись на начало
+    // выездного круга ровно так же, как по любому другому.
+    //
+    // Живьём, пока машина ЕЩЁ на выездном круге, отдельная строка не нужна:
+    // его показывает строка текущего круга внизу со своим бегущим временем.
+    const bool liveOutLap = (journal == nullptr && curLap == RaceConstants::OUT_LAP_NUMBER);
+
+    if (outLapSamples > 0 && !liveOutLap) {
+        drawRow(RaceConstants::OUT_LAP_NUMBER, "NO TIME", "OUT LAP", LL_DIM, LL_DIM,
+                journal != nullptr && shownLap == RaceConstants::OUT_LAP_NUMBER);
+    }
+    else if (outLapSamples == 0 && !hasLaps && curTime <= 0.f) {
         ImVec2     p  = ImGui::GetCursorScreenPos();
         ImDrawList* dl = ImGui::GetWindowDrawList(); // child's draw list
         float ty = p.y + (ROW_H - regSz)   * 0.5f;
         float cy = p.y + (ROW_H - russoSz) * 0.5f;
 
         float nw = ctx.russo
-            ? ctx.russo->CalcTextSizeA(russoSz, FLT_MAX, 0.f, "1").x : 10.f;
-        dl->AddText(ctx.russo,   russoSz, {p.x + padL + lapW - nw, cy}, LL_LAP_NUM, "1");
+            ? ctx.russo->CalcTextSizeA(russoSz, FLT_MAX, 0.f, "0").x : 10.f;
+        dl->AddText(ctx.russo,   russoSz, {p.x + padL + lapW - nw, cy}, LL_LAP_NUM, "0");
         dl->AddText(ctx.regular, regSz,   {p.x + TIME_X, ty},              LL_DIM,      "NO TIME");
 
         float ow = ctx.regular
-            ? ctx.regular->CalcTextSizeA(regSz, FLT_MAX, 0.f, "OUT LAP").x : 50.f;
-        dl->AddText(ctx.regular, regSz, {p.x + GAP_R - ow, ty}, LL_DIM, "OUT LAP");
+            ? ctx.regular->CalcTextSizeA(regSz, FLT_MAX, 0.f, "WAITING").x : 50.f;
+        dl->AddText(ctx.regular, regSz, {p.x + GAP_R - ow, ty}, LL_DIM, "WAITING");
         ImGui::Dummy({w, ROW_H});
     }
 
@@ -188,13 +271,13 @@ void RenderLapListWindow(const ProContext& ctx, int32_t vehicleId,
         drawRow(lapNum, tb, gb,
                 isBest ? LL_BEST_TIME : LL_TIME,
                 isBest ? LL_FASTEST   : LL_GAP,
-                false);
+                journal != nullptr && lapNum == shownLap);
     }
 
     // ── Live current lap ──────────────────────────────────────────────────────
-    if (curTime > 0.f) {
+    if (journal == nullptr && curTime > 0.f) {
         fmtTime(curTime, tb, sizeof(tb));
-        drawRow(curLap, tb, "---", LL_TIME, LL_DIM, true);
+        drawRow(curLap, tb, liveOutLap ? "OUT LAP" : "---", LL_TIME, LL_DIM, true);
     }
 
     ImGui::EndChild();

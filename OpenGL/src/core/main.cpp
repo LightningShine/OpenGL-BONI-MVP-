@@ -1308,7 +1308,14 @@ int main(int argc, char** argv)
 		// processInput, применяется в этом же кадре и до отрисовки. Ровно один
 		// шаг на кадр — в обе стороны. См. replay_apply_pending_seek.
 		telemetry::replay_apply_pending_seek();
-		camera_position += camera_velocity;  
+
+		// Прогрев только что открытой записи: один длинный кадр, после которого
+		// заезд известен целиком — круги, графики, траектории. Здесь, а не в
+		// replay_open, потому что для подсчёта кругов нужна линия старт/финиша,
+		// а её выставляет отрисовка трассы.
+		telemetry::replay_build_journal_if_pending();
+
+		camera_position += camera_velocity;
 		camera_velocity *= friction;
 		
 		if (ui.IsProMode())

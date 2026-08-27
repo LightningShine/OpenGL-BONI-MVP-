@@ -94,7 +94,7 @@ void RenderChannelsWindow(const ProContext& ctx, int32_t vehicleId,
     };
 
     float scrollH = ImGui::GetContentRegionAvail().y;
-    ImGui::BeginChild("##chanScroll", {w, scrollH}, false);
+    ImGui::BeginChild("##chanScroll", {w, scrollH}, false, ImGuiWindowFlags_NoNav);
     ImGui::SetWindowFontScale(z);
 
     ImDrawList* dl  = ImGui::GetWindowDrawList();

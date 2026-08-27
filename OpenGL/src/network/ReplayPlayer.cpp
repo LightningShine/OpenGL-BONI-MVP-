@@ -101,6 +101,12 @@ namespace
     // сумму и применяем одним движением в конце кадра — ровно один шаг на кадр.
     std::atomic<int64_t> g_seek_delta_ms{ 0 };
 
+    // Запрошенная АБСОЛЮТНАЯ точка записи (метка источника). Хранится отдельно
+    // от накопленного сдвига и главнее его: «поставь сюда» не должно смешиваться
+    // с «сдвинь на столько-то».
+    std::atomic<uint32_t> g_seek_target_utc{ 0 };
+    std::atomic<bool>     g_has_seek_target{ false };
+
     // Признак «этот поток сейчас подаёт пакеты записи». Именно потоковый, а не
     // общий: подача идёт из потока проигрывателя, а перемотка — из потока
     // отрисовки, и общий флаг открыл бы окно, в которое проскочил бы чужой
@@ -397,6 +403,87 @@ namespace
         }
     }
 
+    // ------------------------------------------------------------------------
+    // ПРОГРЕВ: журнал записи (см. VehicleJournal в заголовке)
+    // ------------------------------------------------------------------------
+    std::map<int32_t, VehicleJournal> g_journal;
+    std::atomic<bool> g_journal_pending{ false };
+
+    /// Прогоняет запись целиком и снимает с машин журнал заезда, после чего
+    /// возвращает запись в начало.
+    ///
+    /// Прогон идёт КУСКАМИ по времени записи, и между кусками зовётся тот же
+    /// RaceManager::Update, что и в живом кадре. Иначе никак: история сэмплов
+    /// рождается именно там, и только такой прогон даёт ровно те же данные, что
+    /// даст обычное воспроизведение. Шаг равен периоду выборки телеметрии —
+    /// крупнее проредил бы историю, мельче добавил бы работы впустую.
+    void build_journal()
+    {
+        if (!g_reader || !g_race_manager)
+            return;
+
+        const size_t total = g_reader->record_count();
+        if (total == 0)
+            return;
+
+        constexpr uint32_t CHUNK_MS = 100;
+        constexpr float    CHUNK_SECONDS = CHUNK_MS / 1000.0f;
+
+        const auto started = std::chrono::steady_clock::now();
+
+        reset_pipeline_state();
+        g_race_manager->StartSession();
+
+        // Мьютекс машин держим на весь прогон: состояние трогается десятки тысяч
+        // раз, и брать его на каждый пакет незачем.
+        enter_vehicles_bulk_section();
+
+        size_t   from = 0;
+        uint32_t next_update_ms = g_reader->record_elapsed_ms(0) + CHUNK_MS;
+        for (size_t i = 0; i < total; ++i)
+        {
+            if (g_reader->record_elapsed_ms(i) < next_update_ms)
+                continue;
+
+            // Ключевые кадры снимаем прямо здесь: состояние на этом проходе то
+            // же, что даст воспроизведение, поэтому перемотка назад работает по
+            // снимкам с первой секунды, а не после первого просмотра.
+            feed_range(from, i, /*capture=*/true);
+            g_race_manager->Update(CHUNK_SECONDS);
+
+            from = i;
+            next_update_ms = g_reader->record_elapsed_ms(i) + CHUNK_MS;
+        }
+        feed_range(from, total, /*capture=*/true);
+        g_race_manager->Update(CHUNK_SECONDS);
+
+        g_journal.clear();
+        for (const auto& [id, vehicle] : g_vehicles)
+        {
+            VehicleJournal& journal = g_journal[id];
+            journal.lap_times     = vehicle.m_laps;
+            journal.best_lap_time = vehicle.m_best_lap_time;
+            journal.best_lap_id   = vehicle.bestlapID;
+            for (const auto& [lap_number, session] : vehicle.laps)
+                journal.lap_samples[lap_number] = session.samples;
+        }
+
+        leave_vehicles_bulk_section();
+
+        // Возвращаем запись в начало: прогрев — служебный прогон, оператор
+        // должен получить запись нетронутой, с первой секунды.
+        reset_pipeline_state();
+        g_race_manager->StartSession();
+        g_position.store(0);
+        g_seek_generation.fetch_add(1);
+        telemetryResetInterpolationState();
+
+        const double seconds =
+            std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
+        std::cout << "[REPLAY] Journal built in " << seconds << "s: "
+                  << g_journal.size() << " vehicles, " << total << " records" << std::endl;
+    }
+
     /// Ближайший снимок НЕ ПОЗЖЕ target. nullptr, если такого ещё нет.
     const Keyframe* find_keyframe_before(size_t target)
     {
@@ -428,11 +515,31 @@ namespace
                     continue;
                 }
 
-                // История сэмплов в снимке не хранится — переносим её с живой
-                // машины, иначе графики и дельты обнулялись бы при каждом откате.
-                auto samples = std::move(it->second.laps);
+                // ЖУРНАЛ ЗАЕЗДА ОТКАТ НЕ ТРОГАЕТ.
+                //
+                // Состояние машины — позиция, круг, секторы — возвращается к
+                // точке отката: она и есть «где машина была». А история сэмплов
+                // и времена законченных кругов — это ЖУРНАЛ уже случившегося, и
+                // откат его не отменяет. Оператор мотает запись назад именно
+                // затем, чтобы разобрать заезд целиком; список кругов, теряющий
+                // всё, что было после точки просмотра, в этом разборе бесполезен
+                // — а перемотав назад и вперёд, оператор получал бы каждый раз
+                // разный список.
+                //
+                // Лучший круг переносим вместе с временами: иначе в списке
+                // отметка «Fastest» указывала бы не на самый быстрый из
+                // показанных кругов.
+                auto samples   = std::move(it->second.laps);
+                auto lap_times = std::move(it->second.m_laps);
+                const float best_time = it->second.m_best_lap_time;
+                const int   best_id   = it->second.bestlapID;
+
                 it->second = snapshot;
-                it->second.laps = std::move(samples);
+
+                it->second.laps          = std::move(samples);
+                it->second.m_laps        = std::move(lap_times);
+                it->second.m_best_lap_time = best_time;
+                it->second.bestlapID       = best_id;
             }
         }
         telemetryResetInterpolationState();
@@ -743,7 +850,15 @@ bool replay_open(const std::filesystem::path& path)
         g_keyframe_interval_ms = KEYFRAME_BASE_INTERVAL_MS;
     }
 
-    // Повтор НЕ открывает журнал: иначе получилась бы запись записи.
+    g_journal.clear();
+
+    // Повтор активен УЖЕ ЗДЕСЬ, до сессии и до прогрева. По этому признаку
+    // StartSession не открывает журнал записи (иначе вышла бы запись записи), а
+    // конец заезда не пишет протокол — прогрев доигрывает запись до финиша, и
+    // без этого признака каждое открытие файла плодило бы протокол заезда.
+    g_active.store(true);
+    g_stop_requested.store(false);
+
     reset_pipeline_state();
 
     // Запись делалась во время заезда, значит и воспроизводить её надо в
@@ -757,8 +872,10 @@ bool replay_open(const std::filesystem::path& path)
     g_paused.store(true);
     g_position_smoothing_enabled.store(false);
     g_speed.store(1.0);
-    g_stop_requested.store(false);
-    g_active.store(true);
+
+    // Прогрев — на следующем кадре, когда линия старт/финиша уже выставлена
+    // отрисовкой трассы (см. replay_build_journal_if_pending).
+    g_journal_pending.store(true);
 
     if (g_thread.joinable())
         g_thread.join();
@@ -780,6 +897,8 @@ void replay_close()
 
     g_active.store(false);
     g_position_smoothing_enabled.store(true);   // живой заезд снова сглаживается
+    g_journal_pending.store(false);
+    g_journal.clear();
     {
         std::lock_guard<std::mutex> lock(g_mutex);
         g_reader.reset();
@@ -817,6 +936,36 @@ void replay_close()
 bool replay_is_active()
 {
     return g_active.load();
+}
+
+const VehicleJournal* replay_journal(int32_t vehicle_id)
+{
+    if (!g_active.load())
+        return nullptr;
+
+    const auto found = g_journal.find(vehicle_id);
+    return (found == g_journal.end()) ? nullptr : &found->second;
+}
+
+void replay_build_journal_if_pending()
+{
+    if (!g_active.load() || !g_journal_pending.load())
+        return;
+
+    // Круги считаются от линии старт/финиша, а её выставляет отрисовка трассы
+    // (Render.cpp). На кадре открытия записи трасса ещё только загружена, и
+    // линии может не быть — тогда прогон не нашёл бы ни одного круга. Ждём
+    // столько кадров, сколько нужно: проверка дешёвая.
+    glm::vec2 line_start, line_end;
+    if (g_race_manager == nullptr || !g_race_manager->GetStartFinishLine(line_start, line_end))
+        return;
+
+    g_journal_pending.store(false);
+
+    // Тот же мьютекс, что и у перемотки: прогон переставляет позицию записи, и
+    // подача пакетов потоком проигрывателя не должна с ним пересечься.
+    std::lock_guard<std::mutex> lock(g_seek_mutex);
+    build_journal();
 }
 
 std::string replay_last_error()
@@ -874,14 +1023,39 @@ void replay_apply_pending_seek()
 {
     // Дешёвая проверка без блокировок: зовут каждый кадр, а перемотка идёт
     // редко.
-    if (!g_active.load() || g_seek_delta_ms.load() == 0)
+    if (!g_active.load())
+        return;
+
+    const bool has_target = g_has_seek_target.load();
+    if (!has_target && g_seek_delta_ms.load() == 0)
         return;
 
     std::lock_guard<std::mutex> lock(g_seek_mutex);
 
+    if (g_has_seek_target.exchange(false))
+    {
+        apply_seek(g_reader->find_index_at_or_after(g_seek_target_utc.load()));
+        return;
+    }
+
     const int64_t delta = g_seek_delta_ms.exchange(0);
     if (delta != 0)
         apply_seek(index_for_offset_ms(delta));
+}
+
+void replay_seek_to_utc(uint32_t utc_ms)
+{
+    if (!g_active.load())
+        return;
+
+    // Как и относительная перемотка, ставит на паузу: иначе воспроизведение
+    // продолжает тянуть позицию вперёд от точки, куда только что попали.
+    g_paused.store(true);
+    g_position_smoothing_enabled.store(false);
+
+    g_seek_delta_ms.store(0);   // «поставь сюда» отменяет накопленный сдвиг
+    g_seek_target_utc.store(utc_ms);
+    g_has_seek_target.store(true);
 }
 
 void replay_scrub(double seconds)

@@ -44,7 +44,7 @@ msbuild OpenGL.sln /p:Configuration=Release /p:Platform=ARM64
 
 - `OpenGL/UI.cpp`, `UI.h`, `UI_Elements.cpp`, `UI_Elements.h` в **корне проекта** — это реальные компилируемые файлы главного UI (большие, легаси).
 - `OpenGL/src/ui/UI.cpp` и `src/ui/UI.h` существуют, но **не включены в vcxproj — их правка ничего не меняет**. При сомнениях проверяйте `<ClCompile>` в `OpenGL.vcxproj`.
-- Новый UI — модульный в `src/ui/`: `pro/` (PRO-экран Pit Wall — ProView + по файлу на плавающую панель: Laptime, LapList, SessionInfo, Sectors, TrackMap, GForce, Channels, Events), `UIRaceManager/` (табло, флаги, статус-бар), `Accounts` (админ-токены), `ui_scale.*` (DPI-масштабирование по мониторам с пересборкой шрифтов при смене монитора).
+- Новый UI — модульный в `src/ui/`: `pro/` (PRO-экран Pit Wall — ProView + по файлу на плавающую панель: Laptime, LapList, SessionInfo, Sectors, TrackMap, TrackReport, GForce, Channels, Graphs, Events), `UIRaceManager/` (табло, флаги, статус-бар), `Accounts` (админ-токены), `ui_scale.*` (DPI-масштабирование по мониторам с пересборкой шрифтов при смене монитора).
 - Масштабы каналов панелей хранятся в `pro_scales.ini`, раскладка ImGui — в `imgui.ini` (оба в `OpenGL/`, отслеживаются git и часто «грязные» — обычно не предназначены для коммита).
 
 ### Каталоги данных
@@ -234,3 +234,9 @@ std::optional<TelemetryFrame> parse_packet(std::span<const uint8_t> raw);
 - `auto` — когда тип очевиден из правой части (`auto r = std::make_unique<Receiver>()`), но не когда он прячет важное (не `auto x = get()`, если непонятно, что вернулось).
 - Магические числа — в именованные константы. `if (len < 37)` → `if (len < PACKET_SIZE_BYTES)`.
 - Инициализируем переменные при объявлении. Неинициализированная переменная — источник трудноуловимых багов.
+  
+  
+  ## 9. Скиллы
+  
+  Используй скилл andrej-karpathy-skills в добавок того, что есть сейчас
+  curl -o CLAUDE.md https://raw.githubusercontent.com/forrestchang/andrej-karpathy-skills/main/CLAUDE.md
