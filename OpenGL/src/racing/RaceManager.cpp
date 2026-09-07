@@ -19,7 +19,6 @@
 // EXTERNAL GLOBALS
 // ============================================================================
 extern std::map<int32_t, Vehicle> g_vehicles;
-extern std::mutex g_vehicles_mutex;
 extern std::vector<SplinePoint> g_smooth_track_points;
 extern std::atomic<bool> g_is_map_loaded;
 
@@ -167,7 +166,7 @@ void RaceManager::Update(float deltaTime)
         // упирались в стену — при живом трекере и полном эфире.
         // ====================================================================
         {
-            constexpr float kTelemetrySampleInterval = 0.1f; // 10 Hz
+            // Шаг замера — из LapTypes.h: то же число видит шапка выгрузки.
             constexpr size_t kMaxSamplesPerLap = 36000;       // 1 hour cap per lap
             vehicle.m_telemetry_sample_timer += deltaTime;
 
@@ -822,6 +821,13 @@ void RaceManager::PublishPositionsOnly() const
 
 void RaceManager::PublishSnapshot(const std::vector<VehicleStanding>& standings) const
 {
+    // Прогрев записи гоняет пайплайн кусками по кадрам, и каждый кусок — это
+    // состояние посреди заезда. Публиковать его нельзя: на экране это выглядит
+    // как запись, которая сама прокручивается при открытии файла. Ход прогрева
+    // показывает своя полоса, а снимок уйдёт первым же кадром после него.
+    if (g_pipeline_warmup.load(std::memory_order_relaxed))
+        return;
+
     static uint64_t s_revision = 0;
 
     auto snapshot = std::make_shared<world::Snapshot>();
@@ -860,7 +866,13 @@ void RaceManager::PublishSnapshot(const std::vector<VehicleStanding>& standings)
 
         view.fix_type = vehicle.m_fix_type;
         view.packet_utc_ms = vehicle.m_packet_utc_ms;
-        view.laps = vehicle.m_laps;
+        // Круги — разделяемым указателем: пересобираем, только если
+        // изменились. Сравнение дешевле копии на порядок, а панели читают
+        // ровно ту же карту, что и в прошлом кадре.
+        std::shared_ptr<const std::map<int, LapData>>& cached = m_published_laps[id];
+        if (!cached || *cached != vehicle.m_laps)
+            cached = std::make_shared<const std::map<int, LapData>>(vehicle.m_laps);
+        view.laps = cached;
 
         view.sectors = vehicle.m_current_lap_sectors;
         view.current_sector = vehicle.m_current_sector;
@@ -873,6 +885,12 @@ void RaceManager::PublishSnapshot(const std::vector<VehicleStanding>& standings)
 
         snapshot->vehicles.emplace(id, std::move(view));
     }
+
+    // Машины, которых больше нет (сошла, закрыли повтор), уносят свои круги с
+    // собой: кэш не должен расти на всё время работы программы.
+    for (auto it = m_published_laps.begin(); it != m_published_laps.end();)
+        it = (snapshot->vehicles.count(it->first) == 0) ? m_published_laps.erase(it)
+                                                        : std::next(it);
 
     world::publish(std::move(snapshot));
 }
@@ -1097,7 +1115,7 @@ std::map<int, LapData> RaceManager::GetVehicleLapsCopy(int32_t vehicleID) const
     // а сам вызов вставал на мьютексе, который откат держит целиком.
     const std::shared_ptr<const world::Snapshot> snapshot = world::current();
     if (const world::VehicleView* view = world::find(*snapshot, vehicleID))
-        return view->laps;
+        return view->laps_ref();
 
     return {};
 }
@@ -1146,8 +1164,9 @@ float RaceManager::GetVehiclePreviousLapTime(int32_t vehicleID) const
         if (previousLapNumber < RaceConstants::LAP_START_NUMBER)
             return -1.0f;
 
-        const auto lapIt = view->laps.find(previousLapNumber);
-        if (lapIt != view->laps.end())
+        const std::map<int, LapData>& laps = view->laps_ref();
+        const auto lapIt = laps.find(previousLapNumber);
+        if (lapIt != laps.end())
             return lapIt->second.lapTime;
     }
 

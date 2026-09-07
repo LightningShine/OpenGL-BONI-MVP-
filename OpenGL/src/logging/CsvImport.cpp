@@ -27,6 +27,11 @@ namespace
     /// Шапки приборов бывают длинными, но не бесконечными.
     constexpr size_t HEADER_SEARCH_LINES = 60;
 
+    /// Сколько строк данных оставляем в памяти. Их хватает и на определение
+    /// формата времени, и на показ образца в окне привязки; всё остальное
+    /// читается вторым проходом при конвертации.
+    constexpr size_t PREVIEW_ROWS = 256;
+
     /// Меньше трёх колонок — это не таблица телеметрии, а пара
     /// «настройка, значение» из шапки прибора.
     constexpr size_t MIN_TABLE_COLUMNS = 3;
@@ -327,9 +332,14 @@ bool read_csv(const std::filesystem::path& path, CsvTable& table, std::string* e
     if (!file)
         return fail(error, "Cannot open the file: " + path.string());
 
+    // Голову файла держим в памяти: по ней находятся разделитель, шапка и
+    // формат времени, её же показывает окно привязки. Всё остальное только
+    // пересчитывается на месте — файл целиком в память больше не кладём.
+    constexpr size_t HEAD_LINES = HEADER_SEARCH_LINES + PREVIEW_ROWS;
+
     std::vector<std::string> lines;
     std::string line;
-    while (std::getline(file, line))
+    while (lines.size() < HEAD_LINES && std::getline(file, line))
     {
         if (!line.empty() && line.back() == '\r') line.pop_back();
         lines.push_back(line);
@@ -392,19 +402,35 @@ bool read_csv(const std::filesystem::path& path, CsvTable& table, std::string* e
         if (table.columns[i].empty())
             table.columns[i] = "column " + std::to_string(i + 1);
 
+    table.first_data_line = first_data;
+
+    // Строки данных из головы — они же образец для окна привязки.
     for (size_t i = first_data; i < lines.size(); ++i)
     {
         if (lines[i].empty()) continue;
         std::vector<std::string> cells = split_row(lines[i], table.delimiter);
         if (cells.size() < table.columns.size()) continue;
-        table.rows.push_back(std::move(cells));
+        if (table.rows.size() < PREVIEW_ROWS) table.rows.push_back(cells);
+        ++table.data_rows;
     }
 
-    if (table.rows.empty())
+    // Хвост файла ДОСЧИТЫВАЕМ, не сохраняя: оператору надо знать, сколько
+    // строк он импортирует, а конвертации — сколько места занять под замеры.
+    // Разбираем строку целиком, а не считаем разделители: в ячейке разделитель
+    // может стоять внутри кавычек, и счёт по нему соврал бы.
+    while (std::getline(file, line))
+    {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        if (line.empty()) continue;
+        if (split_row(line, table.delimiter).size() < table.columns.size()) continue;
+        ++table.data_rows;
+    }
+
+    if (table.data_rows == 0)
         return fail(error, "The table has column names but no data rows.");
 
     std::cout << "[CSV] " << path.filename().string() << ": " << table.columns.size()
-              << " columns, " << table.rows.size() << " rows" << std::endl;
+              << " columns, " << table.data_rows << " rows" << std::endl;
     return true;
 }
 
@@ -477,6 +503,33 @@ CsvMapping guess_mapping(const CsvTable& table)
     return mapping;
 }
 
+/// Проходит по ВСЕМ строкам данных файла, отдавая каждую разобранную строку в
+/// `fn`. Второй проход по файлу: таблица держит в памяти только голову.
+///
+/// Правила отбора строк те же, что и при чтении головы — иначе конвертация
+/// увидела бы не то, что оператор видел в окне привязки.
+template <typename Fn>
+static bool for_each_data_row(const CsvTable& table, Fn&& fn, std::string* error)
+{
+    std::ifstream file(table.source);
+    if (!file)
+        return fail(error, "Cannot re-open the file: " + table.source.string());
+
+    std::string line;
+    size_t index = 0;
+    while (std::getline(file, line))
+    {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        if (index++ < table.first_data_line) continue;
+        if (line.empty()) continue;
+
+        const std::vector<std::string> cells = split_row(line, table.delimiter);
+        if (cells.size() < table.columns.size()) continue;
+        fn(cells);
+    }
+    return true;
+}
+
 bool convert_csv_to_replay(const CsvTable& table, const CsvMapping& mapping,
                            const std::filesystem::path& directory,
                            std::filesystem::path& out_path, std::string* error)
@@ -505,26 +558,38 @@ bool convert_csv_to_replay(const CsvTable& table, const CsvMapping& mapping,
     bool   have_first_time = false;
 
     std::vector<Sample> samples;
-    samples.reserve(table.rows.size());
+    samples.reserve(table.data_rows);
 
-    for (const std::vector<std::string>& row : table.rows)
-    {
+    // Строки читаем ВТОРЫМ ПРОХОДОМ по файлу, а не из таблицы: в ней лежит
+    // только голова (см. CsvTable). Замеры при этом остаются в памяти — они
+    // маленькие, и без них не посчитать производные каналы центральной
+    // разностью.
+    const auto convert_row = [&](const std::vector<std::string>& row) {
         double lat = 0.0, lon = 0.0;
-        if (!to_number(cell(row, lat_column), comma_decimal, lat)) continue;
-        if (!to_number(cell(row, lon_column), comma_decimal, lon)) continue;
+        if (!to_number(cell(row, lat_column), comma_decimal, lat)) return;
+        if (!to_number(cell(row, lon_column), comma_decimal, lon)) return;
         // Строка без позиции — обрыв связи у логгера, а не точка на трассе.
-        if (lat == 0.0 && lon == 0.0) continue;
+        if (lat == 0.0 && lon == 0.0) return;
 
+        // Точка отсчёта — ПЕРВАЯ РАЗОБРАВШАЯСЯ ячейка времени, а не первая
+        // попавшаяся строка. Флаг раньше поднимался и тогда, когда число не
+        // читалось: битая ячейка в первой же строке с координатами оставляла
+        // first_time нулём, и для формата SecondsFromStart вся запись уезжала
+        // от нуля вместо реального начала заезда. Строки, у которых время не
+        // читается, всё равно отбрасываются ниже, так что пропуск безопасен.
         if (!have_first_time)
         {
             double raw = 0.0;
-            if (to_number(cell(row, time_column), comma_decimal, raw)) { first_time = raw; }
-            have_first_time = true;
+            if (to_number(cell(row, time_column), comma_decimal, raw))
+            {
+                first_time      = raw;
+                have_first_time = true;
+            }
         }
 
         double ms = 0.0;
         if (!time_to_ms(cell(row, time_column), mapping.time_format, comma_decimal, first_time, ms))
-            continue;
+            return;
 
         Sample sample;
         sample.lat    = lat;
@@ -544,7 +609,10 @@ bool convert_csv_to_replay(const CsvTable& table, const CsvMapping& mapping,
             sample.fix = static_cast<int16_t>(value);
 
         samples.push_back(sample);
-    }
+    };
+
+    if (!for_each_data_row(table, convert_row, error))
+        return false;
 
     if (samples.size() < 2)
         return fail(error, "Not enough usable rows: need at least two with a position and a time.");

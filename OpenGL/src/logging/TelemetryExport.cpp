@@ -114,10 +114,11 @@ namespace
         { "GpsFix",                 "GpsFix",   "GPS Fix",         "state","%.0f",   &Row::fix_type },
     };
 
-    /// Замер телеметрии снимается с этим шагом (см. kTelemetrySampleInterval в
-    /// RaceManager). Шапке MoTeC нужна частота; вычислять её из данных нельзя —
-    /// в заезде есть пропуски, и средняя по файлу соврала бы.
-    constexpr double SAMPLE_RATE_HZ = 10.0;
+    /// Шапке MoTeC нужна частота; вычислять её из данных нельзя — в заезде есть
+    /// пропуски, и средняя по файлу соврала бы. Берём ровно тот шаг, с которым
+    /// замер и снимается (LapTypes.h), чтобы правка шага не сделала шапку
+    /// враньём молча.
+    constexpr double SAMPLE_RATE_HZ = kTelemetrySampleRateHz;
 
     /// Число спутников трекер не передаёт, а колонка обязательна: по ней
     /// анализаторы отбрасывают точки без решения. Поэтому печатаем не выдумку
@@ -179,6 +180,13 @@ namespace
         double lap_distance   = 0.0;
         uint32_t first_utc_ms = 0;
         bool     have_first   = false;
+        // Метка источника - миллисекунды ОТ ПОЛУНОЧИ, она обнуляется в 00:00.
+        // Заезд с 23:50 до 00:10 без этого дал бы в середине скачок оси
+        // времени на -86400 с: и в MoTeC, и в VBOX график поехал бы назад.
+        // Разворачиваем ровно так же, как это делает импорт (CsvImport.cpp,
+        // блок "Ось времени"): накопленные сутки прибавляем к разности.
+        double   wrapped_s    = 0.0;
+        uint32_t previous_utc_ms = 0;
 
         for (const auto& [lap_number, samples] : lap_samples)
         {
@@ -207,7 +215,21 @@ namespace
                 }
                 previous = &sample;
 
-                if (!have_first) { first_utc_ms = sample.utc_ms; have_first = true; }
+                if (!have_first)
+                {
+                    first_utc_ms    = sample.utc_ms;
+                    previous_utc_ms = sample.utc_ms;
+                    have_first      = true;
+                }
+
+                // Секунда запаса на неупорядоченность соседних замеров: назад
+                // на сутки метка прыгает только на настоящей полуночи. Нулевую
+                // метку не считаем переходом: ноль здесь значит «источник
+                // своего времени не дал», а не «полночь».
+                if (sample.utc_ms != 0 && previous_utc_ms != 0 &&
+                    sample.utc_ms + 1'000u < previous_utc_ms)
+                    wrapped_s += 86'400.0;
+                if (sample.utc_ms != 0) previous_utc_ms = sample.utc_ms;
 
                 Row row = build_row(sample, lap_number);
                 row.distance_m     = total_distance;
@@ -215,7 +237,7 @@ namespace
                 // Ось времени файла — от первого замера, по меткам источника:
                 // складывать времена кругов нельзя, между ними есть пропуски.
                 row.time_s = (static_cast<double>(sample.utc_ms) -
-                              static_cast<double>(first_utc_ms)) / 1000.0;
+                              static_cast<double>(first_utc_ms)) / 1000.0 + wrapped_s;
                 rows.push_back(row);
             }
         }

@@ -94,7 +94,7 @@ namespace
             const auto standings = g_race_manager->GetStandings();
             if (!standings.empty()) return standings.front().vehicleID;
         }
-        std::lock_guard<std::mutex> lock(g_vehicles_mutex);
+        VehiclesLock lock;
         return g_vehicles.empty() ? -1 : g_vehicles.begin()->first;
     }
 
@@ -102,7 +102,7 @@ namespace
     void export_labels(int32_t vehicleId, std::string& vehicleName, std::string& venue)
     {
         {
-            std::lock_guard<std::mutex> lock(g_vehicles_mutex);
+            VehiclesLock lock;
             const auto it = g_vehicles.find(vehicleId);
             if (it != g_vehicles.end()) vehicleName = it->second.name;
         }
@@ -119,13 +119,14 @@ namespace
     {
         std::map<int, std::vector<LapInfo>> laps;
 
-        if (const telemetry::VehicleJournal* journal = telemetry::replay_journal(vehicleId))
+        if (const std::shared_ptr<const telemetry::VehicleJournal> journal =
+                telemetry::replay_journal(vehicleId))
         {
             laps = journal->lap_samples;
         }
         else
         {
-            std::lock_guard<std::mutex> lock(g_vehicles_mutex);
+            VehiclesLock lock;
             const auto it = g_vehicles.find(vehicleId);
             if (it != g_vehicles.end())
                 for (const auto& [lap_number, session] : it->second.laps)
@@ -365,7 +366,7 @@ namespace
 
             ImGui::TextUnformatted(g_csv_table.source.filename().string().c_str());
             ImGui::TextDisabled("%zu columns, %zu rows",
-                                g_csv_table.columns.size(), g_csv_table.rows.size());
+                                g_csv_table.columns.size(), g_csv_table.data_rows);
             ImGui::Separator();
 
             if (ImGui::BeginTable("##csvMap", 3,
@@ -985,6 +986,57 @@ void UI::RenderNetworkingModal()
     ImGui::End();
 
     if (!modal_open) m_show_networking_modal = false;
+
+    ImGui::PopStyleColor(2);
+    ImGui::PopStyleVar(3);
+}
+
+void UI::RenderReplayWarmupOverlay()
+{
+    // ПРИЗНАК ЖИЗНИ НА ПРОГРЕВЕ.
+    //
+    // Открытая запись прогоняется целиком, чтобы стал известен весь заезд (см.
+    // replay_build_journal_if_pending). Прогон линеен по длине записи: часовая
+    // гонка на полном поле — это секунды работы. Раньше они проходили одним
+    // замершим кадром, и отличить это от повисшего приложения было нельзя.
+    // Теперь прогон режется по кадрам, окно живёт, а здесь видно, сколько ещё.
+    if (!telemetry::replay_journal_is_building())
+        return;
+
+    const float progress = telemetry::replay_journal_progress();
+
+    ImGuiIO&     io  = ImGui::GetIO();
+    const ImVec2 dsz = io.DisplaySize;
+
+    const float w    = ui_scale::points(320.0f);
+    const float h    = ui_scale::points(64.0f);
+    const float padX = ui_scale::points(16.0f);
+
+    ImGui::SetNextWindowPos({(dsz.x - w) * 0.5f, (dsz.y - h) * 0.5f}, ImGuiCond_Always);
+    ImGui::SetNextWindowSize({w, h}, ImGuiCond_Always);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,    {padX, ui_scale::points(12.0f)});
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding,   ui_scale::points(4.0f));
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.07f, 0.07f, 0.07f, 0.96f));
+    ImGui::PushStyleColor(ImGuiCol_Border,   ImVec4(0.30f, 0.30f, 0.30f, 1.0f));
+
+    if (ImGui::Begin("##replayWarmup", nullptr,
+                     ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+                     ImGuiWindowFlags_NoMove     | ImGuiWindowFlags_NoScrollbar |
+                     ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoNav |
+                     ImGuiWindowFlags_NoFocusOnAppearing))
+    {
+        if (m_fontUI) ImGui::PushFont(m_fontUI);
+        ImGui::TextUnformatted("Preparing replay...");
+        if (m_fontUI) ImGui::PopFont();
+
+        // Полоса, а не проценты словами: доля пройденного здесь единственное,
+        // что оператору нужно знать, и читается она с одного взгляда.
+        char label[16];
+        snprintf(label, sizeof(label), "%d%%", static_cast<int>(progress * 100.0f + 0.5f));
+        ImGui::ProgressBar(progress, ImVec2(-1.0f, ui_scale::points(14.0f)), label);
+    }
+    ImGui::End();
 
     ImGui::PopStyleColor(2);
     ImGui::PopStyleVar(3);
@@ -2293,6 +2345,7 @@ void UI::Render()
     }
 
     RenderReplayErrorModal();
+    RenderReplayWarmupOverlay();
     RenderPrototypeToast();
     RenderNetworkingModal();
     AccountsPanel::Render(m_fontUI, m_fontUBold);
@@ -3530,7 +3583,7 @@ void UI::RenderTopMenu()
                 simulationStopAll();
 
                 {
-                    std::lock_guard<std::mutex> lock(g_vehicles_mutex);
+                    VehiclesLock lock;
                     g_vehicles.clear();
                 }
 

@@ -32,7 +32,6 @@ extern UI* g_ui;
 // EXTERNAL GLOBALS
 // ============================================================================
 extern std::map<int32_t, Vehicle> g_vehicles;
-extern std::mutex g_vehicles_mutex;
 extern MapOrigin g_map_origin;
 extern std::atomic<bool> g_is_map_loaded;
 extern std::vector<SplinePoint> g_smooth_track_points;
@@ -1027,7 +1026,7 @@ void processIncomingVehicleState(const VehicleStatePacket& packet)
         return;
     }
 
-    std::lock_guard<std::mutex> lock(g_vehicles_mutex);
+    VehiclesLock lock;
 
     auto it = g_vehicles.find(packet.vehicle_id);
     if (it != g_vehicles.end())
@@ -1374,7 +1373,7 @@ static void simulationThreadWorker(int vehicle_id, std::vector<SplinePoint> smoo
 
         // ? Update local authoritative server state exactly, without GPS roundtrip
         {
-            std::lock_guard<std::mutex> lock(g_vehicles_mutex);
+            VehiclesLock lock;
             auto it = g_vehicles.find(vehicle_id);
 
             if (it == g_vehicles.end())

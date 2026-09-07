@@ -37,6 +37,8 @@ public:
     /// Сообщение о том, почему не открылась запись. Рисуется поверх всего,
     /// включая заставку: отказ приходит именно оттуда, где записи и открывают.
     void RenderReplayErrorModal();
+    // Полоса прогрева только что открытой записи — см. UI.cpp.
+    void RenderReplayWarmupOverlay();
     void EndFrame();
     
     // Access to UI elements

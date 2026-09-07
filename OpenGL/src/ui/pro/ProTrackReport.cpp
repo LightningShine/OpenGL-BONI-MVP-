@@ -13,7 +13,6 @@
 
 extern std::vector<SplinePoint> g_smooth_track_points;
 extern std::map<int32_t, Vehicle> g_vehicles;
-extern std::mutex g_vehicles_mutex;
 
 namespace Pro {
 namespace {
@@ -231,21 +230,45 @@ void RenderTrackReportWindow(const ProContext& ctx, int32_t vehicleId,
             }
         };
 
-        std::lock_guard<std::mutex> lk(g_vehicles_mutex);
+        // Линию рисуем для того круга, который РАЗБИРАЮТ, а не для того, где
+        // стоит запись. Круг выбирает оператор щелчком в LAP LIST, и GRAPHS с
+        // самим списком уже идут за этим выбором. Пока панель шла за точкой
+        // просмотра, выбор круга с последующим движением ползунка внутри
+        // другого показывал на экране два разных круга одновременно.
+        //
+        // AnalysisLap спрашиваем ДО мьютекса машин: внутри он ходит в
+        // RaceManager, а тот берёт тот же мьютекс.
+        const int analysisLap = AnalysisLap(vehicleId);
+
+        VehiclesLock lk;
         const auto it = g_vehicles.find(vehicleId);
         if (it != g_vehicles.end()) {
             const Vehicle& v = it->second;
-            const telemetry::VehicleJournal* journal = telemetry::replay_journal(vehicleId);
+            const std::shared_ptr<const telemetry::VehicleJournal> journal =
+                telemetry::replay_journal(vehicleId);
 
             if (journal != nullptr) {
-                const auto lap = journal->lap_samples.find(v.m_current_lap_number);
+                const auto lap = journal->lap_samples.find(analysisLap);
                 if (lap != journal->lap_samples.end()) collect(lap->second);
             } else {
-                const auto lap = v.laps.find(v.m_current_lap_number);
+                const auto lap = v.laps.find(analysisLap);
                 if (lap != v.laps.end()) collect(lap->second.samples);
             }
         }
     }
+    // ── Линия проезда круга-образца ──────────────────────────────────────────
+    // Белая, тоньше и без раскраски по скорости: цветом здесь говорит разбираемый
+    // круг, а образцу достаточно показать САМУ ТРАЕКТОРИЮ — где он ехал иначе.
+    std::vector<glm::vec2> refTrail;
+    if (ComparisonActive()) {
+        const RefTrace& reference = Reference();
+        refTrail.reserve(reference.samples.size());
+        for (const LapInfo& sample : reference.samples) {
+            if (sample.x == 0.0 && sample.y == 0.0) continue;
+            refTrail.push_back({ static_cast<float>(sample.x), static_cast<float>(sample.y) });
+        }
+    }
+
     for (const TrailPoint& p : trail) {
         trailSpeedMin = fminf(trailSpeedMin, p.speed);
         trailSpeedMax = fmaxf(trailSpeedMax, p.speed);
@@ -360,6 +383,41 @@ void RenderTrackReportWindow(const ProContext& ctx, int32_t vehicleId,
         }
     }
 
+    // ── Траектория образца: ПОВЕРХ своей ─────────────────────────────────────
+    //
+    // Тонкой сплошной белой нитью. Под ней остаётся видна цветная полоса
+    // разбираемого круга — она шире, — а сама нить показывает, где образец
+    // выбирал другую траекторию. Рисовать её первой было бесполезно: цветная
+    // полоса накрывала её целиком, и панель выглядела нетронутой сравнением.
+    if (refTrail.size() >= 2) {
+        const float rth = fmaxf(TRACK_HALF_WIDTH * 0.10f * scale, 1.5f);
+        for (size_t i = 1; i < refTrail.size(); ++i) {
+            const glm::vec2 step = refTrail[i] - refTrail[i - 1];
+            if (step.x * step.x + step.y * step.y > MAX_TRAIL_STEP * MAX_TRAIL_STEP)
+                continue;
+            dl->AddLine(toScreen(refTrail[i - 1] + renderOffset),
+                        toScreen(refTrail[i]     + renderOffset), COL_REF, rth);
+        }
+    }
+
+    // ── Машина-призрак: образец в ТУ ЖЕ СЕКУНДУ круга ────────────────────────
+    //
+    // Вторая машина на карте. Стоит она не там же, где наша: обе прошли по
+    // трассе одинаковое ВРЕМЯ круга, а расстояние между ними — это и есть
+    // накопленный разрыв, видимый без единой цифры. Сравнивать положения по
+    // одному и тому же МЕСТУ трассы было бы бессмысленно: место одно, значки
+    // легли бы друг на друга.
+    {
+        LapInfo ghost;
+        if (haveCar && ReferenceGhost(vehicleId, ghost)) {
+            const ImVec2 g = toScreen({ static_cast<float>(ghost.x) + renderOffset.x,
+                                        static_cast<float>(ghost.y) + renderOffset.y });
+            const float  gr = fmaxf(TRACK_HALF_WIDTH * 0.9f * scale, 5.f);
+            dl->AddCircleFilled(g, gr * 0.55f, COL_REF_DIM);
+            dl->AddCircle(g, gr, COL_REF, 24, 1.5f);
+        }
+    }
+
     // ── Машина ───────────────────────────────────────────────────────────────
     if (haveCar) {
         const ImVec2 c = toScreen(carPos);
@@ -379,7 +437,7 @@ void RenderTrackReportWindow(const ProContext& ctx, int32_t vehicleId,
 
     // ── Подпись состояния ────────────────────────────────────────────────────
     {
-        char info[96];
+        char info[160];
         if (trail.size() >= 2 && s_mode == ColorMode::Speed)
             snprintf(info, sizeof(info), "%.0f - %.0f km/h", trailSpeedMin, trailSpeedMax);
         else if (trail.size() >= 2 && s_mode == ColorMode::GForce)
@@ -388,6 +446,16 @@ void RenderTrackReportWindow(const ProContext& ctx, int32_t vehicleId,
             snprintf(info, sizeof(info), "waiting for the lap to start");
         else
             snprintf(info, sizeof(info), "current lap");
+
+        // Чей второй след — здесь же: белая линия без имени не отвечает на
+        // первый вопрос, который к ней возникает.
+        if (ComparisonActive()) {
+            const RefTrace& reference = Reference();
+            char line[160];
+            snprintf(line, sizeof(line), "%s   vs %s L%d",
+                     info, reference.name.c_str(), reference.ref.lap);
+            snprintf(info, sizeof(info), "%s", line);
+        }
 
         ImFont* lf = ctx.russo ? ctx.russo : ImGui::GetFont();
         const float lsz = lf->FontSize * z;

@@ -35,6 +35,11 @@ void RenderGForceWindow(const ProContext& ctx, int32_t vehicleId,
         }
     }
 
+    // Образец — второй точкой в том же круге. Одна диаграмма на две машины:
+    // расстояние между точками и есть ответ «где мы разъезжаемся».
+    LapInfo    refAt;
+    const bool hasRef = ReferenceAtVehicle(vehicleId, refAt);
+
     ImDrawList* dl   = ImGui::GetWindowDrawList();
     ImVec2      base = ImGui::GetCursorScreenPos();
     float       sz   = ImGui::GetContentRegionAvail().y; // remaining height → square
@@ -69,6 +74,16 @@ void RenderGForceWindow(const ProContext& ctx, int32_t vehicleId,
     float dotX = cx + ((float)gx / maxG) * r;
     float dotY = cy - ((float)gy / maxG) * r;
     float dotR = fmaxf(sz * 0.024f, 4.f);
+
+    // Образец рисуем ПОД своей точкой и полым кружком: сплошных красных точек
+    // на диаграмме должно остаться ровно одна, иначе непонятно, чья какая.
+    if (hasRef) {
+        const float rx = cx + (refAt.gForceX / maxG) * r;
+        const float ry = cy - (refAt.gForceY / maxG) * r;
+        dl->AddLine({rx, ry}, {dotX, dotY}, COL_REF_DIM, 1.f);
+        dl->AddCircle({rx, ry}, dotR, COL_REF, 16, 2.f);
+    }
+
     dl->AddCircleFilled({dotX, dotY}, dotR + 3.f, IM_COL32(180, 40, 40, 50));
     dl->AddCircleFilled({dotX, dotY}, dotR,        IM_COL32(220, 50, 50, 255));
     dl->AddCircle      ({dotX, dotY}, dotR,        IM_COL32(255, 120, 120, 180));

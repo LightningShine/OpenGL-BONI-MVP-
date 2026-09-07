@@ -212,7 +212,7 @@ void handleState(const std::string& text)
             g_race_epoch = epoch;
             g_have_epoch = true;
             if (is_new_session) {
-                std::lock_guard<std::mutex> lock(g_vehicles_mutex);
+                VehiclesLock lock;
                 for (auto& [id, v] : g_vehicles) {
                     v.m_laps.clear();
                     v.laps.clear();
@@ -273,7 +273,7 @@ void handleState(const std::string& text)
         const bool finished = jsonNumber(car, "fin", 0, ok) != 0.0;
         const int32_t race_id = telemetryGetRaceIdForPrototype(id);
         if (race_id != -1) {
-            std::lock_guard<std::mutex> lock(g_vehicles_mutex);
+            VehiclesLock lock;
             auto it = g_vehicles.find(race_id);
             if (it != g_vehicles.end()) {
                 Vehicle& v = it->second;

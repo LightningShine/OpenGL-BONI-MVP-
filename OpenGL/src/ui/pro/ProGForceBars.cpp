@@ -94,6 +94,14 @@ void render_bar_panel(const ProContext& ctx, int32_t vehicleId, ImVec2 vpSz, flo
     const float   shown   = fmaxf(-RANGE_G, fminf(RANGE_G, value));
     const bool    clipped = fabsf(value) > RANGE_G;
 
+    // Образец — БЕЛОЙ РИСКОЙ на той же шкале, а не вторым столбиком: два
+    // столбика рядом делят и без того короткую шкалу пополам, а риска отвечает
+    // на вопрос «докуда доходил образец» одним взглядом.
+    LapInfo     refAt;
+    const bool  hasRef  = ReferenceAtVehicle(vehicleId, refAt);
+    const float refVal  = hasRef ? (longitudinal ? refAt.gForceY : refAt.gForceX) : 0.f;
+    const float refShown = fmaxf(-RANGE_G, fminf(RANGE_G, refVal));
+
     ImDrawList*  dl   = ImGui::GetWindowDrawList();
     const ImVec2 base = ImGui::GetCursorScreenPos();
     const ImVec2 avail = ImGui::GetContentRegionAvail();
@@ -108,6 +116,9 @@ void render_bar_panel(const ProContext& ctx, int32_t vehicleId, ImVec2 vpSz, flo
     char valBuf[24];
     snprintf(valBuf, sizeof(valBuf), "%+.2f g", value);
     const ImU32 valCol = clipped ? COL_GOLD : COL_TEXT;
+
+    char refBuf[32] = "";
+    if (hasRef) snprintf(refBuf, sizeof(refBuf), "REF %+.2f", refVal);
 
     // Подписи концов шкалы: действие, а не только число. «BRAKE 2.0» читается
     // без раздумий, куда именно поехал столбик.
@@ -141,9 +152,16 @@ void render_bar_panel(const ProContext& ctx, int32_t vehicleId, ImVec2 vpSz, flo
                           {tmax.x - 1.f, fmaxf(zeroY, barY)},
                           bar_color(value, true));
 
+        if (hasRef) {
+            const float refY = zeroY - (refShown / RANGE_G) * half;
+            dl->AddLine({tmin.x, refY}, {tmax.x, refY}, COL_REF, fmaxf(1.5f * z, 1.5f));
+        }
+
         const float textX = tmax.x + pad;
         dl->AddText(lf, lSz, {textX, tmin.y},                        COL_LABEL, posBuf);
         dl->AddText(vf, vSz, {textX, zeroY - vSz * 0.5f},            valCol,    valBuf);
+        if (refBuf[0] != '\0')
+            dl->AddText(lf, lSz, {textX, zeroY + vSz * 0.6f},        COL_REF,   refBuf);
         dl->AddText(lf, lSz, {textX, tmax.y - lSz},                  COL_LABEL, negBuf);
     } else {
         // Подписи концов и значение — в одной строке под шкалой; если ширины на
@@ -166,12 +184,25 @@ void render_bar_panel(const ProContext& ctx, int32_t vehicleId, ImVec2 vpSz, flo
                           {fmaxf(zeroX, barX), tmax.y - 1.f},
                           bar_color(value, false));
 
-        if (labels_fit) {
+        if (hasRef) {
+            const float refX = zeroX + (refShown / RANGE_G) * half;
+            dl->AddLine({refX, tmin.y}, {refX, tmax.y}, COL_REF, fmaxf(1.5f * z, 1.5f));
+        }
+
+        // Подписи концов уступают место образцу: его число важнее напоминания о
+        // пределе шкалы, который и так виден по риске.
+        if (labels_fit && !hasRef) {
             dl->AddText(lf, lSz, {tmin.x, footY + (footH - lSz) * 0.5f}, COL_LABEL, negBuf);
             dl->AddText(lf, lSz, {tmax.x - posW, footY + (footH - lSz) * 0.5f}, COL_LABEL, posBuf);
         }
         dl->AddText(vf, vSz, {base.x + (avail.x - vw) * 0.5f, footY + (footH - vSz) * 0.5f},
                     valCol, valBuf);
+        if (refBuf[0] != '\0') {
+            const float rw = lf->CalcTextSizeA(lSz, FLT_MAX, 0.f, refBuf).x;
+            if (rw + vw + pad * 2.f < avail.x)
+                dl->AddText(lf, lSz, {tmax.x - rw, footY + (footH - lSz) * 0.5f},
+                            COL_REF, refBuf);
+        }
     }
 
     // Машины нет — показываем пустую шкалу, а не ноль: ноль означал бы, что

@@ -95,7 +95,7 @@ SectorSnapshot GetSectorSnapshot(int32_t vehicleId) {
     // Личный лучший ПО КАЖДОМУ сектору, по завершённым кругам. Лучший сектор и
     // лучший круг — разные вещи: сектор сравнивается со своим лучшим за сессию.
     float bestS[3]; bool bestV[3] = { false, false, false };
-    for (const auto& [lapNumber, lap] : v->laps) {
+    for (const auto& [lapNumber, lap] : v->laps_ref()) {
         for (int i = 0; i < 3; ++i) {
             const float t = lap.sectors[i];
             if (t <= 0.f) continue;
@@ -105,8 +105,8 @@ SectorSnapshot GetSectorSnapshot(int32_t vehicleId) {
 
     // Секторы предыдущего круга — ими закрываются клетки, до которых машина на
     // текущем круге ещё не доехала.
-    const auto prevLap = v->laps.find(v->current_lap_number - 1);
-    const bool hasPrev = (prevLap != v->laps.end());
+    const auto prevLap = v->laps_ref().find(v->current_lap_number - 1);
+    const bool hasPrev = (prevLap != v->laps_ref().end());
 
     for (int i = 0; i < 3; ++i) {
         const float done = v->sectors[i];
@@ -145,6 +145,40 @@ static void DrawFlag(ImDrawList* dl, ImVec2 p, float sz) {
                                   IM_COL32(220,220,220,255));
 }
 
+// ── ВТОРАЯ СТРОКА БЛОКОВ: круг-образец ──────────────────────────────────────
+//
+// Блок сектора с одной строкой отвечает «сколько», но не отвечает «а много это
+// или мало». Именно поэтому на табло большого автоспорта под временем стоит
+// вторая строка соперника и разница между ними. Здесь то же: верхняя строка —
+// разбираемый круг, нижняя белая — образец, под ней разница со знаком.
+//
+// Пустая структура (active == false) означает «сравнения нет», и блок рисуется
+// ровно как раньше — ни одного лишнего пикселя.
+struct CompareRow {
+    bool        active = false;
+    std::string name;
+    char        sec[3][16] = { "", "", "" };
+    char        lap[32]    = "";
+    float       delta[3]   = { 0.f, 0.f, 0.f };
+    bool        hasDelta[3] = { false, false, false };
+    float       lapDelta    = 0.f;
+    bool        hasLapDelta = false;
+};
+
+/// Разница со знаком: плюс — разбираемый круг медленнее образца. Цвет по знаку,
+/// а не белый: белым написан сам образец, и белая же разница читалась бы как
+/// его собственная величина.
+static ImU32 deltaColor(float d) {
+    return d > 0.f ? IM_COL32(0xCE,0x2B,0x2B,255)
+                   : (d < 0.f ? IM_COL32(0x6E,0xF9,0x8E,255) : IM_COL32(0xB3,0xB3,0xB3,255));
+}
+
+/// Высота блока с учётом второй строки и строки разницы.
+static float CardHeight(float ss, bool comparing) {
+    const float base = 68.f * ss;
+    return comparing ? base + (4.f + 38.f + 18.f) * ss : base;
+}
+
 // Bottom strip: Rassens.svg geometry (pos 39 | name 148 | 4 cells 147, height 68,
 // header 23 + 7 gap) at a single scale `ss` — same system as the mini widgets, so
 // it shrinks uniformly with the window. Name box grows to fit long names.
@@ -152,7 +186,7 @@ static void DrawStatusStrip(ImDrawList* dl, const ProContext& ctx,
                              float cx, float topY, float ss,
                              const char* driverNum, const char* driverName,
                              const char* secTime[3], const SecStyle secStyle[3],
-                             const char* lapTime) {
+                             const char* lapTime, const CompareRow& cmpRow) {
     ImFont* fRusso = ctx.title ? ctx.title : ctx.russo;
     ImFont* fMono  = ctx.jb ? ctx.jb : (ctx.bold ? ctx.bold : ctx.russo);
     float posW = 39.f * ss, cellW = 147.f * ss, hdrH = 23.f * ss, boxH = 38.f * ss;
@@ -160,6 +194,10 @@ static void DrawStatusStrip(ImDrawList* dl, const ProContext& ctx,
     float nameFsz = boxH * 0.50f;
     float nameW = fmaxf(148.f * ss,
                         fRusso->CalcTextSizeA(nameFsz, FLT_MAX, 0.f, driverName).x + 24.f * ss);
+    if (cmpRow.active)
+        nameW = fmaxf(nameW,
+                      fRusso->CalcTextSizeA(nameFsz, FLT_MAX, 0.f, cmpRow.name.c_str()).x
+                          + 24.f * ss);
     float totalW = posW + gapS + nameW + gapC + 4.f * cellW + 3.f * gapC;
     float x    = cx - totalW * 0.5f;
     float boxY = topY + hdrH + vGap;
@@ -170,12 +208,20 @@ static void DrawStatusStrip(ImDrawList* dl, const ProContext& ctx,
         dl->AddText(f, sz, {x0 + (w0 - tw) * 0.5f, y0 + (h0 - sz) * 0.5f}, col, txt);
     };
 
+    const float rowGap = 4.f * ss;
+    const float row2Y  = boxY + boxH + rowGap;
+    const float dY     = row2Y + boxH;
+
     dl->AddRectFilled({x, boxY}, {x + posW, boxY + boxH}, IM_COL32(0x18,0x18,0x18,255));
     centered(fRusso, boxH * 0.55f, x, posW, boxY, boxH, COL_WHITE, driverNum);
     x += posW + gapS;
 
     dl->AddRectFilled({x, boxY}, {x + nameW, boxY + boxH}, IM_COL32(0x20,0x20,0x20,255));
-    centered(fRusso, nameFsz, x, nameW, boxY, boxH, COL_WHITE, driverName);
+    centered(fRusso, nameFsz, x, nameW, boxY, boxH, COL_GOLD, driverName);
+    if (cmpRow.active) {
+        dl->AddRectFilled({x, row2Y}, {x + nameW, row2Y + boxH}, IM_COL32(0x20,0x20,0x20,255));
+        centered(fRusso, nameFsz, x, nameW, row2Y, boxH, COL_REF, cmpRow.name.c_str());
+    }
     x += nameW + gapC;
 
     const char* labels[4] = { "SECTOR 1", "SECTOR 2", "SECTOR 3", "LAP TIME" };
@@ -189,9 +235,24 @@ static void DrawStatusStrip(ImDrawList* dl, const ProContext& ctx,
         dl->AddRectFilled({x, boxY}, {x + cellW, boxY + boxH}, st.bg);
         dl->AddRectFilled({x, boxY}, {x + 5.f * ss, boxY + boxH}, st.accent);
         centered(fMono, boxH * 0.60f, x + 5.f * ss, cellW - 5.f * ss, boxY, boxH, st.text, val);
+
+        if (cmpRow.active) {
+            const char* rval = (i < 3) ? cmpRow.sec[i] : cmpRow.lap;
+            dl->AddRectFilled({x, row2Y}, {x + cellW, row2Y + boxH}, IM_COL32(0x20,0x20,0x20,255));
+            dl->AddRectFilled({x, row2Y}, {x + 5.f * ss, row2Y + boxH}, COL_REF);
+            centered(fMono, boxH * 0.60f, x + 5.f * ss, cellW - 5.f * ss, row2Y, boxH,
+                     COL_REF, rval);
+
+            const bool  hasD = (i < 3) ? cmpRow.hasDelta[i] : cmpRow.hasLapDelta;
+            const float d    = (i < 3) ? cmpRow.delta[i]    : cmpRow.lapDelta;
+            if (hasD) {
+                char db[16];
+                snprintf(db, sizeof(db), "%+.3f", d);
+                centered(fMono, 14.f * ss, x, cellW, dY, 18.f * ss, deltaColor(d), db);
+            }
+        }
         x += cellW + gapC;
     }
-
 }
 
 void RenderTrackMapWindow(const ProContext& ctx, int32_t vehicleId,
@@ -249,10 +310,18 @@ void RenderTrackMapWindow(const ProContext& ctx, int32_t vehicleId,
     // Strip scale — same reference system (Rassens.svg) as the mini sector
     // widgets, so the whole bottom row shrinks uniformly with the window.
     const float ss = fminf(fmaxf(fminf(w / 1039.f, h / 550.f), 0.5f), 1.f) * 0.85f * z;
-    const float STRIP_H    = 68.f * ss;
+
+    // Полоса и блоки растут на вторую строку, только когда есть с кем
+    // сравнивать: в обычном просмотре карта не должна терять высоту.
+    const bool  comparing  = ComparisonActive();
+    const float STRIP_H    = CardHeight(ss, comparing);
     const float TOP_GAP    = fmaxf(10.f * uy, 8.f);
     const float BOT_MARGIN = fmaxf(14.f * uy, 12.f);
-    float mapH = h - header_h() - 2.f - STRIP_H - TOP_GAP - BOT_MARGIN;
+    // Полоса при сравнении вдвое выше, и на низком окне она могла бы съесть всю
+    // карту: отрицательная высота — это перевёрнутый прямоугольник и блоки,
+    // разложенные по чужой области. Оставляем карте минимум, дальше полоса
+    // просто обрежется окном.
+    float mapH = fmaxf(h - header_h() - 2.f - STRIP_H - TOP_GAP - BOT_MARGIN, 80.f);
     float mapW = w;
 
     dl->AddRectFilled(base, {base.x + mapW, base.y + mapH}, COL_BG);
@@ -294,21 +363,21 @@ void RenderTrackMapWindow(const ProContext& ctx, int32_t vehicleId,
             // Личный лучший ПО КАЖДОМУ сектору за все круги: медленный сектор
             // внутри быстрого круга всё равно судится по лучшему проезду
             // именно этого сектора.
-            for (const auto& [ln, lap] : v->laps)
+            for (const auto& [ln, lap] : v->laps_ref())
                 for (int i = 0; i < 3; ++i)
                     if (lap.sectors[i] > 0.f &&
                         (!cmp.bestV[i] || lap.sectors[i] < cmp.bestS[i]))
                     { cmp.bestS[i] = lap.sectors[i]; cmp.bestV[i] = true; }
 
-            const auto lit = v->laps.find(curLapNum - 1);
-            if (lit != v->laps.end())
+            const auto lit = v->laps_ref().find(curLapNum - 1);
+            if (lit != v->laps_ref().end())
                 for (int i = 0; i < 3; ++i)
                     if (lit->second.sectors[i] > 0.f) { lastS[i] = lit->second.sectors[i]; lastV[i] = true; }
         }
 
         // Лучший и худший проезд каждого сектора среди всех машин.
         for (const auto& [id, v] : snapshot->vehicles)
-            for (const auto& [ln, lap] : v.laps)
+            for (const auto& [ln, lap] : v.laps_ref())
                 for (int i = 0; i < 3; ++i) {
                     const float t = lap.sectors[i];
                     if (t <= 0.f) continue;
@@ -320,6 +389,9 @@ void RenderTrackMapWindow(const ProContext& ctx, int32_t vehicleId,
     // ── Sector display: live current lap, finalize on cross, hold 10s ──────────
     char     secBuf[3][16];
     SecStyle secSty[3] = { SEC_NONE, SEC_NONE, SEC_NONE };
+    // Те же времена ЧИСЛОМ: из них считается разница со строкой образца.
+    float    secVal[3]  = { 0.f, 0.f, 0.f };
+    bool     secValV[3] = { false, false, false };
     {
         const float now = SessionTimeSeconds();
         SecHold& H = s_hold[vehicleId];
@@ -348,6 +420,7 @@ void RenderTrackMapWindow(const ProContext& ctx, int32_t vehicleId,
                 if (curV[i]) {
                     fmtSector(curS[i], secBuf[i], sizeof(secBuf[i]));
                     secSty[i] = colorFor(curS[i], cmp, i);
+                    secVal[i] = curS[i]; secValV[i] = true;
                 } else if (i == curSector && started) {
                     fmtSector(curSectorElapsed, secBuf[i], sizeof(secBuf[i]));
                     secSty[i] = SEC_NONE;
@@ -366,11 +439,14 @@ void RenderTrackMapWindow(const ProContext& ctx, int32_t vehicleId,
     //    same sector starts again on the next lap ────────────────────────────────
     char     cardBuf[3][16];
     SecStyle cardSty[3];
+    float    cardVal[3]  = { 0.f, 0.f, 0.f };
+    bool     cardValV[3] = { false, false, false };
     for (int i = 0; i < 3; ++i) {
         if (curV[i]) {                                         // done this lap → frozen
             const float t = curS[i];
             fmtSector(t, cardBuf[i], sizeof(cardBuf[i]));
             cardSty[i] = colorFor(t, cmp, i);
+            cardVal[i] = t; cardValV[i] = true;
         } else if (i == curSector && started) {                // running now → live
             const float lt = curSectorElapsed;
             fmtSector(lt, cardBuf[i], sizeof(cardBuf[i]));
@@ -378,9 +454,68 @@ void RenderTrackMapWindow(const ProContext& ctx, int32_t vehicleId,
         } else if (lastV[i]) {                                 // holds previous lap
             fmtSector(lastS[i], cardBuf[i], sizeof(cardBuf[i]));
             cardSty[i] = colorFor(lastS[i], cmp, i);
+            cardVal[i] = lastS[i]; cardValV[i] = true;
         } else {
             snprintf(cardBuf[i], sizeof(cardBuf[i]), "--.---");
             cardSty[i] = SEC_NONE;
+        }
+    }
+
+    // ── Строка сравнения ──────────────────────────────────────────────────────
+    CompareRow cmpRow;
+    char       cardRef[3][16] = { "--.---", "--.---", "--.---" };
+    float      cardDelta[3]   = { 0.f, 0.f, 0.f };
+    bool       cardDeltaV[3]  = { false, false, false };
+
+    if (comparing) {
+        const RefTrace& reference = Reference();
+        const RefTrace& analysed  = Analysed();
+
+        // Разбирают ЗАКРЕПЛЁННЫЙ круг — значит и секторы показываем его, а не
+        // текущие. Блок обязан говорить о том же круге, что и остальные панели,
+        // иначе на одном экране два разных круга под одним именем.
+        if (analysed.lap_time > 0.f) {
+            for (int i = 0; i < 3; ++i) {
+                if (analysed.sectors[i] <= 0.f) continue;
+                fmtSector(analysed.sectors[i], secBuf[i], sizeof(secBuf[i]));
+                secSty[i]  = colorFor(analysed.sectors[i], cmp, i);
+                secVal[i]  = analysed.sectors[i]; secValV[i] = true;
+                snprintf(cardBuf[i], sizeof(cardBuf[i]), "%s", secBuf[i]);
+                cardSty[i] = secSty[i];
+                cardVal[i] = secVal[i]; cardValV[i] = true;
+            }
+            fmtTime(analysed.lap_time, lapBuf, sizeof(lapBuf));
+        }
+
+        cmpRow.active = true;
+        cmpRow.name   = reference.name;
+
+        for (int i = 0; i < 3; ++i) {
+            if (reference.sectors[i] > 0.f) {
+                fmtSector(reference.sectors[i], cmpRow.sec[i], sizeof(cmpRow.sec[i]));
+                snprintf(cardRef[i], sizeof(cardRef[i]), "%s", cmpRow.sec[i]);
+
+                if (secValV[i]) {
+                    cmpRow.delta[i]    = secVal[i] - reference.sectors[i];
+                    cmpRow.hasDelta[i] = true;
+                }
+                if (cardValV[i]) {
+                    cardDelta[i]  = cardVal[i] - reference.sectors[i];
+                    cardDeltaV[i] = true;
+                }
+            } else {
+                snprintf(cmpRow.sec[i], sizeof(cmpRow.sec[i]), "--.---");
+            }
+        }
+
+        if (reference.lap_time > 0.f) {
+            fmtTime(reference.lap_time, cmpRow.lap, sizeof(cmpRow.lap));
+            if (analysed.lap_time > 0.f) {
+                cmpRow.lapDelta    = analysed.lap_time - reference.lap_time;
+                cmpRow.hasLapDelta = true;
+            }
+        } else {
+            snprintf(cmpRow.lap, sizeof(cmpRow.lap), "--:--.---");
         }
     }
 
@@ -419,7 +554,7 @@ void RenderTrackMapWindow(const ProContext& ctx, int32_t vehicleId,
         // 147 with 23px header) at the reduced in-map scale used in Track.svg.
         float cs      = fminf(fmaxf(fminf(mapW / 1039.f, mapH / 550.f), 0.55f), 1.f) * 0.72f * z;
         float cPosW   = 39.f * cs, cNameW = 148.f * cs, cCellW = 147.f * cs, cGap = 6.f * cs;
-        float cCardH  = 68.f * cs, cHdrH = 23.f * cs, cBoxH = 38.f * cs;
+        float cCardH  = CardHeight(cs, comparing), cHdrH = 23.f * cs, cBoxH = 38.f * cs;
         float cTotalW = cPosW + cGap + cNameW + cGap + cCellW;
 
         // Cumulative arc length → so visual boundaries match the arc-length-based
@@ -505,7 +640,8 @@ void RenderTrackMapWindow(const ProContext& ctx, int32_t vehicleId,
         ImFont* fMono  = ctx.jb ? ctx.jb : (ctx.bold ? ctx.bold : ctx.russo);
         ImVec4 placed[3]; int nPlaced = 0;
         auto drawSectorCard = [&](size_t idx, int side, const char* label,
-                                  const char* timeStr, const SecStyle& st) {
+                                  const char* timeStr, const SecStyle& st,
+                                  const char* refStr, float delta, bool hasDelta) {
             ImVec2 c = toScreen(g_smooth_track_points[idx].position);
             float trackL = offX,              trackR = offX + rX * scale;
             float trackT = offY,              trackB = offY + rY * scale;
@@ -534,7 +670,11 @@ void RenderTrackMapWindow(const ProContext& ctx, int32_t vehicleId,
                           fminf(fmaxf(c.y, p.y), p.y + cCardH)};
             dl->AddLine(c, nPt, IM_COL32(0xB3,0xB3,0xB3,150), 1.f);
 
-            float boxY = p.y + cCardH - cBoxH;
+            // Строка разбираемого круга стоит СРАЗУ ПОД ШАПКОЙ, а не у нижнего
+            // края: под ней может быть ещё строка образца и разница.
+            const float boxY   = p.y + cHdrH + 7.f * cs;
+            const float row2Y  = boxY + cBoxH + 4.f * cs;
+            const float cDeltaY = row2Y + cBoxH;
             auto centered = [&](ImFont* f, float sz, float x0, float w0, float y0,
                                 float h0, ImU32 col, const char* txt) {
                 float tw = f->CalcTextSizeA(sz, FLT_MAX, 0.f, txt).x;
@@ -548,8 +688,17 @@ void RenderTrackMapWindow(const ProContext& ctx, int32_t vehicleId,
                              // driver name (Russo One), clipped to its box
             dl->AddRectFilled({x, boxY}, {x + cNameW, boxY + cBoxH}, IM_COL32(0x20,0x20,0x20,255));
             dl->PushClipRect({x, boxY}, {x + cNameW, boxY + cBoxH}, true);
-            centered(fRusso, cBoxH * 0.50f, x, cNameW, boxY, cBoxH, COL_WHITE, dname.c_str());
+            centered(fRusso, cBoxH * 0.50f, x, cNameW, boxY, cBoxH,
+                     comparing ? COL_GOLD : COL_WHITE, dname.c_str());
             dl->PopClipRect();
+            if (comparing) {
+                dl->AddRectFilled({x, row2Y}, {x + cNameW, row2Y + cBoxH},
+                                  IM_COL32(0x20,0x20,0x20,255));
+                dl->PushClipRect({x, row2Y}, {x + cNameW, row2Y + cBoxH}, true);
+                centered(fRusso, cBoxH * 0.50f, x, cNameW, row2Y, cBoxH,
+                         COL_REF, Reference().name.c_str());
+                dl->PopClipRect();
+            }
             x += cNameW + cGap;
                              // sector header + time (JetBrains Mono Bold)
             dl->AddRectFilled({x, p.y}, {x + cCellW, p.y + cHdrH}, IM_COL32(0x29,0x29,0x29,255));
@@ -558,11 +707,28 @@ void RenderTrackMapWindow(const ProContext& ctx, int32_t vehicleId,
             dl->AddRectFilled({x, boxY}, {x + 5.f * cs, boxY + cBoxH}, st.accent);
             centered(fMono, cBoxH * 0.60f, x + 5.f * cs, cCellW - 5.f * cs, boxY, cBoxH,
                      st.text, timeStr);
+
+            if (comparing) {
+                dl->AddRectFilled({x, row2Y}, {x + cCellW, row2Y + cBoxH},
+                                  IM_COL32(0x20,0x20,0x20,255));
+                dl->AddRectFilled({x, row2Y}, {x + 5.f * cs, row2Y + cBoxH}, COL_REF);
+                centered(fMono, cBoxH * 0.60f, x + 5.f * cs, cCellW - 5.f * cs, row2Y, cBoxH,
+                         COL_REF, refStr);
+                if (hasDelta) {
+                    char db[16];
+                    snprintf(db, sizeof(db), "%+.3f", delta);
+                    centered(fMono, 14.f * cs, x, cCellW, cDeltaY, 18.f * cs,
+                             deltaColor(delta), db);
+                }
+            }
         };
 
-        drawCross(bIdx[0]); drawSectorCard(bIdx[0], bSide[0], "SECTOR 1", cardBuf[0], cardSty[0]);
-        drawCross(bIdx[1]); drawSectorCard(bIdx[1], bSide[1], "SECTOR 2", cardBuf[1], cardSty[1]);
-        drawCross(bIdx[2]); drawSectorCard(bIdx[2], bSide[2], "SECTOR 3", cardBuf[2], cardSty[2]);
+        for (int i = 0; i < 3; ++i) {
+            static const char* kSectorLabels[3] = { "SECTOR 1", "SECTOR 2", "SECTOR 3" };
+            drawCross(bIdx[i]);
+            drawSectorCard(bIdx[i], bSide[i], kSectorLabels[i], cardBuf[i], cardSty[i],
+                           cardRef[i], cardDelta[i], cardDeltaV[i]);
+        }
 
         // Start/finish checkered flag
         ImVec2 sf = toScreen(g_smooth_track_points.front().position);
@@ -575,17 +741,33 @@ void RenderTrackMapWindow(const ProContext& ctx, int32_t vehicleId,
         // Позиция — из снимка: точка на карте обязана стоять там же, где машина
         // на главном экране, в том числе посреди перемотки повтора.
         double vx = 0, vy = 0; bool found = false;
+        glm::vec2 rOff{ 0.0f, 0.0f };
         {
             const std::shared_ptr<const world::Snapshot> snapshot = world::current();
             if (const world::VehicleView* v = world::find(*snapshot, vehicleId)) {
-                const glm::vec2 rOff = v->apply_track_render_offset
-                                         ? getTrackRenderOffset()
-                                         : glm::vec2(0.0f, 0.0f);
+                rOff = v->apply_track_render_offset ? getTrackRenderOffset()
+                                                    : glm::vec2(0.0f, 0.0f);
                 vx = v->x + rOff.x;
                 vy = v->y + rOff.y;
                 found = true;
             }
         }
+        // Вторая машина на карте — образец в ТУ ЖЕ СЕКУНДУ круга. Расстояние
+        // между точками и есть накопленный разрыв, видимый без единой цифры.
+        // Сравнивать по одному и тому же МЕСТУ трассы бессмысленно: место одно,
+        // и точки легли бы друг на друга.
+        {
+            LapInfo ghost;
+            if (found && ReferenceGhost(vehicleId, ghost)) {
+                // То же смещение кадра, что и у самой машины: у образца оно
+                // обязано совпадать, иначе призрак поедет мимо трассы.
+                ImVec2 g = toScreen({ (float)ghost.x + rOff.x, (float)ghost.y + rOff.y });
+                float  gr = fmaxf(mapH * 0.013f, 6.f);
+                dl->AddCircleFilled(g, gr * 0.5f, COL_REF_DIM);
+                dl->AddCircle      (g, gr, COL_REF, 20, 2.f);
+            }
+        }
+
         if (found) {
             // Plain gold dot — the driver's name lives in the sector widgets.
             ImVec2 dot = toScreen({(float)vx, (float)vy});
@@ -601,7 +783,7 @@ void RenderTrackMapWindow(const ProContext& ctx, int32_t vehicleId,
     // ── Bottom status strip — bare cells (no container/border), centered ───────
     const char* secT[3] = { secBuf[0], secBuf[1], secBuf[2] };
     DrawStatusStrip(dl, ctx, base.x + mapW * 0.5f, base.y + mapH + TOP_GAP, ss,
-                    dnum, dname.c_str(), secT, secSty, lapBuf);
+                    dnum, dname.c_str(), secT, secSty, lapBuf, cmpRow);
 
     ImGui::End();
     ImGui::PopStyleColor(); // WindowBg override

@@ -29,7 +29,6 @@
 #include <thread>
 
 extern std::map<int32_t, Vehicle> g_vehicles;
-extern std::mutex g_vehicles_mutex;
 extern std::atomic<bool> g_is_map_loaded;
 extern RaceManager* g_race_manager;
 
@@ -68,6 +67,10 @@ namespace
     // производную от хода заезда историю (журнал событий PRO), понимают, что
     // накопленное относится к ещё не проигранной части записи.
     std::atomic<uint64_t> g_rewind_revision{ 0 };
+
+    // Растёт на каждом ОТКРЫТИИ и каждом ЗАКРЫТИИ записи. По нему панели
+    // узнают, что накопленное у них состояние относится к другой записи.
+    std::atomic<uint64_t> g_session_revision{ 0 };
 
     std::atomic<bool> g_rebuilding{ false };
     std::string g_file_name;
@@ -406,69 +409,110 @@ namespace
     // ------------------------------------------------------------------------
     // ПРОГРЕВ: журнал записи (см. VehicleJournal в заголовке)
     // ------------------------------------------------------------------------
-    std::map<int32_t, VehicleJournal> g_journal;
+    // Журнал отдаётся наружу владеющим указателем (см. replay_journal), поэтому
+    // здесь хранится тоже владеющим: панель, взявшая копию перед закрытием
+    // записи, обязана дочитать её до конца кадра без висячего указателя.
+    // Собственный мьютекс — САМЫЙ ВНУТРЕННИЙ в порядке захвата: под ним не
+    // берётся больше ничего.
+    std::mutex g_journal_mutex;
+    std::map<int32_t, std::shared_ptr<const VehicleJournal>> g_journal;
     std::atomic<bool> g_journal_pending{ false };
 
-    /// Прогоняет запись целиком и снимает с машин журнал заезда, после чего
-    /// возвращает запись в начало.
-    ///
-    /// Прогон идёт КУСКАМИ по времени записи, и между кусками зовётся тот же
-    /// RaceManager::Update, что и в живом кадре. Иначе никак: история сэмплов
-    /// рождается именно там, и только такой прогон даёт ровно те же данные, что
-    /// даст обычное воспроизведение. Шаг равен периоду выборки телеметрии —
-    /// крупнее проредил бы историю, мельче добавил бы работы впустую.
-    void build_journal()
+    // ------------------------------------------------------------------------
+    // СОСТОЯНИЕ ПРОГРЕВА (см. replay_build_journal_if_pending в заголовке)
+    //
+    // Прогон записи линеен по её длине, и целиком в одном кадре он держал окно
+    // замершим на всё время прогона. Поэтому прогон разложен на кадры: здесь
+    // лежит место, на котором он остановился в прошлом кадре.
+    // ------------------------------------------------------------------------
+    struct JournalBuild
     {
-        if (!g_reader || !g_race_manager)
+        bool     running        = false;
+        size_t   total          = 0;
+        size_t   index          = 0;   // следующая запись к разбору
+        size_t   from           = 0;   // начало ещё не отданного куска
+        uint32_t next_update_ms = 0;
+        std::chrono::steady_clock::time_point started{};
+    };
+    JournalBuild       g_build;
+    std::atomic<bool>  g_journal_building{ false };
+    std::atomic<float> g_journal_progress{ 0.0f };
+
+    // Шаг прогона по времени записи. Между кусками зовётся тот же
+    // RaceManager::Update, что и в живом кадре: история сэмплов рождается
+    // именно там, и только такой прогон даёт ровно те же данные, что даст
+    // обычное воспроизведение. Крупнее проредил бы историю, мельче добавил бы
+    // работы впустую.
+    constexpr uint32_t JOURNAL_CHUNK_MS      = 100;
+    constexpr float    JOURNAL_CHUNK_SECONDS = JOURNAL_CHUNK_MS / 1000.0f;
+
+    /// Сколько времени кадра отдаём прогреву. Кадр на 60 Гц длится 16.7 мс;
+    /// оставшегося хватает, чтобы окно рисовалось и отвечало на ввод.
+    constexpr std::chrono::milliseconds JOURNAL_FRAME_BUDGET{ 8 };
+
+    /// Начинает прогрев: возвращает запись в начало и открывает сессию.
+    void journal_build_begin()
+    {
+        g_build = JournalBuild{};
+        g_build.total = g_reader->record_count();
+        if (g_build.total == 0)
             return;
 
-        const size_t total = g_reader->record_count();
-        if (total == 0)
-            return;
-
-        constexpr uint32_t CHUNK_MS = 100;
-        constexpr float    CHUNK_SECONDS = CHUNK_MS / 1000.0f;
-
-        const auto started = std::chrono::steady_clock::now();
+        g_build.started        = std::chrono::steady_clock::now();
+        g_build.next_update_ms = g_reader->record_elapsed_ms(0) + JOURNAL_CHUNK_MS;
 
         reset_pipeline_state();
         g_race_manager->StartSession();
 
-        // Мьютекс машин держим на весь прогон: состояние трогается десятки тысяч
-        // раз, и брать его на каждый пакет незачем.
-        enter_vehicles_bulk_section();
+        g_build.running = true;
+        g_journal_building.store(true);
+        g_journal_progress.store(0.0f);
+        g_pipeline_warmup.store(true);
 
-        size_t   from = 0;
-        uint32_t next_update_ms = g_reader->record_elapsed_ms(0) + CHUNK_MS;
-        for (size_t i = 0; i < total; ++i)
+        // Пока идёт прогрев, состояние гонки собрано по ЧАСТИ записи. Тот же
+        // флаг, что и у отката: потребители держат последний целый кадр, а
+        // главный цикл не зовёт Update поверх нашего прогона.
+        g_rebuilding.store(true);
+        g_pipeline_rebuilding.store(true);
+    }
+
+    /// Снимает журнал с машин и возвращает запись в начало. Зовётся один раз,
+    /// когда прогон дошёл до конца.
+    void journal_build_finish()
+    {
+        std::map<int32_t, std::shared_ptr<const VehicleJournal>> built;
         {
-            if (g_reader->record_elapsed_ms(i) < next_update_ms)
-                continue;
+            VehiclesLock lock;
+            for (auto& [id, vehicle] : g_vehicles)
+            {
+                auto journal = std::make_shared<VehicleJournal>();
+                journal->lap_times     = vehicle.m_laps;
+                journal->best_lap_time = vehicle.m_best_lap_time;
+                journal->best_lap_id   = vehicle.bestlapID;
+                journal->name          = vehicle.name;
 
-            // Ключевые кадры снимаем прямо здесь: состояние на этом проходе то
-            // же, что даст воспроизведение, поэтому перемотка назад работает по
-            // снимкам с первой секунды, а не после первого просмотра.
-            feed_range(from, i, /*capture=*/true);
-            g_race_manager->Update(CHUNK_SECONDS);
+                // Историю ЗАБИРАЕМ, а не копируем. Сразу после этого машины
+                // сбрасываются (reset_pipeline_state ниже), поэтому копия
+                // была бы чистым удвоением: час заезда на пяти машинах — это
+                // десятки мегабайт, которые живут в памяти дважды ровно до
+                // конца этой функции.
+                for (auto& [lap_number, session] : vehicle.laps)
+                    journal->lap_samples[lap_number] = std::move(session.samples);
 
-            from = i;
-            next_update_ms = g_reader->record_elapsed_ms(i) + CHUNK_MS;
+                built.emplace(id, std::move(journal));
+            }
         }
-        feed_range(from, total, /*capture=*/true);
-        g_race_manager->Update(CHUNK_SECONDS);
 
-        g_journal.clear();
-        for (const auto& [id, vehicle] : g_vehicles)
+        const size_t vehicles = built.size();
         {
-            VehicleJournal& journal = g_journal[id];
-            journal.lap_times     = vehicle.m_laps;
-            journal.best_lap_time = vehicle.m_best_lap_time;
-            journal.best_lap_id   = vehicle.bestlapID;
-            for (const auto& [lap_number, session] : vehicle.laps)
-                journal.lap_samples[lap_number] = session.samples;
+            std::lock_guard<std::mutex> lock(g_journal_mutex);
+            g_journal = std::move(built);
         }
 
-        leave_vehicles_bulk_section();
+        // Публикацию снимка возвращаем ДО сброса: сброс публикует пустой мир, и
+        // именно он должен уйти на экран как «после» — с него запись и
+        // начинается.
+        g_pipeline_warmup.store(false);
 
         // Возвращаем запись в начало: прогрев — служебный прогон, оператор
         // должен получить запись нетронутой, с первой секунды.
@@ -479,9 +523,71 @@ namespace
         telemetryResetInterpolationState();
 
         const double seconds =
-            std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
+            std::chrono::duration<double>(std::chrono::steady_clock::now() - g_build.started).count();
+
+        const size_t records = g_build.total;
+
+        g_build = JournalBuild{};
+        g_journal_progress.store(1.0f);
+        g_journal_building.store(false);
+        g_rebuilding.store(false);
+        g_pipeline_rebuilding.store(false);
+
         std::cout << "[REPLAY] Journal built in " << seconds << "s: "
-                  << g_journal.size() << " vehicles, " << total << " records" << std::endl;
+                  << vehicles << " vehicles, " << records << " records" << std::endl;
+    }
+
+    /// Один кадр прогрева. Отдаёт записи кусками, пока не кончится бюджет кадра.
+    void journal_build_step()
+    {
+        const auto deadline = std::chrono::steady_clock::now() + JOURNAL_FRAME_BUDGET;
+
+        {
+            // Мьютекс машин держим на весь кусок: состояние трогается тысячи
+            // раз, и брать его на каждый пакет незачем. Между кадрами он
+            // отпущен — панели читают согласованное состояние, а флаг
+            // перестройки говорит им, что показывать его ещё рано.
+            enter_vehicles_bulk_section();
+
+            while (g_build.index < g_build.total && !g_stop_requested.load())
+            {
+                const size_t i = g_build.index++;
+                if (g_reader->record_elapsed_ms(i) < g_build.next_update_ms)
+                    continue;
+
+                // Ключевые кадры снимаем прямо здесь: состояние на этом проходе
+                // то же, что даст воспроизведение, поэтому перемотка назад
+                // работает по снимкам с первой секунды, а не после первого
+                // просмотра.
+                feed_range(g_build.from, i, /*capture=*/true);
+                g_race_manager->Update(JOURNAL_CHUNK_SECONDS);
+
+                g_build.from           = i;
+                g_build.next_update_ms = g_reader->record_elapsed_ms(i) + JOURNAL_CHUNK_MS;
+
+                if (std::chrono::steady_clock::now() >= deadline)
+                    break;
+            }
+
+            const bool done = g_build.index >= g_build.total || g_stop_requested.load();
+            if (done)
+            {
+                // Хвост записи после последней контрольной точки.
+                feed_range(g_build.from, g_build.total, /*capture=*/true);
+                g_race_manager->Update(JOURNAL_CHUNK_SECONDS);
+            }
+
+            leave_vehicles_bulk_section();
+
+            g_journal_progress.store(g_build.total > 0
+                ? static_cast<float>(static_cast<double>(g_build.index) / g_build.total)
+                : 1.0f);
+
+            if (!done)
+                return;
+        }
+
+        journal_build_finish();
     }
 
     /// Ближайший снимок НЕ ПОЗЖЕ target. nullptr, если такого ещё нет.
@@ -560,16 +666,24 @@ namespace
             // прогон этих же пакетов даёт ровно то же, что и обычная игра.
             // Попутно снимаем ключевые кадры: назад через этот участок пойдут
             // уже по снимкам, а не прогоном записи с начала.
+            //
+            // ПОД ТЕМ ЖЕ ПАКЕТНЫМ УЧАСТКОМ, ЧТО И ОТКАТ. Асимметрии здесь быть
+            // не должно: без него мьютекс машин брался и отпускался на каждом
+            // пакете внутри ingest, и прыжок на минуту записи открывал тысячи
+            // окон, в каждом из которых панель могла застать половину
+            // перестроенного состояния. Читателю положено увидеть только «до»
+            // и «после» — в обе стороны одинаково.
+            enter_vehicles_bulk_section();
+
             feed_range(current, target, /*capture=*/true);
 
             // Публикуем сами, а не ждём Update: перемотка обязана обновлять
             // экран одинаково в обе стороны и не зависеть от того, дошёл ли до
             // Update главный цикл.
             if (g_race_manager)
-            {
-                VehiclesLock lock;
                 g_race_manager->PublishPositionsOnly();
-            }
+
+            leave_vehicles_bulk_section();
         }
         else
         {
@@ -675,7 +789,11 @@ namespace
                 timing_valid = false;
             }
 
-            if (g_paused.load())
+            // Пока идёт прогрев, запись прогоняет главный поток кусками по
+            // кадрам, и позиция принадлежит ему. Подать сюда хоть один пакет
+            // значило бы вмешаться в прогон и получить журнал, не совпадающий
+            // с воспроизведением.
+            if (g_paused.load() || g_journal_building.load())
             {
                 std::this_thread::sleep_for(IDLE_SLEEP);
                 timing_valid = false;
@@ -850,7 +968,19 @@ bool replay_open(const std::filesystem::path& path)
         g_keyframe_interval_ms = KEYFRAME_BASE_INTERVAL_MS;
     }
 
-    g_journal.clear();
+    {
+        std::lock_guard<std::mutex> lock(g_journal_mutex);
+        g_journal.clear();
+    }
+    g_build = JournalBuild{};
+    g_journal_building.store(false);
+    g_journal_progress.store(0.0f);
+    g_pipeline_warmup.store(false);
+
+    // Открылась ДРУГАЯ запись: всё, что панели накопили по прошлой (выбранный
+    // круг, выбранная машина, приближение графика, журнал событий), к этой
+    // отношения не имеет. Отсюда они об этом и узнают.
+    g_session_revision.fetch_add(1);
 
     // Повтор активен УЖЕ ЗДЕСЬ, до сессии и до прогрева. По этому признаку
     // StartSession не открывает журнал записи (иначе вышла бы запись записи), а
@@ -898,7 +1028,21 @@ void replay_close()
     g_active.store(false);
     g_position_smoothing_enabled.store(true);   // живой заезд снова сглаживается
     g_journal_pending.store(false);
-    g_journal.clear();
+
+    // Прогрев мог не доиграть: закрыть запись можно и посреди него. Снимаем
+    // флаги, которые он поднял, иначе пайплайн навсегда остался бы помеченным
+    // перестраиваемым и главный цикл перестал бы звать Update.
+    g_build = JournalBuild{};
+    g_journal_building.store(false);
+    g_journal_progress.store(0.0f);
+    g_pipeline_warmup.store(false);
+    g_rebuilding.store(false);
+    g_pipeline_rebuilding.store(false);
+
+    {
+        std::lock_guard<std::mutex> lock(g_journal_mutex);
+        g_journal.clear();
+    }
     {
         std::lock_guard<std::mutex> lock(g_mutex);
         g_reader.reset();
@@ -928,6 +1072,11 @@ void replay_close()
         // его, и без публикации они держали бы последний кадр записи.
         if (g_race_manager)
             g_race_manager->ResetSession();
+
+        // Запись закрыта — панелям это такая же смена, как и открытие другой:
+        // держать выбранный круг и приближение графика от заезда, которого
+        // больше нет на экране, не за чем.
+        g_session_revision.fetch_add(1);
     }
 
     std::cout << "[REPLAY] Closed" << std::endl;
@@ -938,34 +1087,82 @@ bool replay_is_active()
     return g_active.load();
 }
 
-const VehicleJournal* replay_journal(int32_t vehicle_id)
+std::shared_ptr<const VehicleJournal> replay_journal(int32_t vehicle_id)
 {
     if (!g_active.load())
         return nullptr;
 
+    std::lock_guard<std::mutex> lock(g_journal_mutex);
     const auto found = g_journal.find(vehicle_id);
-    return (found == g_journal.end()) ? nullptr : &found->second;
+    return (found == g_journal.end()) ? nullptr : found->second;
+}
+
+std::vector<int32_t> replay_journal_vehicles()
+{
+    std::vector<int32_t> ids;
+    if (!g_active.load())
+        return ids;
+
+    std::lock_guard<std::mutex> lock(g_journal_mutex);
+    ids.reserve(g_journal.size());
+    for (const auto& [id, journal] : g_journal)
+        ids.push_back(id);
+    return ids;
+}
+
+bool replay_journal_is_building()
+{
+    return g_journal_building.load();
+}
+
+float replay_journal_progress()
+{
+    return g_journal_progress.load();
 }
 
 void replay_build_journal_if_pending()
 {
-    if (!g_active.load() || !g_journal_pending.load())
+    if (!g_active.load())
+        return;
+
+    const bool building = g_journal_building.load();
+    if (!g_journal_pending.load() && !building)
+        return;
+
+    if (g_race_manager == nullptr)
         return;
 
     // Круги считаются от линии старт/финиша, а её выставляет отрисовка трассы
     // (Render.cpp). На кадре открытия записи трасса ещё только загружена, и
     // линии может не быть — тогда прогон не нашёл бы ни одного круга. Ждём
     // столько кадров, сколько нужно: проверка дешёвая.
-    glm::vec2 line_start, line_end;
-    if (g_race_manager == nullptr || !g_race_manager->GetStartFinishLine(line_start, line_end))
-        return;
-
-    g_journal_pending.store(false);
+    //
+    // Спрашиваем ТОЛЬКО ПЕРЕД НАЧАЛОМ. Начатый прогрев обязан дойти до конца:
+    // пропади линия посреди него (трассу перезагрузили), проверка на каждом
+    // кадре подвесила бы его навсегда — а с ним и флаг перестройки, по
+    // которому главный цикл перестаёт звать Update. Приложение осталось бы
+    // живым с виду и мёртвым по сути.
+    if (!building)
+    {
+        glm::vec2 line_start, line_end;
+        if (!g_race_manager->GetStartFinishLine(line_start, line_end))
+            return;
+    }
 
     // Тот же мьютекс, что и у перемотки: прогон переставляет позицию записи, и
-    // подача пакетов потоком проигрывателя не должна с ним пересечься.
+    // подача пакетов потоком проигрывателя не должна с ним пересечься. Берём и
+    // отпускаем ЕГО КАЖДЫЙ КАДР — держать мьютекс между кадрами нельзя.
     std::lock_guard<std::mutex> lock(g_seek_mutex);
-    build_journal();
+
+    if (!g_build.running)
+    {
+        g_journal_pending.store(false);
+        journal_build_begin();
+        if (!g_build.running)
+            return;   // пустая запись — строить нечего
+    }
+
+    journal_build_step();
 }
 
 std::string replay_last_error()
@@ -1019,11 +1216,21 @@ uint64_t replay_rewind_revision()
     return g_rewind_revision.load();
 }
 
+uint64_t replay_session_revision()
+{
+    return g_session_revision.load();
+}
+
 void replay_apply_pending_seek()
 {
     // Дешёвая проверка без блокировок: зовут каждый кадр, а перемотка идёт
     // редко.
     if (!g_active.load())
+        return;
+
+    // Прогрев владеет позицией записи, пока не закончится. Накопленный сдвиг не
+    // теряется — он применится первым же кадром после прогрева.
+    if (g_journal_building.load())
         return;
 
     const bool has_target = g_has_seek_target.load();
@@ -1092,6 +1299,7 @@ ReplayStatus replay_status()
     status.position = g_position.load();
     status.total = g_reader->record_count();
     status.duration_ms = g_reader->duration_ms();
+    status.first_utc_ms = status.total > 0 ? g_reader->record_utc_ms(0) : 0;
     status.position_ms = g_reader->record_elapsed_ms(
         status.position < status.total ? status.position : (status.total > 0 ? status.total - 1 : 0));
     status.file_name = g_file_name;

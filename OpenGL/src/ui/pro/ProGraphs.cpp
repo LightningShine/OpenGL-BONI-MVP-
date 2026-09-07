@@ -1,4 +1,5 @@
 #include "ProGraphs.h"
+#include "../../core/WorldSnapshot.h"
 #include "../../network/ReplayPlayer.h"
 #include "../../vehicle/Vehicle.h"
 #include <imgui.h>
@@ -10,7 +11,6 @@
 #include <vector>
 
 extern std::map<int32_t, Vehicle> g_vehicles;
-extern std::mutex g_vehicles_mutex;
 
 // ============================================================================
 // ГРАФИКИ КРУГА (в духе MoTeC i2)
@@ -48,9 +48,18 @@ struct Sample
     float    g_long = 0.f;  // продольная перегрузка, g (плюс — разгон)
     float    g_lat = 0.f;   // поперечная перегрузка, g
     uint32_t utc = 0;       // метка источника — абсолютный адрес момента в записи
+
+    // ОТСТАВАНИЕ ОТ ОБРАЗЦА в этой точке круга, секунды (плюс — медленнее).
+    //
+    // Считается по дистанции, а не по времени: «на этом месте трассы я был на
+    // 0.31 с позже» — единственная форма, в которой сравнение двух кругов
+    // отвечает на вопрос ГДЕ потеряно время. Разность времён кругов говорит
+    // только СКОЛЬКО, а этого мало.
+    float    delta = 0.f;
+    bool     has_delta = false;
 };
 
-enum class ChannelId { Speed, GLong, GLat, GSum, Brake, Accel };
+enum class ChannelId { Speed, GLong, GLat, GSum, Brake, Accel, Delta };
 
 struct Channel
 {
@@ -77,9 +86,10 @@ const Channel CHANNELS[] = {
     { ChannelId::GSum,  "Gr.GSum",  "G SUM",  "g",         "%.2f",  IM_COL32(190, 140, 235, 255), false, 1.f,  0.5f },
     { ChannelId::Brake, "Gr.Brake", "BRAKE",  "g",         "%.2f",  COL_RED,                    false,  1.f,  0.5f },
     { ChannelId::Accel, "Gr.Accel", "ACCEL",  "m/s\xc2\xb2", "%+.1f", IM_COL32(235, 195, 100, 255), true, 4.f,  2.f },
+    // Дорожка сравнения. Рисуется, только когда выбран круг-образец: без него
+    // ей неоткуда взяться, и пустая полоса на полэкрана только мешала бы.
+    { ChannelId::Delta, "Gr.Delta", "DELTA",  "s",         "%+.3f", IM_COL32(0xDA, 0xA5, 0x40, 255), true, 0.5f, 0.25f },
 };
-constexpr int CHANNEL_COUNT = IM_ARRAYSIZE(CHANNELS);
-
 float channel_value(ChannelId id, const Sample& s)
 {
     switch (id) {
@@ -89,6 +99,7 @@ float channel_value(ChannelId id, const Sample& s)
         case ChannelId::GSum:  return sqrtf(s.g_long * s.g_long + s.g_lat * s.g_lat);
         case ChannelId::Brake: return s.g_long < 0.f ? -s.g_long : 0.f;
         case ChannelId::Accel: return s.accel;
+        case ChannelId::Delta: return s.delta;
     }
     return 0.f;
 }
@@ -99,10 +110,6 @@ float channel_value(ChannelId id, const Sample& s)
 // соединять их линией — значит нарисовать езду, которой не было.
 constexpr float MAX_GAP_SECONDS = 0.6f;
 constexpr float MAX_GAP_DIST    = 0.05f;
-
-// Мельче этого перемотку не запрашиваем: один тик записи всё равно короче не
-// шагает, а дрожание мыши иначе дёргало бы позицию на каждом кадре.
-constexpr float MIN_SEEK_SECONDS = telemetry::REPLAY_TICK_MS / 1000.f;
 
 // Самое узкое окно просмотра — 2 % круга. Дальше приближать нечего: сэмплы
 // идут десять раз в секунду, и на таком масштабе между соседними точками уже
@@ -159,6 +166,29 @@ void copy_samples(const std::vector<LapInfo>& src, size_t count, std::vector<Sam
         out.push_back(to_sample(src[i]));
 }
 
+/// Переводит готовый образец (Pro::Reference) в дорожку графика и считает
+/// отставание разбираемого круга от него в каждой точке.
+///
+/// Дорожка образца строится из ТЕХ ЖЕ замеров, что показывают остальные панели:
+/// второго чтения истории нет, копия снята один раз за кадр в ProView.
+void apply_reference(LapTrace& lap, std::vector<Sample>& ref_out)
+{
+    ref_out.clear();
+    const RefTrace& reference = Reference();
+    if (!reference.valid) return;
+
+    ref_out.reserve(reference.samples.size());
+    for (const LapInfo& info : reference.samples)
+        ref_out.push_back(to_sample(info));
+
+    LapInfo at;
+    for (Sample& s : lap.samples) {
+        if (!reference.at(s.dist, at)) continue;
+        s.delta     = s.time - at.timefromstart;
+        s.has_delta = true;
+    }
+}
+
 /// Снимает историю круга, выбранного для разбора.
 LapTrace read_lap(int32_t vehicleId)
 {
@@ -168,7 +198,7 @@ LapTrace read_lap(int32_t vehicleId)
     // ходит в RaceManager, а тот берёт тот же мьютекс.
     const int analysis_lap = AnalysisLap(vehicleId);
 
-    std::lock_guard<std::mutex> lk(g_vehicles_mutex);
+    VehiclesLock lk;
     const auto it = g_vehicles.find(vehicleId);
     if (it == g_vehicles.end()) return lap;
 
@@ -188,7 +218,8 @@ LapTrace read_lap(int32_t vehicleId)
     // что начавшийся круг выглядел бы пустым, хотя в файле он есть весь, а
     // ползунок нельзя было бы утащить туда, где ещё не были. Живой заезд читает
     // историю самой машины — там будущего просто не существует.
-    const telemetry::VehicleJournal* journal = telemetry::replay_journal(vehicleId);
+    const std::shared_ptr<const telemetry::VehicleJournal> journal =
+        telemetry::replay_journal(vehicleId);
 
     if (journal != nullptr) {
         if (const auto current = journal->lap_samples.find(lap.lap_number);
@@ -298,6 +329,14 @@ void RenderGraphsWindow(const ProContext& ctx, int32_t vehicleId, ImVec2 vpSz, f
     static float s_view_min  = 0.f;
     static float s_view_span = 1.f;
 
+    // Приближение относится к ТОЙ записи, на которой его выставили. Открылась
+    // другая — возвращаем полотно к целому кругу: чужое окно просмотра на новой
+    // записи показывает случайный кусок, и понять, что он случайный, нельзя.
+    {
+        static uint64_t s_session_seen = 0;
+        if (ReplaySessionChanged(s_session_seen)) { s_view_min = 0.f; s_view_span = 1.f; }
+    }
+
     const float hgap = ui_scale::points(28.f);   // место под крестик закрытия
 
     bool axisClicked = false;
@@ -310,12 +349,24 @@ void RenderGraphsWindow(const ProContext& ctx, int32_t vehicleId, ImVec2 vpSz, f
                                          axisX - ui_scale::points(14.f), channelsClicked);
     if (channelsClicked) ImGui::OpenPopup("##graphChannels");
 
+    float nextX = channelsX;
+
     // Кнопка «весь круг» — только когда график приближен: у неё есть смысл
     // ровно тогда, когда есть что возвращать на место.
     if (s_view_span < 1.f) {
         bool fitClicked = false;
-        HeaderButton(ctx, "FIT", true, false, channelsX - ui_scale::points(14.f), fitClicked);
+        nextX = HeaderButton(ctx, "FIT", true, false, nextX - ui_scale::points(14.f), fitClicked);
         if (fitClicked) { s_view_min = 0.f; s_view_span = 1.f; }
+    }
+
+    // Выход из сравнения. Квадратики снимаются только со своей строки, то есть
+    // из списка кругов того гонщика, у которого стоят; уйдя к третьему
+    // участнику, оператор оказывался заперт в сравнении, следов которого на его
+    // экране уже нет. Здесь оно снимается откуда угодно.
+    if (ComparisonActive()) {
+        bool clearClicked = false;
+        HeaderButton(ctx, "CLEAR", true, false, nextX - ui_scale::points(14.f), clearClicked);
+        if (clearClicked) ClearComparison();
     }
 
     ImGui::SetNextWindowPos({channelsX - ui_scale::points(8.f), wp.y + header_h()});
@@ -389,16 +440,32 @@ void RenderGraphsWindow(const ProContext& ctx, int32_t vehicleId, ImVec2 vpSz, f
     const bool dragging = plotActive || stripActive;
     const bool clicked  = plotClicked || stripClicked;
 
-    const LapTrace lap = read_lap(vehicleId);
+    LapTrace lap = read_lap(vehicleId);
+
+    // ── Сторона сравнения ────────────────────────────────────────────────────
+    // Белая кривая поверх цветной — это круг-образец (REF). Отставание от него
+    // считается здесь же и уходит в дорожку DELTA.
+    // Статический буфер: круг-образец меняется редко, а вектор на несколько
+    // тысяч замеров переаллоцировался бы каждый кадр. clear() держит ёмкость.
+    // Панель одна и рисуется в одном потоке, поэтому общее состояние безопасно.
+    static std::vector<Sample> ref_samples;
+    apply_reference(lap, ref_samples);
+    const RefTrace& reference   = Reference();
+    const bool      comparing   = ComparisonActive() && !ref_samples.empty();
 
     // ── Ось X ────────────────────────────────────────────────────────────────
     // По времени ось покрывает круг ЦЕЛИКОМ: и то, что уже записано, и круг-
     // образец на случай, когда круг только начался. Иначе ось росла бы вместе с
     // кругом — ползунок некуда тащить вперёд, — а на повторе, где круг уже
     // проеден весь, его хвост уезжал бы за правый край.
+    // Ось по времени обязана вместить и круг-образец: он бывает длиннее
+    // разбираемого, и без запаса его хвост уезжал бы за правый край.
+    const float ref_axis_time =
+        comparing ? fmaxf(reference.lap_time, ref_samples.back().time) : 0.f;
     const float time_span = nice_span(
         fmaxf(fmaxf(fmaxf(lap.now_time, lap.ref_lap_time), lap.lap_time),
-              lap.samples.empty() ? 0.f : lap.samples.back().time), 5.f, 15.f);
+              fmaxf(ref_axis_time, lap.samples.empty() ? 0.f : lap.samples.back().time)),
+        5.f, 15.f);
 
     // Положение на ПОЛНОЙ оси круга (0..1) — общая мера для графика, обзорной
     // полосы и перемотки. Приближение живёт отдельно, в окне просмотра.
@@ -464,6 +531,21 @@ void RenderGraphsWindow(const ProContext& ctx, int32_t vehicleId, ImVec2 vpSz, f
 
     // Ползунок: где мы сейчас в круге. Нужен и отрисовке, и перемотке — на нём
     // стоит проверка захвата, поэтому считаем его до того и другого.
+    // Время в точке оси. По оси времени это она сама; по оси дистанции время
+    // берём у ближайшего замера круга — подписи концов и центра везде в
+    // СЕКУНДАХ, потому что доля круга ни о чём не говорит: «75 %» не отвечает
+    // ни на один вопрос, который задают графику.
+    auto time_at_axis = [&](float axis01) -> float {
+        if (s_axis == Axis::Time) return axis01 * time_span;
+        const Sample* best = nullptr;
+        float best_distance = FLT_MAX;
+        for (const Sample& sample : lap.samples) {
+            const float d = fabsf(sample.dist - axis01);
+            if (d < best_distance) { best_distance = d; best = &sample; }
+        }
+        return best != nullptr ? best->time : 0.f;
+    };
+
     const float headX      = plotMin.x + (head01 - s_view_min) / s_view_span * plotW;
     const float stripHeadX = strip_x_of(head01);
     const float cursorX    = ImGui::GetIO().MousePos.x;
@@ -505,9 +587,16 @@ void RenderGraphsWindow(const ProContext& ctx, int32_t vehicleId, ImVec2 vpSz, f
     dl->PushClipRect(base, {base.x + avail.x, base.y + plotH}, true);
 
     // ── Дорожки ──────────────────────────────────────────────────────────────
+    // Дорожка DELTA существует только при выбранном образце: без него у неё нет
+    // данных, а полоса всё равно съедала бы высоту у остальных.
+    const auto lane_enabled = [&](const Channel& ch) {
+        if (!PanelVisible(ch.key)) return false;
+        return ch.id != ChannelId::Delta || comparing;
+    };
+
     int shown = 0;
     for (const Channel& ch : CHANNELS)
-        if (PanelVisible(ch.key)) ++shown;
+        if (lane_enabled(ch)) ++shown;
 
     // Курсор мыши: под ним показывается значение из истории, а не текущее —
     // график для того и нужен, чтобы посмотреть, что было в другой момент.
@@ -520,7 +609,10 @@ void RenderGraphsWindow(const ProContext& ctx, int32_t vehicleId, ImVec2 vpSz, f
 
         int lane = 0;
         for (const Channel& ch : CHANNELS) {
-            if (!PanelVisible(ch.key)) continue;
+            if (!lane_enabled(ch)) continue;
+
+            // На дорожке DELTA образца нет: она сама и есть сравнение.
+            const bool lane_has_ref = comparing && ch.id != ChannelId::Delta;
 
             const float top = plotMin.y + lane * laneH;
             const float bot = top + laneH;
@@ -534,9 +626,14 @@ void RenderGraphsWindow(const ProContext& ctx, int32_t vehicleId, ImVec2 vpSz, f
             const float bandH   = bandBot - bandTop;
             if (bandH < 2.f) continue;
 
+            // Шкала ОБЩАЯ на обе кривые: разные шкалы делают сравнение
+            // бессмысленным — кривые совпадали бы на глаз при разных величинах.
             float peak = 0.f;
             for (const Sample& s : lap.samples)
                 peak = fmaxf(peak, fabsf(channel_value(ch.id, s)));
+            if (lane_has_ref)
+                for (const Sample& s : ref_samples)
+                    peak = fmaxf(peak, fabsf(channel_value(ch.id, s)));
             const float span = nice_span(peak, ch.span_step, ch.min_span);
 
             auto y_of = [&](float value) {
@@ -549,10 +646,32 @@ void RenderGraphsWindow(const ProContext& ctx, int32_t vehicleId, ImVec2 vpSz, f
             const float zeroY = ch.bipolar ? y_of(0.f) : bandBot;
             dl->AddLine({plotMin.x, zeroY}, {plotMax.x, zeroY}, IM_COL32(58, 58, 58, 255), 1.f);
 
+            // Образец рисуем ПЕРВЫМ, но той же толщины и в полную силу цвета:
+            // тонкая полупрозрачная линия терялась на дорожке, а её для того и
+            // рисуют, чтобы видеть. Поверх ложится разбираемый круг — он
+            // главный на экране, и перекрывать его белым нельзя.
+            if (lane_has_ref) {
+                TraceBuilder ref_trace(dl, COL_REF, fmaxf(1.4f * z, 1.f));
+                for (size_t i = 0; i < ref_samples.size(); ++i) {
+                    const Sample& s = ref_samples[i];
+                    if (i > 0) {
+                        const Sample& prev = ref_samples[i - 1];
+                        if (s.time - prev.time > MAX_GAP_SECONDS ||
+                            s.dist - prev.dist > MAX_GAP_DIST)
+                            ref_trace.flush();
+                    }
+                    ref_trace.add({x_of(s.time, s.dist), y_of(channel_value(ch.id, s))});
+                }
+                ref_trace.flush();
+            }
+
             // Кривая
             TraceBuilder trace(dl, ch.color, fmaxf(1.4f * z, 1.f));
             for (size_t i = 0; i < lap.samples.size(); ++i) {
                 const Sample& s = lap.samples[i];
+                // Там, где образец круг не покрывает, отставание не измерено —
+                // и линию туда вести нельзя: ноль читался бы как «шли вровень».
+                if (ch.id == ChannelId::Delta && !s.has_delta) { trace.flush(); continue; }
                 if (i > 0) {
                     const Sample& p = lap.samples[i - 1];
                     if (s.time - p.time > MAX_GAP_SECONDS || s.dist - p.dist > MAX_GAP_DIST)
@@ -571,11 +690,46 @@ void RenderGraphsWindow(const ProContext& ctx, int32_t vehicleId, ImVec2 vpSz, f
             // именно поэтому. Единица измерения в подписи всегда: «-0.42» без
             // «g» ничего не значит.
             char value_text[40] = "--";
-            if (const Sample* at = sample_at_x(lap.samples, hasCursor ? cursorX : headX,
-                                               sample_x)) {
+            char ref_text[48]    = "";
+            const float readX = hasCursor ? cursorX : headX;
+
+            if (const Sample* at = sample_at_x(lap.samples, readX, sample_x)) {
+                float shown_value = channel_value(ch.id, *at);
+
+                // Отставание в ТОЧКЕ ПРОСМОТРА берём из общей точки — той же,
+                // из которой его читает LAPTIME. Ближайший замер отстоит от
+                // точки просмотра на шаг выборки, и два числа на соседних
+                // панелях расходились ровно на него. Под курсором показываем
+                // сам замер: там разбирают конкретную точку кривой.
+                if (ch.id == ChannelId::Delta && !hasCursor) {
+                    float live = 0.f;
+                    if (ComparisonDelta(vehicleId, live)) shown_value = live;
+                }
+
                 char number[24];
-                snprintf(number, sizeof(number), ch.format, channel_value(ch.id, *at));
+                snprintf(number, sizeof(number), ch.format, shown_value);
                 snprintf(value_text, sizeof(value_text), "%s %s", number, ch.unit);
+
+                // Рядом со значением разбираемого круга — то же место образца и
+                // разница между ними. Без этих двух чисел белая кривая говорит
+                // «где-то тут медленнее», но не говорит НАСКОЛЬКО.
+                if (lane_has_ref) {
+                    if (const Sample* ref_at = sample_at_x(ref_samples, readX, sample_x)) {
+                        const float mine  = channel_value(ch.id, *at);
+                        const float other = channel_value(ch.id, *ref_at);
+
+                        // Разница — ОБРАЗЕЦ МИНУС СВОЁ, а не наоборот. Она стоит
+                        // рядом со значением образца и написана его цветом,
+                        // поэтому и говорить обязана про него: «REF 42.1 +9.6» —
+                        // у образца здесь на 9.6 больше. Обратный знак при том же
+                        // цвете читался ровно наоборот.
+                        char ref_number[24], delta_number[24];
+                        snprintf(ref_number,   sizeof(ref_number),   ch.format, other);
+                        snprintf(delta_number, sizeof(delta_number), "%+.2f", other - mine);
+                        snprintf(ref_text, sizeof(ref_text), "REF %s   %s",
+                                 ref_number, delta_number);
+                    }
+                }
             }
 
             // Подпись и значение центрируем в строке КАЖДОЕ по своему кеглю:
@@ -585,7 +739,13 @@ void RenderGraphsWindow(const ProContext& ctx, int32_t vehicleId, ImVec2 vpSz, f
 
             dl->AddText(lf, lSz, {plotMin.x + 2.f, labelY}, COL_LABEL, ch.label);
             const float labelW = lf->CalcTextSizeA(lSz, FLT_MAX, 0.f, ch.label).x;
-            dl->AddText(vf, vSz, {plotMin.x + 2.f + labelW + pad, valueY}, ch.color, value_text);
+            const float valueX = plotMin.x + 2.f + labelW + pad;
+            dl->AddText(vf, vSz, {valueX, valueY}, ch.color, value_text);
+
+            if (ref_text[0] != '\0') {
+                const float vw = vf->CalcTextSizeA(vSz, FLT_MAX, 0.f, value_text).x;
+                dl->AddText(lf, lSz, {valueX + vw + pad, labelY}, COL_REF, ref_text);
+            }
 
             // Верх шкалы у правого края — чтобы величину можно было прикинуть,
             // не наводя курсор.
@@ -632,22 +792,17 @@ void RenderGraphsWindow(const ProContext& ctx, int32_t vehicleId, ImVec2 vpSz, f
     // видеть, какой участок остался на экране.
     {
         const float ty = plotMax.y + (axisH - lSz) * 0.5f;
-        char left[24], right[24], middle[80];
+        char left[24], right[24], middle[160];
 
         const float view_hi = s_view_min + s_view_span;
-        if (s_axis == Axis::Time) {
-            snprintf(left,  sizeof(left),  "%.1f s", s_view_min * time_span);
-            snprintf(right, sizeof(right), "%.1f s", view_hi * time_span);
-        } else {
-            snprintf(left,  sizeof(left),  "%.0f %%", s_view_min * 100.f);
-            snprintf(right, sizeof(right), "%.0f %%", view_hi * 100.f);
-        }
+        snprintf(left,  sizeof(left),  "%.1f s", time_at_axis(s_view_min));
+        snprintf(right, sizeof(right), "%.1f s", time_at_axis(view_hi));
 
-        // Внутри круга подпись показывает точку записи, снаружи — сам круг:
-        // «0.00 s 0 %» на круге, где записи нет, читалось бы как позиция.
+        // Внутри круга подпись показывает точку записи, снаружи — время самого
+        // круга: ноль на круге, где записи нет, читался бы как позиция.
         char where[48];
         if (lap.at_playhead)
-            snprintf(where, sizeof(where), "%.2f s   %.0f %%", lap.now_time, lap.now_dist * 100.f);
+            snprintf(where, sizeof(where), "%.2f s", lap.now_time);
         else if (lap.lap_time > 0.f)
             snprintf(where, sizeof(where), "%.3f s", lap.lap_time);
         else
@@ -661,15 +816,69 @@ void RenderGraphsWindow(const ProContext& ctx, int32_t vehicleId, ImVec2 vpSz, f
 
         const float lw = lf->CalcTextSizeA(lSz, FLT_MAX, 0.f, left).x;
         const float rw = lf->CalcTextSizeA(lSz, FLT_MAX, 0.f, right).x;
+
         const float mw = lf->CalcTextSizeA(lSz, FLT_MAX, 0.f, middle).x;
 
-        // Узкой панели концов оси хватает: где мы в круге, видно по ползунку, а
-        // наползающие друг на друга подписи не читаются вовсе.
-        if (lw + mw + rw + pad * 4.f < plotW) {
-            dl->AddText(lf, lSz, {plotMin.x, ty}, COL_LABEL, left);
-            dl->AddText(lf, lSz, {plotMax.x - rw, ty}, COL_LABEL, right);
+        if (comparing) {
+            // ── Кто с кем ────────────────────────────────────────────────────
+            // Каждая сторона написана СВОИМ цветом: белым — образец, золотым —
+            // разбираемый круг. Те же два цвета на всех панелях, поэтому
+            // спрашивать «а слева чьё?» не приходится.
+            const std::shared_ptr<const world::Snapshot> snapshot = world::current();
+            const world::VehicleView* self = world::find(*snapshot, vehicleId);
+
+            char selfName[32];
+            if (self != nullptr && !self->name.empty() && self->name != "Unknown")
+                snprintf(selfName, sizeof(selfName), "%s", self->name.c_str());
+            else
+                snprintf(selfName, sizeof(selfName), "CAR %d", vehicleId);
+
+            // Порядок как у чисел на всех панелях: СВОЁ, потом ОБРАЗЕЦ. Обратный
+            // заставлял держать в голове, какая сторона где.
+            char cmpPart[80], refPart[80];
+            if (s_view_span < 1.f)
+                snprintf(cmpPart, sizeof(cmpPart), "%s LAP %d   x%.1f",
+                         selfName, lap.lap_number, 1.f / s_view_span);
+            else
+                snprintf(cmpPart, sizeof(cmpPart), "%s LAP %d", selfName, lap.lap_number);
+            snprintf(refPart, sizeof(refPart), "%s LAP %d",
+                     reference.name.c_str(), reference.ref.lap);
+
+            // Квадратик цвета кривой перед каждым именем: связь «имя ↔ линия на
+            // графике» должна читаться взглядом, а не выводиться по памяти.
+            const char* vs   = "   vs   ";
+            const float chip = lSz * 0.62f;
+            const float chipGap = chip * 0.55f;
+            const float cpw  = lf->CalcTextSizeA(lSz, FLT_MAX, 0.f, cmpPart).x;
+            const float vsw  = lf->CalcTextSizeA(lSz, FLT_MAX, 0.f, vs).x;
+            const float rpw  = lf->CalcTextSizeA(lSz, FLT_MAX, 0.f, refPart).x;
+            const float centreW = chip + chipGap + cpw + vsw + chip + chipGap + rpw;
+
+            float x = base.x + (avail.x - centreW) * 0.5f;
+            const float chipY = ty + (lSz - chip) * 0.5f;
+
+            dl->AddRectFilled({x, chipY}, {x + chip, chipY + chip}, COL_GOLD, 2.f);
+            x += chip + chipGap;
+            dl->AddText(lf, lSz, {x, ty}, COL_GOLD, cmpPart);   x += cpw;
+            dl->AddText(lf, lSz, {x, ty}, COL_LABEL, vs);       x += vsw;
+
+            dl->AddRectFilled({x, chipY}, {x + chip, chipY + chip}, COL_REF, 2.f);
+            x += chip + chipGap;
+            dl->AddText(lf, lSz, {x, ty}, COL_REF, refPart);
+
+            // Концы оси остаются на месте: это шкала, и убирать её нельзя.
+            if (lw + centreW + rw + pad * 4.f < plotW) {
+                dl->AddText(lf, lSz, {plotMin.x, ty}, COL_LABEL, left);
+                dl->AddText(lf, lSz, {plotMax.x - rw, ty}, COL_LABEL, right);
+            }
+        } else {
+            // Узкой панели концов оси хватает: где мы в круге, видно по ползунку.
+            if (lw + mw + rw + pad * 4.f < plotW) {
+                dl->AddText(lf, lSz, {plotMin.x, ty}, COL_LABEL, left);
+                dl->AddText(lf, lSz, {plotMax.x - rw, ty}, COL_LABEL, right);
+            }
+            dl->AddText(lf, lSz, {base.x + (avail.x - mw) * 0.5f, ty}, COL_HDR_TEXT, middle);
         }
-        dl->AddText(lf, lSz, {base.x + (avail.x - mw) * 0.5f, ty}, COL_HDR_TEXT, middle);
     }
 
     // ── Полоса перемотки ─────────────────────────────────────────────────────

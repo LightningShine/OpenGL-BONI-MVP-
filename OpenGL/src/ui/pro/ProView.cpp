@@ -18,6 +18,8 @@
 #include "../../racing/StopReset/StartStop.h"
 #include "../UI_Config.h"
 #include <imgui.h>
+#include <algorithm>
+#include <memory>
 #include <mutex>
 #include <cstdio>
 #include <cstdlib>
@@ -52,10 +54,33 @@ static void loadScales() {
     }
 }
 
-static void saveScales() {
+// Изменения копятся в памяти, на диск уходят паузой (см. FlushPanelSettings).
+static bool   g_scalesDirty   = false;
+static double g_scalesTouched = 0.0;
+
+static void writeScales() {
     std::ofstream f(kScaleFile, std::ios::trunc);
     if (!f) return;
-    for (auto& [k, v] : g_panelScale) f << k << "=" << v << "\n";
+    for (const auto& [k, v] : g_panelScale) f << k << "=" << v << "\n";
+}
+
+static void markScalesDirty() {
+    g_scalesDirty   = true;
+    g_scalesTouched = ImGui::GetTime();
+}
+
+/// Пишет накопленные масштабы, если пора. Возвращает false, если нечего писать.
+bool FlushPanelScales(bool force) {
+    if (!g_scalesDirty) return false;
+
+    // Пауза в вводе: прокрутка колеса идёт очередью щелчков, и писать файл на
+    // каждый из них — то же самое, что писать его в цикле отрисовки.
+    constexpr double SETTLE_SECONDS = 0.75;
+    if (!force && ImGui::GetTime() - g_scalesTouched < SETTLE_SECONDS) return false;
+
+    writeScales();
+    g_scalesDirty = false;
+    return true;
 }
 
 float PanelZoom(const char* key) {
@@ -75,7 +100,7 @@ float PanelZoom(const char* key) {
     if (changed) {
         if (sc < 0.6f) sc = 0.6f; if (sc > 2.5f) sc = 2.5f;
         g_panelScale[key] = sc;
-        saveScales();
+        markScalesDirty();
     }
     return sc;
 }
@@ -155,7 +180,20 @@ float SessionTimeSeconds() {
 // ── Круг для разбора (см. ProView.h) ────────────────────────────────────────
 static int s_analysis_lap = -1;   // -1 — идти за повтором
 
+// Закреплённые стороны сравнения. Живут дольше выбора строкой: щелчок по строке
+// снимается, как только запись тронулась, а закреплённый круг — только тем же
+// квадратиком, сменой записи или закрытием повтора. Иначе сравнение нельзя было
+// бы просто ПОСМОТРЕТЬ в движении: нажал «играть» — и образец пропал.
+static LapRef s_ref_pin;
+static LapRef s_compare_pin;
+
 int AnalysisLap(int32_t vehicleId) {
+    // Закреплённая сторона COMPARE главнее всего: её выбрали квадратиком, а
+    // квадратик — это «держи этот круг», в отличие от щелчка по строке, который
+    // живёт только пока запись стоит.
+    if (s_compare_pin.valid() && s_compare_pin.vehicle == vehicleId)
+        return s_compare_pin.lap;
+
     // Ноль — ВЫЕЗДНОЙ круг, он выбирается наравне с остальными; «нет выбора»
     // это -1 (см. RaceConstants::OUT_LAP_NUMBER).
     if (s_analysis_lap >= 0) return s_analysis_lap;
@@ -163,6 +201,309 @@ int AnalysisLap(int32_t vehicleId) {
 }
 
 void SelectAnalysisLap(int lapNumber) { s_analysis_lap = lapNumber; }
+
+LapRef ReferenceLap() { return s_ref_pin; }
+LapRef ComparePin()   { return s_compare_pin; }
+
+int32_t AnalysisVehicle(int32_t displayVehicleId) {
+    if (!s_compare_pin.valid()) return displayVehicleId;
+
+    // Машины из закрепления может уже не быть на трассе (закрыли запись,
+    // участник сошёл) — тогда разбираем то, что выбрано, а не пустоту.
+    const std::shared_ptr<const world::Snapshot> snapshot = world::current();
+    if (world::find(*snapshot, s_compare_pin.vehicle) == nullptr)
+        return displayVehicleId;
+
+    return s_compare_pin.vehicle;
+}
+
+void PinReferenceLap(const LapRef& lap) {
+    s_ref_pin = (s_ref_pin == lap) ? LapRef{} : lap;
+}
+
+void PinCompareLap(const LapRef& lap) {
+    s_compare_pin = (s_compare_pin == lap) ? LapRef{} : lap;
+}
+
+void ClearComparison() {
+    s_ref_pin     = LapRef{};
+    s_compare_pin = LapRef{};
+}
+
+// ── Круги сравнения ─────────────────────────────────────────────────────────
+// Обе стороны снимаются одинаково и живут рядом: любая разница в том, КАК они
+// прочитаны, тут же вылезает разными числами на соседних панелях.
+static RefTrace s_ref_trace;
+static RefTrace s_cmp_trace;
+
+bool RefTrace::at(double d, LapInfo& out) const {
+    if (samples.empty()) return false;
+
+    // За пределами покрытия образца честнее не показывать ничего. Ближайший
+    // край подошёл бы по типу, но соврал бы по существу: «скорость образца на
+    // этом месте» там просто не измерена.
+    //
+    // Допуск — примерно полшага между замерами: на 10 Гц и круге в полминуты
+    // это доли процента круга. Первый замер круга не попадает ровно на 0.000, а
+    // последний — на 1.000, и без допуска образец пропадал бы у самой линии,
+    // ровно там, где сравнение и интересно.
+    constexpr double EDGE = 0.005;
+    if (d < samples.front().progress - EDGE || d > samples.back().progress + EDGE)
+        return false;
+
+    const auto hi = std::lower_bound(
+        samples.begin(), samples.end(), d,
+        [](const LapInfo& sample, double value) { return sample.progress < value; });
+
+    if (hi == samples.begin()) { out = samples.front(); return true; }
+
+    if (hi == samples.end()) {
+        // Хвост круга после последнего замера. Значения каналов там взять
+        // неоткуда — держим последние измеренные, — а вот ВРЕМЯ известно точно:
+        // это время круга, посчитанное по меткам пересечения линии. Тянемся к
+        // нему, иначе на финише образец выглядит быстрее, чем был.
+        out = samples.back();
+        out.progress = d;
+        if (lap_time > samples.back().timefromstart) {
+            // Скобки вокруг std::min здесь обязательны: windows.h тянет за
+            // собой макрос min, и без них имя разбирается как вызов макроса.
+            const double span = 1.0 - samples.back().progress;
+            const double t = (span > 1e-9)
+                ? (std::min)((d - samples.back().progress) / span, 1.0) : 1.0;
+            out.timefromstart = samples.back().timefromstart +
+                static_cast<float>((lap_time - samples.back().timefromstart) * t);
+        }
+        return true;
+    }
+
+    const LapInfo& b = *hi;
+    const LapInfo& a = *std::prev(hi);
+    const double   span = b.progress - a.progress;
+    const float    t = (span > 1e-9) ? static_cast<float>((d - a.progress) / span) : 0.f;
+
+    out = a;
+    out.progress      = d;
+    out.speed         = a.speed         + (b.speed         - a.speed)         * t;
+    out.gForceX       = a.gForceX       + (b.gForceX       - a.gForceX)       * t;
+    out.gForceY       = a.gForceY       + (b.gForceY       - a.gForceY)       * t;
+    out.aceleration   = a.aceleration   + (b.aceleration   - a.aceleration)   * t;
+    out.timefromstart = a.timefromstart + (b.timefromstart - a.timefromstart) * t;
+    return true;
+}
+
+bool RefTrace::at_time(float seconds, LapInfo& out) const {
+    if (samples.empty()) return false;
+    if (seconds < samples.front().timefromstart || seconds > samples.back().timefromstart)
+        return false;
+
+    // ПЕРЕБОРОМ, а не двоичным поиском. История упорядочена по ПРОГРЕССУ — на
+    // этом инварианте стоит весь остальной разбор, — а про время внутри круга
+    // такого обещания никто не давал: достаточно один раз отъехать назад, и
+    // порядок по времени сломается. std::lower_bound на неупорядоченном
+    // диапазоне — неопределённое поведение, а не просто неточный ответ. Вызов
+    // здесь один на кадр, поэтому перебор ничего не стоит.
+    for (size_t i = 1; i < samples.size(); ++i) {
+        const LapInfo& a = samples[i - 1];
+        const LapInfo& b = samples[i];
+        if (seconds < a.timefromstart || seconds > b.timefromstart) continue;
+
+        const float span = b.timefromstart - a.timefromstart;
+        const float t = (span > 1e-6f) ? (seconds - a.timefromstart) / span : 0.f;
+
+        out = a;
+        out.timefromstart = seconds;
+        out.progress = a.progress + (b.progress - a.progress) * t;
+        out.x        = a.x + (b.x - a.x) * t;
+        out.y        = a.y + (b.y - a.y) * t;
+        out.speed    = a.speed + (b.speed - a.speed) * t;
+        return true;
+    }
+    return false;
+}
+
+const RefTrace& Reference() { return s_ref_trace; }
+const RefTrace& Analysed()  { return s_cmp_trace; }
+
+bool ComparisonActive() { return s_ref_trace.valid && !s_ref_trace.samples.empty(); }
+
+bool ReferenceGhost(int32_t vehicleId, LapInfo& out) {
+    if (!ComparisonActive()) return false;
+
+    const std::shared_ptr<const world::Snapshot> snapshot = world::current();
+    const world::VehicleView* view = world::find(*snapshot, vehicleId);
+    if (view == nullptr || view->current_lap_timer <= 0.f) return false;
+
+    // Призрак идёт от таймера ТЕКУЩЕГО круга, поэтому показывать его можно
+    // только когда разбирают именно его. На закреплённом старом круге секунда
+    // на таймере относится к другому кругу, и вторая машина оказалась бы
+    // призраком неизвестно чего.
+    if (AnalysisLap(vehicleId) != view->current_lap_number) return false;
+
+    return s_ref_trace.at_time(view->current_lap_timer, out);
+}
+
+bool ComparisonDelta(int32_t vehicleId, float& out) {
+    if (!ComparisonActive() || !s_cmp_trace.valid) return false;
+
+    const std::shared_ptr<const world::Snapshot> snapshot = world::current();
+    const world::VehicleView* view = world::find(*snapshot, vehicleId);
+    if (view == nullptr) return false;
+
+    LapInfo mine, other;
+    if (!s_cmp_trace.at(view->track_progress, mine))  return false;
+    if (!s_ref_trace.at(view->track_progress, other)) return false;
+
+    out = mine.timefromstart - other.timefromstart;
+    return true;
+}
+
+bool ReferenceAtVehicle(int32_t vehicleId, LapInfo& out) {
+    if (!ComparisonActive()) return false;
+
+    const std::shared_ptr<const world::Snapshot> snapshot = world::current();
+    const world::VehicleView* view = world::find(*snapshot, vehicleId);
+    if (view == nullptr) return false;
+
+    return s_ref_trace.at(view->track_progress, out);
+}
+
+namespace {
+
+/// Обрезает имя до `max_bytes`, НЕ РАЗРУБАЯ символ UTF-8.
+///
+/// Имена приходят из реестра устройств, то есть от пользователя, и длина у них
+/// произвольная. Подпись «REF <имя> L7» стоит в узкой строке панели LAPTIME и с
+/// длинным именем наезжала бы на значение. Резать по байтам нельзя: имя не
+/// обязано быть латиницей, а половина многобайтового символа выводится мусором.
+std::string short_name(std::string name, size_t max_bytes)
+{
+    if (name.size() <= max_bytes) return name;
+
+    size_t cut = max_bytes;
+    // Продолжение символа UTF-8 — байт вида 10xxxxxx. Отступаем назад до начала.
+    while (cut > 0 && (static_cast<unsigned char>(name[cut]) & 0xC0) == 0x80) --cut;
+    name.resize(cut);
+    return name;
+}
+
+/// Откуда берутся замеры круга-образца — оттуда же, откуда их берут панели
+/// разбора: журнал записи на повторе, история машины в живом заезде. Второго
+/// источника заводить нельзя, иначе образец и разбираемый круг оказались бы
+/// посчитаны по-разному.
+///
+/// Возвращает размер источника, не копируя его: по нему видно, не подрос ли
+/// круг с прошлого кадра.
+size_t reference_source_size(const LapRef& lap,
+                             std::shared_ptr<const telemetry::VehicleJournal>& journal) {
+    journal = telemetry::replay_journal(lap.vehicle);
+    if (journal != nullptr) {
+        const auto found = journal->lap_samples.find(lap.lap);
+        return (found == journal->lap_samples.end()) ? 0 : found->second.size();
+    }
+
+    VehiclesLock lock;
+    const auto vehicle = g_vehicles.find(lap.vehicle);
+    if (vehicle == g_vehicles.end()) return 0;
+    const auto found = vehicle->second.laps.find(lap.lap);
+    return (found == vehicle->second.laps.end()) ? 0 : found->second.samples.size();
+}
+
+}  // namespace
+
+namespace {
+
+/// Пересобирает `trace`, если запрошенный круг сменился или подрос.
+///
+/// Обе стороны сравнения проходят через одну эту функцию намеренно: стоит
+/// прочитать их по-разному, и на соседних панелях появятся два числа, каждое
+/// «правильное» по-своему.
+void refresh_trace(RefTrace& trace, const LapRef& want)
+{
+    if (!want.valid()) {
+        if (trace.valid || trace.ref.valid()) trace = RefTrace{};
+        return;
+    }
+
+    std::shared_ptr<const telemetry::VehicleJournal> journal;
+    const size_t size = reference_source_size(want, journal);
+
+    // Пересобираем, только если круг ДРУГОЙ или подрос. Сравниваем ЗАПРОС, а не
+    // результат: круг без замеров даёт valid == false, и проверка по нему
+    // перечитывала бы источник каждый кадр — вместе с мьютексом машин. На
+    // повторе круг не растёт вовсе, поэтому копия делается ровно один раз.
+    if (trace.ref == want && trace.source_size == size)
+        return;
+
+    RefTrace built;
+    built.ref         = want;
+    built.source_size = size;
+
+    if (journal != nullptr) {
+        const auto found = journal->lap_samples.find(want.lap);
+        if (found != journal->lap_samples.end()) built.samples = found->second;
+
+        const auto time = journal->lap_times.find(want.lap);
+        if (time != journal->lap_times.end()) {
+            built.lap_time = time->second.lapTime;
+            built.sectors  = time->second.sectors;
+        }
+
+        built.name = journal->name;
+    } else {
+        VehiclesLock lock;
+        const auto vehicle = g_vehicles.find(want.vehicle);
+        if (vehicle != g_vehicles.end()) {
+            const auto found = vehicle->second.laps.find(want.lap);
+            if (found != vehicle->second.laps.end()) built.samples = found->second.samples;
+
+            const auto time = vehicle->second.m_laps.find(want.lap);
+            if (time != vehicle->second.m_laps.end()) {
+                built.lap_time = time->second.lapTime;
+                built.sectors  = time->second.sectors;
+            }
+
+            built.name = vehicle->second.name;
+        }
+    }
+
+    if (built.name.empty() || built.name == "Unknown")
+        built.name = "CAR " + std::to_string(want.vehicle);
+    built.name = short_name(std::move(built.name), 14);
+
+    built.valid = !built.samples.empty();
+    trace = std::move(built);
+}
+
+}  // namespace
+
+void RefreshReference(int32_t displayVehicleId) {
+    // Сменилась запись — образец из неё к новой отношения не имеет.
+    static uint64_t s_session_seen = 0;
+    if (ReplaySessionChanged(s_session_seen)) {
+        s_ref_pin     = LapRef{};
+        s_compare_pin = LapRef{};
+        s_ref_trace   = RefTrace{};
+        s_cmp_trace   = RefTrace{};
+    }
+
+    refresh_trace(s_ref_trace, s_ref_pin);
+
+    // Разбираемая сторона нужна только когда есть с чем сравнивать: без
+    // образца её никто не читает, а копировать круг каждый кадр незачем.
+    LapRef analysed;
+    if (s_ref_trace.valid) {
+        const int32_t car = AnalysisVehicle(displayVehicleId);
+        if (car >= 0) analysed = LapRef{ car, AnalysisLap(car) };
+    }
+    refresh_trace(s_cmp_trace, analysed);
+}
+
+bool ReplaySessionChanged(uint64_t& seen) {
+    const uint64_t now = telemetry::replay_session_revision();
+    if (now == seen) return false;
+    seen = now;
+    return true;
+}
 
 // ── Машина, которую разбирают панели ────────────────────────────────────────
 // ДЕРЖИТСЯ, ПОКА ОНА НА ТРАССЕ.
@@ -181,7 +522,7 @@ static int32_t s_display_vehicle = -1;
 
 static bool vehicleIsOnTrack(int32_t vehicleId) {
     if (vehicleId == -1) return false;
-    std::lock_guard<std::mutex> lock(g_vehicles_mutex);
+    VehiclesLock lock;
     return g_vehicles.find(vehicleId) != g_vehicles.end();
 }
 
@@ -237,7 +578,22 @@ void Render(const ProContext& ctx, float swipeAnim) {
         return;
     }
 
+    // Открылась (или закрылась) другая запись — весь выбор оператора к ней не
+    // относится: номера машин и номера кругов в новой записи свои.
+    {
+        static uint64_t s_session_seen = 0;
+        if (ReplaySessionChanged(s_session_seen)) {
+            SelectAnalysisLap(-1);
+            s_display_vehicle = -1;
+        }
+    }
+
     int32_t vehicleId = getDisplayVehicleId();
+
+    // Круги сравнения снимаем ОДИН РАЗ на кадр, до панелей: их читают семь
+    // панелей, и каждая копировала бы историю круга заново. После выбора
+    // машины — разбираемая сторона зависит от него.
+    RefreshReference(vehicleId);
 
     // Выбор круга живёт, только пока запись стоит: тронулась — панели снова
     // идут за повтором. Проверяем ДО отрисовки панелей, иначе выбор, сделанный
@@ -277,28 +633,38 @@ void Render(const ProContext& ctx, float swipeAnim) {
     ImGui::PushStyleColor(ImGuiCol_ScrollbarGrab,        IM_COL32(55, 55, 55, 255));
     ImGui::PushStyleColor(ImGuiCol_ScrollbarGrabHovered, IM_COL32(80, 80, 80, 255));
 
+    // Разбираемая машина и машина, чей список кругов открыт, — РАЗНЫЕ вещи, как
+    // только оператор закрепил сторону COMPARE. Список остаётся оглавлением
+    // записи (по нему ходят за чужим кругом), остальные панели держат
+    // закреплённую пару.
+    const int32_t analysisId = AnalysisVehicle(vehicleId);
+
     // Панели рисуются только если включены в боковом меню (McLaren-style).
     if (PanelVisible("LapList"))     RenderLapListWindow    (ctx, vehicleId, sz, panelTopH);
-    if (PanelVisible("Channels"))    RenderChannelsWindow   (ctx, vehicleId, sz, panelTopH);
-    if (PanelVisible("SessionInfo")) RenderSessionInfoWindow(ctx, vehicleId, sz, panelTopH);
+    if (PanelVisible("Channels"))    RenderChannelsWindow   (ctx, analysisId, sz, panelTopH);
+    if (PanelVisible("SessionInfo")) RenderSessionInfoWindow(ctx, analysisId, sz, panelTopH);
 
-    if (PanelVisible("TrackMap"))    RenderTrackMapWindow   (ctx, vehicleId, sz, panelTopH);
-    if (PanelVisible("TrackReport")) RenderTrackReportWindow(ctx, vehicleId, sz, panelTopH);
-    if (PanelVisible("Relative"))    RenderRelativeWindow   (ctx, vehicleId, sz, panelTopH);
+    if (PanelVisible("TrackMap"))    RenderTrackMapWindow   (ctx, analysisId, sz, panelTopH);
+    if (PanelVisible("TrackReport")) RenderTrackReportWindow(ctx, analysisId, sz, panelTopH);
+    if (PanelVisible("Relative"))    RenderRelativeWindow   (ctx, analysisId, sz, panelTopH);
 
     if (PanelVisible("Events"))      RenderEventsWindow     (ctx, sz, panelTopH);
-    if (PanelVisible("GForce"))      RenderGForceWindow     (ctx, vehicleId, sz, panelTopH);
-    if (PanelVisible("GForceLong"))  RenderGForceLongWindow (ctx, vehicleId, sz, panelTopH);
-    if (PanelVisible("GForceLat"))   RenderGForceLatWindow  (ctx, vehicleId, sz, panelTopH);
-    if (PanelVisible("Graphs"))      RenderGraphsWindow     (ctx, vehicleId, sz, panelTopH);
-    if (PanelVisible("Sectors"))     RenderSectorsWindow    (ctx, vehicleId, sz, panelTopH);
-    if (PanelVisible("Laptime"))     RenderLaptimeWindow    (ctx, vehicleId, sz, panelTopH);
+    if (PanelVisible("GForce"))      RenderGForceWindow     (ctx, analysisId, sz, panelTopH);
+    if (PanelVisible("GForceLong"))  RenderGForceLongWindow (ctx, analysisId, sz, panelTopH);
+    if (PanelVisible("GForceLat"))   RenderGForceLatWindow  (ctx, analysisId, sz, panelTopH);
+    if (PanelVisible("Graphs"))      RenderGraphsWindow     (ctx, analysisId, sz, panelTopH);
+    if (PanelVisible("Sectors"))     RenderSectorsWindow    (ctx, analysisId, sz, panelTopH);
+    if (PanelVisible("Laptime"))     RenderLaptimeWindow    (ctx, analysisId, sz, panelTopH);
 
     ImGui::PopStyleColor(8);
     ImGui::PopStyleVar(5);
 
     // Боковое меню групп (правый край) — поверх всего, само управляет видимостью.
     RenderSidebar(ctx, sz, panelTopH, botH);
+
+    // Настройки, изменённые в этом кадре, уходят на диск не сразу, а когда
+    // оператор перестал их крутить.
+    FlushPanelSettings(false);
 }
 
 } // namespace Pro

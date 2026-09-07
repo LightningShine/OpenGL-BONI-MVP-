@@ -234,9 +234,7 @@ std::optional<TelemetryFrame> parse_packet(std::span<const uint8_t> raw);
 - `auto` — когда тип очевиден из правой части (`auto r = std::make_unique<Receiver>()`), но не когда он прячет важное (не `auto x = get()`, если непонятно, что вернулось).
 - Магические числа — в именованные константы. `if (len < 37)` → `if (len < PACKET_SIZE_BYTES)`.
 - Инициализируем переменные при объявлении. Неинициализированная переменная — источник трудноуловимых багов.
-  
-  
-  ## 9. Скиллы
-  
-  Используй скилл andrej-karpathy-skills в добавок того, что есть сейчас
-  curl -o CLAUDE.md https://raw.githubusercontent.com/forrestchang/andrej-karpathy-skills/main/CLAUDE.md
+
+## 9. Скиллы
+
+  Используй скилл andrej-karpathy-skills в добавок того, что есть сейчас он находиться в файле  Skill.md

@@ -82,7 +82,7 @@ float CalculateLapTimeDiffInternal(int vehicleID)
 // ============================================================================
 float CalculateLapTimeDiff(int vehicleID)
 {
-    std::lock_guard<std::mutex> lock(g_vehicles_mutex);
+    VehiclesLock lock;
     return CalculateLapTimeDiffInternal(vehicleID);
 }
 
@@ -246,6 +246,6 @@ float CalculateLeaderTimeDiffInternal(int vehicleID)
 // ============================================================================
 float CalculateLeaderTimeDiff(int vehicleID)
 {
-    std::lock_guard<std::mutex> lock(g_vehicles_mutex);
+    VehiclesLock lock;
     return CalculateLeaderTimeDiffInternal(vehicleID);
 }

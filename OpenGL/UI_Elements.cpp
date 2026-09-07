@@ -728,12 +728,11 @@ void UIElements::drawLeaderboard()
         {
             // Get vehicle color from standings vehicleID
             extern std::map<int32_t, Vehicle> g_vehicles;
-            extern std::mutex g_vehicles_mutex;
 
             glm::vec3 veh_color(0.5f, 0.5f, 0.5f);
             std::string driver_name = "???";
             {
-                std::lock_guard<std::mutex> lk(g_vehicles_mutex);
+                VehiclesLock lk;
                 auto it = g_vehicles.find(s.vehicleID);
                 if (it != g_vehicles.end())
                 {

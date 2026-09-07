@@ -31,8 +31,14 @@ void RenderLaptimeWindow(const ProContext& ctx, int32_t vehicleId,
         ImGui::End(); return;
     }
 
-    // Высоту подгоняем под содержимое — см. конец функции.
-    const bool fit_height = ImGui::IsWindowAppearing();
+    // Высоту подгоняем под содержимое — см. конец функции. Пересравнение
+    // добавляет и убирает строку REF, поэтому подгоняем и на его переключении:
+    // иначе включённое сравнение выталкивало бы нижние строки за край окна, а
+    // прокрутки в этой панели нет.
+    static bool s_comparing_seen = false;
+    const bool  comparing = ComparisonActive();
+    const bool  fit_height = ImGui::IsWindowAppearing() || comparing != s_comparing_seen;
+    s_comparing_seen = comparing;
 
     float       w  = ImGui::GetWindowWidth();
     float       z  = PanelZoom("Laptime");
@@ -97,18 +103,114 @@ void RenderLaptimeWindow(const ProContext& ctx, int32_t vehicleId,
 
     // ── Big LAPTIME ──────────────────────────────────────────────────────────
     float curTime = g_race_manager ? g_race_manager->GetVehicleCurrentLapTime(vehicleId) : 0.f;
+
+    // При сравнении сверху стоит время РАЗБИРАЕМОГО КРУГА, а не бегущий таймер.
+    // Иначе рядом оказывались две величины разной природы одного кегля —
+    // «0:37.413» недоеденного круга против «1:33.221» законченного, — и разрыв
+    // между ними читался как чудовищный. Круг ещё едет и своего времени не
+    // имеет — тогда таймер и остаётся: другого числа просто нет.
+    const float ownTime = (comparing && Analysed().lap_time > 0.f)
+                            ? Analysed().lap_time : curTime;
+
     char  tb[32];
-    fmtTime(curTime, tb, sizeof(tb));
+    fmtTime(ownTime, tb, sizeof(tb));
 
     ImGui::Dummy(ImVec2(0, 10.f * z));
     {
         ImVec2 p = ImGui::GetCursorScreenPos();
         dl->AddText(ctx.title, ttlSz, {p.x + pad, p.y}, LT_VALUE, tb);
 
+        // Чьё это время — подписью справа. Пока сравнения нет, вопрос не
+        // возникает; как только на экране два времени, без имени они
+        // неразличимы.
+        if (comparing) {
+            const std::shared_ptr<const world::Snapshot> snap = world::current();
+            const world::VehicleView* self = world::find(*snap, vehicleId);
+            char name[32];
+            if (self != nullptr && !self->name.empty() && self->name != "Unknown")
+                snprintf(name, sizeof(name), "%s", self->name.c_str());
+            else
+                snprintf(name, sizeof(name), "CAR %d", vehicleId);
+
+            // Номер круга — как и у образца: две подписи одного вида читаются
+            // как пара, разного — как две разные величины.
+            char who[48];
+            snprintf(who, sizeof(who), "%s L%d", name, AnalysisLap(vehicleId));
+
+            const float ww = ctx.regular
+                ? ctx.regular->CalcTextSizeA(lblSz, FLT_MAX, 0.f, who).x : 0.f;
+            dl->AddText(ctx.regular, lblSz, {p.x + w - pad - ww, p.y + ttlSz * 0.55f},
+                        LT_GOLD, who);
+        }
+
         // Продвигаемся НЕ на всю высоту кегля: у цифр под базовой линией пусто
         // (выносные элементы есть у букв, а их тут нет), и полный кегль оставлял
         // под временем заметно больше воздуха, чем над ним.
         ImGui::Dummy(ImVec2(w, ttlSz * 0.80f + 4.f * z));
+    }
+
+    // ── Второй блок: круг гонщика, с которым сравнивают ──────────────────────
+    //
+    // ТЕМ ЖЕ КЕГЛЕМ, что и своё время. Два времени одного размера сравнимы
+    // взглядом; разного — уже нет, меньшее читается как пояснение к большему.
+    // Разводит их цвет, тот же, что и на графиках: золото — своё, белое —
+    // образец.
+    if (comparing) {
+        const RefTrace& reference = Reference();
+
+        char refBig[32];
+        fmtTime(reference.lap_time, refBig, sizeof(refBig));
+
+        ImVec2 p = ImGui::GetCursorScreenPos();
+        dl->AddText(ctx.title, ttlSz, {p.x + pad, p.y}, COL_REF, refBig);
+
+        char who[48];
+        snprintf(who, sizeof(who), "%s L%d", reference.name.c_str(), reference.ref.lap);
+        const float ww = ctx.regular
+            ? ctx.regular->CalcTextSizeA(lblSz, FLT_MAX, 0.f, who).x : 0.f;
+        dl->AddText(ctx.regular, lblSz, {p.x + w - pad - ww, p.y + ttlSz * 0.55f},
+                    COL_REF, who);
+
+        ImGui::Dummy(ImVec2(w, ttlSz * 0.80f + 4.f * z));
+    }
+
+    goldLine();
+
+    // ── Два разных отставания, и оба подписаны ───────────────────────────────
+    //
+    // Они РАЗНЫЕ по построению, и раньше это выглядело как ошибка счёта:
+    //
+    //   VS BEST — от собственного лучшего круга, по ЗАКРЫТЫМ СЕКТОРАМ (см.
+    //             CalculateLapTimeDiffInternal). Обновляется на точках замера
+    //             и между ними стоит — как секторное отставание в трансляции.
+    //   VS REF  — от выбранного круга-образца, в ТОЧКЕ ТРАССЫ, где машина
+    //             сейчас. Меняется непрерывно и совпадает с дорожкой DELTA на
+    //             графиках: это одна и та же величина.
+    //
+    // Совпадать они не обязаны даже когда образец и есть лучший круг: одно
+    // считается по секторам, другое — по месту на трассе.
+    float delta = g_race_manager ? g_race_manager->GetVehicleLapDelta(vehicleId) : 0.f;
+    char  db[32];
+    fmtDelta(delta, db, sizeof(db));
+    ImU32 dCol = delta < 0.f ? COL_GREEN : (delta > 0.f ? COL_RED : LT_LABEL);
+    row("VS BEST", db, dCol);
+
+    if (comparing) {
+        // ИЗ ОБЩЕЙ ТОЧКИ (Pro::ComparisonDelta), а не своим счётом: раньше эта
+        // строка считала отставание от ЖИВОГО таймера круга, а дорожка DELTA на
+        // графиках — от ближайшего сохранённого замера. Замеры идут 10 раз в
+        // секунду, поэтому числа расходились на шаг замера и выглядели как
+        // ошибка счёта, хотя оба были верны.
+        char  rdb[32];
+        ImU32 rdCol = LT_LABEL;
+        float behind = 0.f;
+        if (ComparisonDelta(vehicleId, behind)) {
+            fmtDelta(behind, rdb, sizeof(rdb));
+            rdCol = behind < 0.f ? COL_GREEN : (behind > 0.f ? COL_RED : LT_LABEL);
+        } else {
+            snprintf(rdb, sizeof(rdb), "---");
+        }
+        row("VS REF", rdb, rdCol);
     }
 
     goldLine();
@@ -123,20 +225,29 @@ void RenderLaptimeWindow(const ProContext& ctx, int32_t vehicleId,
         }
     }
 
-    char vb[32];
+    // Сторона сравнения: те же величины круга-образца в той же точке трассы.
+    LapInfo    refAt;
+    const bool hasRef = ReferenceAtVehicle(vehicleId, refAt);
+
+    // Справа — ЗНАЧЕНИЕ ОБРАЗЦА с подписью REF, а не разность. Голое «+0.02» не
+    // отвечало на вопрос, чьё оно и от чего отсчитано; «REF 33.7» отвечает
+    // сразу, и колонки читаются так же, как в панели CHANELS: слева своё,
+    // справа белым — образец.
+    char vb[32], rb[32];
     snprintf(vb, sizeof(vb), "%.1f Km/h", speed);
-    row("SPEED", vb, LT_VALUE);
+    if (hasRef) {
+        snprintf(rb, sizeof(rb), "REF %.1f", refAt.speed);
+        rowDelta("SPEED", vb, LT_VALUE, rb, COL_REF);
+    } else {
+        row("SPEED", vb, LT_VALUE);
+    }
     snprintf(vb, sizeof(vb), "%.2f m/s\xc2\xb2", accel);
-    row("ACCELE.", vb, LT_VALUE);
-
-    goldLine();
-
-    // ── TIME DIFF ────────────────────────────────────────────────────────────
-    float delta = g_race_manager ? g_race_manager->GetVehicleLapDelta(vehicleId) : 0.f;
-    char  db[32];
-    fmtDelta(delta, db, sizeof(db));
-    ImU32 dCol = delta < 0.f ? COL_GREEN : (delta > 0.f ? COL_RED : LT_LABEL);
-    row("TIME DIFF", db, dCol);
+    if (hasRef) {
+        snprintf(rb, sizeof(rb), "REF %.2f", refAt.aceleration);
+        rowDelta("ACCELE.", vb, LT_VALUE, rb, COL_REF);
+    } else {
+        row("ACCELE.", vb, LT_VALUE);
+    }
 
     // ── Бывшая панель LAP INFO ───────────────────────────────────────────────
     // Позиция, секторы и прошлый круг переехали сюда: всё это — про ТЕКУЩИЙ

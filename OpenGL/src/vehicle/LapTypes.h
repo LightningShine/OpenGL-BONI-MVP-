@@ -48,6 +48,18 @@
 // ============================================================================
 inline constexpr int SECTOR_COUNT = 3;
 
+// ============================================================================
+// ЧАСТОТА ЗАМЕРА ТЕЛЕМЕТРИИ — ОДНО ЧИСЛО НА ВСЕХ.
+//
+// С этим шагом RaceManager кладёт LapInfo в историю круга, и это же число
+// уходит в шапку выгрузки MoTeC (logging::export_motec_csv) как заявленная
+// частота дискретизации. Пока константы стояли в двух файлах, правка шага в
+// RaceManager молча делала шапку CSV враньём: анализатор считает по ней
+// производные каналы и фильтрацию.
+// ============================================================================
+inline constexpr float  kTelemetrySampleInterval = 0.1f;                    // с
+inline constexpr double kTelemetrySampleRateHz   = 1.0 / kTelemetrySampleInterval;
+
 /// Время сектора не измерено. Ноль для этого не годится: он и сам по себе
 /// осмысленное значение, и именно из-за него в журнал сыпались рекорды с
 /// прочерком вместо времени.
@@ -61,9 +73,13 @@ inline double sector_split_position(int index)
 
 struct LapData
 {
+	// Поля тут стоят дорого: LapData копируется в снимок мира каждый кадр, в
+	// каждый ключевой кадр повтора, в журнал записи и в GetVehicleLapsCopy.
+	// Именно поэтому здесь нет «места на будущее»: вектор telemetryPoints,
+	// который никто никогда не заполнял, конструировался и разрушался в каждой
+	// из этих копий. История замеров живёт в CarLapSessions::samples.
 	float lapTime;                              // Lap time in seconds
 	int positionAtFinish;                       // Position when crossing line
-	std::vector<glm::vec2> telemetryPoints;     // Placeholder for future telemetry
 
 	// Времена секторов круга. SECTOR_TIME_NONE — сектор не был измерен (машина
 	// заехала в середине круга, пропал сигнал). В сумме дают lapTime.
@@ -75,6 +91,19 @@ struct LapData
 		sectors.fill(SECTOR_TIME_NONE);
 	}
 };
+
+/// Одинаковы ли два результата круга. Нужно снимку мира: он публикует круги
+/// РАЗДЕЛЯЕМЫМ указателем и пересобирает их, только когда они действительно
+/// изменились (см. RaceManager::PublishSnapshot). Сравнение здесь дешевле любой
+/// схемы с номером версии — и, в отличие от неё, не может отстать от кода,
+/// который правит круги в очередном новом месте.
+inline bool operator==(const LapData& a, const LapData& b)
+{
+	return a.lapTime == b.lapTime &&
+	       a.positionAtFinish == b.positionAtFinish &&
+	       a.sectors == b.sectors;
+}
+inline bool operator!=(const LapData& a, const LapData& b) { return !(a == b); }
 
 struct LapInfo
 {

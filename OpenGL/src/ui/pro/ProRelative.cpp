@@ -69,7 +69,12 @@ void RenderRelativeWindow(const ProContext& ctx, int32_t vehicleId,
     float w = ImGui::GetWindowWidth();
     float h = ImGui::GetWindowHeight();
     float z = PanelZoom("Relative");
-    DrawPanelHeader(ctx, "RELATIVE MAP", false, "Relative");
+    // «TRACK GAP» в заголовке — это НЕ отставание от круга-образца. Здесь
+    // разрыв между машинами НА ТРАССЕ прямо сейчас, а там — разница двух
+    // проездов по одному и тому же месту. Величины разные по природе, стоят на
+    // соседних панелях и без подписи читались как одна и та же, посчитанная
+    // по-разному.
+    DrawPanelHeader(ctx, "RELATIVE MAP   TRACK GAP", false, "Relative");
 
     // Опорное время круга: собственный лучший или предыдущий; фолбэк 30 с.
     float refLap = 30.f;

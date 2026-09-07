@@ -57,6 +57,7 @@
 #include "../vehicle/Vehicle.h"
 #include "../racing/RaceManager.h"
 #include "../racing/ModeManager/ModeManager.h"
+#include "../ui/pro/ProView.h"   // Pro::FlushPanelSettings на выходе
 
 
 using namespace std;
@@ -116,7 +117,7 @@ const std::vector<glm::vec2>* track_points = nullptr, std::mutex* points_mutex =
 			// Generate unique ID for simulation
          int vehicle_id = -1;
 			{
-				std::lock_guard<std::mutex> lock(g_vehicles_mutex);
+				VehiclesLock lock;
 				for (int id = 1; id <= 99; ++id)
 				{
 					if (g_vehicles.find(id) == g_vehicles.end())
@@ -455,7 +456,7 @@ const std::vector<glm::vec2>* track_points = nullptr, std::mutex* points_mutex =
 					int vehicleId = key - GLFW_KEY_0;
 
 					// Check if vehicle exists
-					std::lock_guard<std::mutex> lock(g_vehicles_mutex);
+					VehiclesLock lock;
 					if (g_vehicles.find(vehicleId) != g_vehicles.end()) {
 						g_focused_vehicle_id = vehicleId;
 						isWaitingForVehicleId = false;
@@ -1285,20 +1286,6 @@ int main(int argc, char** argv)
 		if (telemetry::replay_is_paused())
 			deltaTime = 0.0f;
 
-		// Update Race Manager (lap timing logic).
-		// Он же досчитывает состояние после шага перемотки: сам шаг публикует
-		// только позиции (пересчёт таблицы с дельтами по всем машинам слишком
-		// дорог для каждого шага), а разбор пересечений, круги и таблица
-		// приходят сюда — ровно один раз на кадр, на уже согласованном
-		// состоянии. Флаг пересчёта остаётся страховкой: читать гоночный
-		// результат по половине скормленной записи нельзя, в таблице от этого
-		// мелькали чужие лидеры.
-		if (g_race_manager && !telemetry::replay_is_rebuilding())
-		{
-			g_race_manager->Update(deltaTime);
-		}
-
-
 		ui.BeginFrame();
 
 		processInput(window, camera_position, camera_zoom, camera_rotation, camera_move_speed,
@@ -1309,11 +1296,33 @@ int main(int argc, char** argv)
 		// шаг на кадр — в обе стороны. См. replay_apply_pending_seek.
 		telemetry::replay_apply_pending_seek();
 
-		// Прогрев только что открытой записи: один длинный кадр, после которого
-		// заезд известен целиком — круги, графики, траектории. Здесь, а не в
-		// replay_open, потому что для подсчёта кругов нужна линия старт/финиша,
-		// а её выставляет отрисовка трассы.
+		// Прогрев только что открытой записи: заезд становится известен целиком
+		// — круги, графики, траектории. Здесь, а не в replay_open, потому что
+		// для подсчёта кругов нужна линия старт/финиша, а её выставляет
+		// отрисовка трассы. Работа режется на куски по кадрам, см.
+		// replay_build_journal_if_pending.
 		telemetry::replay_build_journal_if_pending();
+
+		// Update Race Manager (lap timing logic).
+		// Он же досчитывает состояние после шага перемотки: сам шаг публикует
+		// только позиции (пересчёт таблицы с дельтами по всем машинам слишком
+		// дорог для каждого шага), а разбор пересечений, круги и таблица
+		// приходят сюда — ровно один раз на кадр, на уже согласованном
+		// состоянии. Флаг пересчёта остаётся страховкой: читать гоночный
+		// результат по половине скормленной записи нельзя, в таблице от этого
+		// мелькали чужие лидеры.
+		//
+		// ПОСЛЕ ПЕРЕМОТКИ, А НЕ ДО НЕЁ. Перемотка скармливает пакеты и
+		// складывает найденные пересечения в m_pending_crossings, а разбирает
+		// их хронометраж. Пока Update стояла в кадре ПЕРВОЙ, разбор доставался
+		// СЛЕДУЮЩЕМУ кадру: один кадр на экране жили новые позиции со старыми
+		// номерами кругов и старой таблицей, и всё, что от них производно
+		// (подсветка круга в LAP LIST, отметка точки просмотра на графике),
+		// мигало на каждом щелчке перемотки.
+		if (g_race_manager && !telemetry::replay_is_rebuilding())
+		{
+			g_race_manager->Update(deltaTime);
+		}
 
 		camera_position += camera_velocity;
 		camera_velocity *= friction;
@@ -1468,6 +1477,11 @@ int main(int argc, char** argv)
 
 	// ========================== CLEAN UP ==========================
 	
+	// Настройки панелей пишутся отложенно (см. Pro::FlushPanelSettings): то, что
+	// оператор изменил в последнюю секунду перед закрытием, дописываем здесь,
+	// иначе оно потерялось бы молча.
+	Pro::FlushPanelSettings(true);
+
 	// Clean up Race Manager
 	if (g_race_manager)
 	{

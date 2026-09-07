@@ -25,8 +25,12 @@ static bool defaultVisible(const std::string& key) {
     // нет», и заводить ради них второй такой же файл незачем. По умолчанию
     // включены три: скорость и обе перегрузки. Остальные добавляет тот, кому
     // они нужны, иначе окно превращается в стопку полосок в пару пикселей.
+    // DELTA включена сразу: она сама показывается только при выбранном
+    // круге-образце, поэтому в обычном просмотре места не занимает, а когда
+    // образец выбран — ради неё сравнение и затевалось.
     if (key.rfind("Gr.", 0) == 0)
-        return key == "Gr.Speed" || key == "Gr.GLong" || key == "Gr.GLat";
+        return key == "Gr.Speed" || key == "Gr.GLong" || key == "Gr.GLat" ||
+               key == "Gr.Delta";
 
     return key != "Relative" && key != "GForceLong" && key != "GForceLat" &&
            key != "TrackReport";
@@ -45,10 +49,41 @@ static void loadVis() {
     }
 }
 
-static void saveVis() {
+// Как и масштабы панелей, видимость пишется отложенно: переключатели в боковом
+// меню щёлкают пачками, и каждый щелчок не обязан стоить перезаписи файла.
+static bool   g_visDirty   = false;
+static double g_visTouched = 0.0;
+
+static void writeVis() {
     std::ofstream f(kVisFile, std::ios::trunc);
     if (!f) return;
-    for (auto& [k, v] : g_visible) f << k << "=" << (v ? 1 : 0) << "\n";
+    for (const auto& [k, v] : g_visible) f << k << "=" << (v ? 1 : 0) << "\n";
+}
+
+static void saveVis() {
+    g_visDirty   = true;
+    g_visTouched = ImGui::GetTime();
+}
+
+/// Пишет накопленную видимость, если пора. Возвращает false, если нечего писать.
+static bool flushVis(bool force) {
+    if (!g_visDirty) return false;
+
+    constexpr double SETTLE_SECONDS = 0.75;
+    if (!force && ImGui::GetTime() - g_visTouched < SETTLE_SECONDS) return false;
+
+    writeVis();
+    g_visDirty = false;
+    return true;
+}
+
+// Объявлена в ProView.h — одна точка на оба файла настроек, чтобы вызывающему
+// не приходилось знать, что их два.
+bool FlushPanelScales(bool force);
+
+void FlushPanelSettings(bool force) {
+    FlushPanelScales(force);
+    flushVis(force);
 }
 
 bool PanelVisible(const char* key) {
