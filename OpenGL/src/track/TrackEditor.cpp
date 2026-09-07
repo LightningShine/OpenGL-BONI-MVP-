@@ -1,7 +1,7 @@
-#include "TrackEditor.h"
+#include "track/TrackEditor.h"
 
-#include "../Config.h"
-#include "../rendering/Interpolation.h"
+#include "core/Config.h"
+#include "rendering/Interpolation.h"
 
 namespace
 {

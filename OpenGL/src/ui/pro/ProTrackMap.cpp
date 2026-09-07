@@ -1,10 +1,10 @@
-#include "ProTrackMap.h"
-#include "../ui_scale.hpp"
-#include "../../core/WorldSnapshot.h"
-#include "../../racing/RaceManager.h"
-#include "../../rendering/Interpolation.h"
-#include "../../vehicle/Vehicle.h"
-#include "../UI_Config.h"
+#include "ui/pro/ProTrackMap.h"
+#include "ui/ui_scale.hpp"
+#include "core/WorldSnapshot.h"
+#include "racing/RaceManager.h"
+#include "rendering/Interpolation.h"
+#include "vehicle/Vehicle.h"
+#include "ui/UI_Config.h"
 #include <imgui.h>
 #include <mutex>
 #include <vector>

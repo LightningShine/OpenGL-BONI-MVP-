@@ -1,6 +1,6 @@
-#include "ProChannels.h"
-#include "../../core/WorldSnapshot.h"
-#include "../../vehicle/Vehicle.h"
+#include "ui/pro/ProChannels.h"
+#include "core/WorldSnapshot.h"
+#include "vehicle/Vehicle.h"
 #include <imgui.h>
 #include <cstdio>
 

@@ -1,11 +1,11 @@
-#include "SyntheticTelemetry.h"
+#include "network/SyntheticTelemetry.h"
 
-#include "ESP32_Code.h"
-#include "ReplayPlayer.h"
-#include "TelemetryIngest.h"
-#include "../Config.h"
-#include "../input/Input.h"
-#include "../rendering/Interpolation.h"
+#include "network/ESP32_Code.h"
+#include "network/ReplayPlayer.h"
+#include "network/TelemetryIngest.h"
+#include "core/Config.h"
+#include "input/Input.h"
+#include "rendering/Interpolation.h"
 
 #include <algorithm>
 #include <atomic>

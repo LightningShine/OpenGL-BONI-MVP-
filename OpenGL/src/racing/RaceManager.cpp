@@ -1,12 +1,12 @@
-#include "RaceManager.h"
-#include "LapClock.h"
-#include "../core/AppPaths.h"
-#include "../core/WorldSnapshot.h"
-#include "../vehicle/Vehicle.h"
-#include "../rendering/Interpolation.h"
-#include "../network/ReplayPlayer.h"   // replay_is_active — повтор ничего не сохраняет
-#include "../Config.h"
-#include "TimeDiffirence/TimeDiff.h"
+#include "racing/RaceManager.h"
+#include "racing/LapClock.h"
+#include "core/AppPaths.h"
+#include "core/WorldSnapshot.h"
+#include "vehicle/Vehicle.h"
+#include "rendering/Interpolation.h"
+#include "network/ReplayPlayer.h"   // replay_is_active — повтор ничего не сохраняет
+#include "core/Config.h"
+#include "racing/TimeDiff.h"
 #include <iostream>
 #include <fstream>
 #include <iomanip>

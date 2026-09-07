@@ -87,7 +87,7 @@ source/repos/
 > На ARM-машинах (Windows on ARM) собирайте и запускайте **ARM64**-конфигурацию — x64-сборка с arm64-зависимостями vcpkg падает с 0xc000007b.
 
 ### Инсталлятор
-`installer.iss` — скрипт Inno Setup: пакует `x64\Release` (exe + все DLL, включая VC++ CRT), стили, Mesa3D-фоллбек (программный OpenGL для VM/RDP/старых GPU) и при необходимости ставит VC++ Redistributable. Готовый установщик: `Installer\BONI-Setup-x64.exe`.
+`installer/installer.iss` — скрипт Inno Setup: пакует `x64\Release` (exe + все DLL, включая VC++ CRT), ассеты, Mesa3D-фоллбек (программный OpenGL для VM/RDP/старых GPU) и при необходимости ставит VC++ Redistributable. Пути внутри скрипта относительные, собранный установщик кладётся в `installer/out/`.
 
 ## Использование
 
@@ -108,18 +108,43 @@ source/repos/
 | **Ctrl+колесо** | Зум текста панели (PRO-режим) |
 | **Esc** | Выход |
 
-## Структура проекта
+## Структура репозитория
+
+```
+OpenGL-BONI-MVP-/
+├── OpenGL.sln              решение (единственный проект)
+├── docs/                   документация: стандарты кода, ревью, заметки, отчёты
+├── installer/              Inno Setup: скрипт, redist (CP210x, VC++), out/ — готовый setup
+├── tools/                  вспомогательные скрипты (диагностика падений)
+└── OpenGL/                 проект приложения
+    ├── OpenGL.vcxproj
+    ├── CLAUDE.md           памятка по архитектуре для ИИ-агентов
+    ├── src/                исходники (корень путей #include)
+    ├── third_party/        вендоренные библиотеки: ImGui, GLM, glad, serialib, stb, json
+    ├── assets/             шрифты, иконки, изображения
+    ├── res/                app.rc + AppIcon.ico (ресурсы Windows)
+    └── saves/              данные приложения: tracks / results / replays / logs
+```
+
+### Исходники
 
 ```
 OpenGL/src/
-├── core/        главный цикл, инициализация GLFW/OpenGL
-├── network/     COM-приёмник (ESP32_Code), WebSocket-клиент Track Server, симулятор
+├── core/        главный цикл, инициализация GLFW/OpenGL, пути данных, реестр устройств
+├── input/       обработка клавиатуры и мыши
+├── logging/     журнал консоли, запись и экспорт телеметрии, импорт CSV
+├── network/     COM-приёмник (ESP32_Code), WebSocket-клиент Track Server, симулятор, реплеи
 ├── racing/      RaceManager, режимы/фазы гонки, старт-стоп, дельты
 ├── rendering/   отрисовка трека и машин, интерполяция, подписи
 ├── track/       запись трека по телеметрии, построение сплайнов, .trk2
-├── ui/          главный UI, аккаунты, PRO-панели (ui/pro/)
+├── ui/          главный UI (UI.cpp), настройки, аккаунты, pro/ (Pit Wall), race/ (табло)
 └── vehicle/     состояние машин
 ```
+
+Каталог `src` подключён как единственный корень заголовков, поэтому все
+внутренние `#include` пишутся от него: `#include "ui/pro/ProView.h"`,
+`#include "core/AppPaths.h"`. Относительных `../..` в проекте нет — файл можно
+перенести между каталогами, не переписывая пути у соседей.
 
 ## Лицензия
 

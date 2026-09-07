@@ -1,10 +1,10 @@
-#include "TrackReviewPanel.h"
+#include "ui/TrackReviewPanel.h"
 
-#include "../Config.h"
-#include "../rendering/Interpolation.h"
-#include "../track/TelemetryTrackBuilder.h"
-#include "../track/TrackEditor.h"
-#include "ui_scale.hpp"
+#include "core/Config.h"
+#include "rendering/Interpolation.h"
+#include "track/TelemetryTrackBuilder.h"
+#include "track/TrackEditor.h"
+#include "ui/ui_scale.hpp"
 
 #include <algorithm>
 #include <cmath>

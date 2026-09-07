@@ -1,7 +1,7 @@
-#include "ProSessionInfo.h"
-#include "../../core/WorldSnapshot.h"
-#include "../../input/Input.h"          // loaded_track_name
-#include "../../network/ReplayPlayer.h"
+#include "ui/pro/ProSessionInfo.h"
+#include "core/WorldSnapshot.h"
+#include "input/Input.h"          // loaded_track_name
+#include "network/ReplayPlayer.h"
 #include <imgui.h>
 #include <cstdio>
 #include <ctime>

@@ -6,9 +6,9 @@
 #include <array>
 #include <string>
 #include <vector>
-#include "../../vehicle/LapTypes.h"   // LapInfo — образец круга живёт здесь
-#include "../ui_scale.hpp"
-#include "../UI_Config.h"   // FONT_PT_RUSSO_SMALL — кегль подписи в шапке
+#include "vehicle/LapTypes.h"   // LapInfo — образец круга живёт здесь
+#include "ui/ui_scale.hpp"
+#include "ui/UI_Config.h"   // FONT_PT_RUSSO_SMALL — кегль подписи в шапке
 
 struct ProContext {
     ImFont* regular;   // Ubuntu Regular ~12px (menu size)
@@ -18,7 +18,7 @@ struct ProContext {
     ImFont* russo;     // Russo One small ~13px (panel labels/numbers)
     ImFont* jb;        // JetBrains Mono Bold ~32px (sector labels/times)
     void*   logoTex;
-    void*   numTex[9]; // styles/icons/PNG/1..9 PNG.png — иконки групп бокового меню
+    void*   numTex[9]; // assets/icons/PNG/1..9 PNG.png — иконки групп бокового меню
 };
 
 namespace Pro {

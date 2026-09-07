@@ -5,8 +5,8 @@
 #include <chrono>
 #include <mutex>
 #include <glm/glm.hpp>
-#include "../vehicle/Vehicle.h"
-#include "StopReset/StartStop.h"
+#include "vehicle/Vehicle.h"
+#include "racing/StartStop.h"
 
 // LapData is defined in Vehicle.h
 

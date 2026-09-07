@@ -1,4 +1,4 @@
-#include "DeviceRegistry.h"
+#include "core/DeviceRegistry.h"
 
 #include <sqlite3.h>
 

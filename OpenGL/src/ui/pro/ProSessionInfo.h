@@ -1,5 +1,5 @@
 #pragma once
-#include "ProView.h"
+#include "ui/pro/ProView.h"
 namespace Pro {
     // Панель LAP INFO переехала в LAPTIME (см. ProLaptime.cpp): позиция, секторы
     // и прошлый круг относятся к текущему кругу, и отдельное окно под них было

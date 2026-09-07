@@ -1,5 +1,5 @@
 #pragma once
-#include "ProView.h"
+#include "ui/pro/ProView.h"
 
 // Перегрузка одной осью — столбиком от нуля.
 //

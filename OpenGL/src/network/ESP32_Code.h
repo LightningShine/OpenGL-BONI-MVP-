@@ -1,5 +1,5 @@
 #pragma once
-#include "../network/Server.h"
+#include "network/Server.h"
 #include <serialib/serialib.h>
 #include <string>
 #include <vector>

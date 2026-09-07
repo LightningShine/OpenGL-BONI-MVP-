@@ -1,7 +1,7 @@
-#include "ProRelative.h"
-#include "../../core/WorldSnapshot.h"
-#include "../../racing/RaceManager.h"
-#include "../../vehicle/Vehicle.h"
+#include "ui/pro/ProRelative.h"
+#include "core/WorldSnapshot.h"
+#include "racing/RaceManager.h"
+#include "vehicle/Vehicle.h"
 #include <imgui.h>
 #include <vector>
 #include <string>

@@ -1,7 +1,7 @@
 ﻿#pragma once
-#include "Input.h"
-#include "../rendering/Interpolation.h"
-#include "../Config.h"
+#include "input/Input.h"
+#include "rendering/Interpolation.h"
+#include "core/Config.h"
 #include <filesystem>
 #include <fstream>
 

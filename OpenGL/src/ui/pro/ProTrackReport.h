@@ -1,5 +1,5 @@
 #pragma once
-#include "ProView.h"
+#include "ui/pro/ProView.h"
 
 // Карта трассы с РЕАЛЬНОЙ линией проезда — аналог Track Report в MoTeC.
 //

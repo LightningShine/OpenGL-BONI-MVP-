@@ -1,7 +1,7 @@
 #pragma once
 
-#include "../racing/RaceManager.h"
-#include "../vehicle/Vehicle.h"
+#include "racing/RaceManager.h"
+#include "vehicle/Vehicle.h"
 
 #include <array>
 #include <cstdint>

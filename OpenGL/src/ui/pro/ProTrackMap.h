@@ -1,5 +1,5 @@
 #pragma once
-#include "ProView.h"
+#include "ui/pro/ProView.h"
 namespace Pro {
     // Per-sector display state: live while the sector runs, completed value of
     // the current lap, or the previous lap's value until the sector restarts.

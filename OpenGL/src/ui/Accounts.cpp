@@ -1,4 +1,4 @@
-#include "Accounts.h"
+#include "ui/Accounts.h"
 
 #include <cstring>
 #include <string>
@@ -6,8 +6,8 @@
 
 #include <imgui/imgui.h>
 
-#include "UI_Config.h"
-#include "../network/TrackServerClient.h"
+#include "ui/UI_Config.h"
+#include "network/TrackServerClient.h"
 
 namespace AccountsPanel {
 namespace {

@@ -1,4 +1,4 @@
-#include "TrackServerClient.h"
+#include "network/TrackServerClient.h"
 
 #include <atomic>
 #include <cctype>
@@ -18,10 +18,10 @@
 #include <winhttp.h>
 #pragma comment(lib, "winhttp.lib")
 
-#include "Server.h"             // TelemetryPacket (rajagp_core alias)
-#include "SimulationServer.h"   // processIncomingTelemetry
-#include "../vehicle/Vehicle.h" // g_vehicles authoritative timing update
-#include "../input/Input.h"     // g_map_origin (map origin from the track frame)
+#include "network/Server.h"             // TelemetryPacket (rajagp_core alias)
+#include "network/SimulationServer.h"   // processIncomingTelemetry
+#include "vehicle/Vehicle.h" // g_vehicles authoritative timing update
+#include "input/Input.h"     // g_map_origin (map origin from the track frame)
 
 #include <GeographicLib/UTMUPS.hpp>
 

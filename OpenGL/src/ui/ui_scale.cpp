@@ -1,6 +1,6 @@
-#include "ui_scale.hpp"
+#include "ui/ui_scale.hpp"
 
-#include "UI_Config.h"
+#include "ui/UI_Config.h"
 
 #include <GLFW/glfw3.h>
 

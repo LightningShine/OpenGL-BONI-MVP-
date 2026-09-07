@@ -1,7 +1,7 @@
-#include "CsvImport.h"
+#include "logging/CsvImport.h"
 
-#include "TelemetryLog.h"
-#include "../input/Input.h"          // loaded_track_path
+#include "logging/TelemetryLog.h"
+#include "input/Input.h"          // loaded_track_path
 
 #include <rajagp/Crc.h>
 #include <rajagp/Protocol.h>

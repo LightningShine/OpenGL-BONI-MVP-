@@ -1,8 +1,8 @@
-#include "ProLaptime.h"
-#include "ProTrackMap.h"   // GetSectorSnapshot — секторы того же момента, что и карта
-#include "../../core/WorldSnapshot.h"
-#include "../../racing/RaceManager.h"
-#include "../../vehicle/Vehicle.h"
+#include "ui/pro/ProLaptime.h"
+#include "ui/pro/ProTrackMap.h"   // GetSectorSnapshot — секторы того же момента, что и карта
+#include "core/WorldSnapshot.h"
+#include "racing/RaceManager.h"
+#include "vehicle/Vehicle.h"
 #include <imgui.h>
 #include <cstdio>
 #include <cmath>

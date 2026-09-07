@@ -1,7 +1,7 @@
 #pragma once
 
-#include "../logging/TelemetryLog.h"
-#include "../network/Server.h"
+#include "logging/TelemetryLog.h"
+#include "network/Server.h"
 
 #include <cstdint>
 

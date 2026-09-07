@@ -1,17 +1,17 @@
-#include "ReplayPlayer.h"
+#include "network/ReplayPlayer.h"
 
-#include "ESP32_Code.h"
-#include "../input/Input.h"   // loaded_track_name
-#include "SimulationServer.h"
-#include "SyntheticTelemetry.h"
-#include "TelemetryIngest.h"
-#include "../logging/TelemetryLog.h"
-#include "../racing/RaceManager.h"
-#include "../vehicle/Vehicle.h"
-#include "../vehicle/VehicleInterpolator.h"
+#include "network/ESP32_Code.h"
+#include "input/Input.h"   // loaded_track_name
+#include "network/SimulationServer.h"
+#include "network/SyntheticTelemetry.h"
+#include "network/TelemetryIngest.h"
+#include "logging/TelemetryLog.h"
+#include "racing/RaceManager.h"
+#include "vehicle/Vehicle.h"
+#include "vehicle/VehicleInterpolator.h"
 
-#include "../Config.h"
-#include "../core/AppPaths.h"
+#include "core/Config.h"
+#include "core/AppPaths.h"
 
 #include <rajagp/RajaParser.h>
 

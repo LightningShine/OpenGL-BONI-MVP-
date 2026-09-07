@@ -1,8 +1,8 @@
-#include "ProSectors.h"
-#include "../../core/WorldSnapshot.h"
-#include "../../network/ReplayPlayer.h"
-#include "../../rendering/Interpolation.h"
-#include "../../vehicle/Vehicle.h"
+#include "ui/pro/ProSectors.h"
+#include "core/WorldSnapshot.h"
+#include "network/ReplayPlayer.h"
+#include "rendering/Interpolation.h"
+#include "vehicle/Vehicle.h"
 #include <imgui.h>
 #include <array>
 #include <mutex>

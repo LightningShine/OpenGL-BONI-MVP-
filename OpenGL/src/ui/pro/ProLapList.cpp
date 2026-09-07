@@ -1,8 +1,8 @@
-#include "ProLapList.h"
-#include "../../core/WorldSnapshot.h"
-#include "../../racing/RaceManager.h"
-#include "../../network/ReplayPlayer.h"
-#include "../../vehicle/Vehicle.h"
+#include "ui/pro/ProLapList.h"
+#include "core/WorldSnapshot.h"
+#include "racing/RaceManager.h"
+#include "network/ReplayPlayer.h"
+#include "vehicle/Vehicle.h"
 #include <imgui.h>
 #include <cmath>
 #include <cstdio>

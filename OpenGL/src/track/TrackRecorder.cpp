@@ -1,9 +1,9 @@
-#include "TrackRecorder.h"
+#include "track/TrackRecorder.h"
 
-#include "../Config.h"
-#include "../input/Input.h"
-#include "../rendering/Interpolation.h"
-#include "../network/Server.h"
+#include "core/Config.h"
+#include "input/Input.h"
+#include "rendering/Interpolation.h"
+#include "network/Server.h"
 
 #include <algorithm>
 #include <cstdint>

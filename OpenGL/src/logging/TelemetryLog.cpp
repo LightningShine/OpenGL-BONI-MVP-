@@ -1,6 +1,6 @@
-#include "TelemetryLog.h"
+#include "logging/TelemetryLog.h"
 
-#include "../input/Input.h"   // loaded_track_name
+#include "input/Input.h"   // loaded_track_name
 
 #include <atomic>
 #include <cctype>
@@ -19,7 +19,7 @@
 
 // Арифметика времени с учётом полуночи — одна реализация на хронометраж и на
 // чтение записей, чтобы повтор считал время ровно так же, как живой заезд.
-#include "../racing/LapClock.h"
+#include "racing/LapClock.h"
 
 namespace logging
 {

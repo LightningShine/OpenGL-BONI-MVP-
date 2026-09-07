@@ -1,6 +1,6 @@
-#include "ProGForce.h"
-#include "../../core/WorldSnapshot.h"
-#include "../../vehicle/Vehicle.h"
+#include "ui/pro/ProGForce.h"
+#include "core/WorldSnapshot.h"
+#include "vehicle/Vehicle.h"
 #include <imgui.h>
 #include <cmath>
 #include <cstdio>

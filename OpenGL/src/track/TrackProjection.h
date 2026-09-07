@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../rendering/Interpolation.h"
+#include "rendering/Interpolation.h"
 
 #include <cstddef>
 #include <vector>

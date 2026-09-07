@@ -1,10 +1,10 @@
-#include "TelemetryTrackBuilder.h"
+#include "track/TelemetryTrackBuilder.h"
 
-#include "../Config.h"
-#include "../core/AppPaths.h"
-#include "../input/Input.h"
-#include "../network/Server.h"
-#include "../rendering/Interpolation.h"
+#include "core/Config.h"
+#include "core/AppPaths.h"
+#include "input/Input.h"
+#include "network/Server.h"
+#include "rendering/Interpolation.h"
 
 #include <GeographicLib/UTMUPS.hpp>
 

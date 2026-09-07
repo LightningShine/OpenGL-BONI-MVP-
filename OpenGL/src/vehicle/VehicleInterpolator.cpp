@@ -1,5 +1,5 @@
-#include "VehicleInterpolator.h"
-#include "../Config.h"
+#include "vehicle/VehicleInterpolator.h"
+#include "core/Config.h"
 #include <algorithm>
 #include <cmath>
 #include <iostream>

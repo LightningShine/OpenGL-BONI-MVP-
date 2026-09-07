@@ -1,5 +1,5 @@
 #pragma once
-#include "ProView.h"
+#include "ui/pro/ProView.h"
 namespace Pro {
     // Многоканальный график ТЕКУЩЕГО круга (скорость, перегрузки, ускорение,
     // торможение) с ползунком перемотки повтора. Реализация — ProGraphs.cpp.

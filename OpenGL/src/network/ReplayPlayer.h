@@ -3,7 +3,7 @@
 // Только типы круга, не весь Vehicle.h: тот тянет ввод и сетевой заголовок, а
 // вместе с ними winsock — в чужой единице трансляции это ломает сборку
 // порядком включений.
-#include "../vehicle/LapTypes.h"
+#include "vehicle/LapTypes.h"
 
 #include <cstdint>
 #include <filesystem>

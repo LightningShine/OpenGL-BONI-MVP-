@@ -15,14 +15,46 @@ msbuild OpenGL.sln /p:Configuration=Release /p:Platform=ARM64
 ```
 
 - **ARM64** — быстрый локальный dev-таргет на этой машине (Windows on ARM), бинарь `ARM64\Release\OpenGL.exe`. Ранее x64 падал с 0xc000007b, когда для x64-триплета vcpkg не были поставлены зависимости и подхватывались arm64-DLL.
-- **x64** — целевая платформа для дистрибутива: `installer.iss` собирает сетап именно из `x64\Release`. Бинарь `x64\Release\OpenGL.exe` собирается и запускается (на ARM — под эмуляцией). Собирать x64 нужно перед пересборкой инсталлятора.
+- **x64** — целевая платформа для дистрибутива: `installer/installer.iss` собирает сетап именно из `x64\Release`. Бинарь `x64\Release\OpenGL.exe` собирается и запускается (на ARM — под эмуляцией). Собирать x64 нужно перед пересборкой инсталлятора.
 - Зависимости из vcpkg в `C:\vcpkg` (`glfw3`, `geographiclib`, `sqlite3`); триплет выбирается автоматически по платформе. **sqlite3 обязателен для ОБОИХ триплетов**: `vcpkg install sqlite3:arm64-windows` и `vcpkg install sqlite3:x64-windows` (иначе линковка/запуск падают — БД реестра устройств, см. `src/core/DeviceRegistry`). `sqlite3.dll` разворачивается applocal-деплоем рядом с exe, инсталлятор забирает его вайлдкардом `*.dll`.
 - **Жёсткое требование**: рядом с этим репозиторием должен лежать закрытый репозиторий `RAJAGP Server` (`..\..\RAJAGP Server\` относительно vcxproj). Клиент компилирует из него исходники протокола `rajagp_core` (`core\src\Crc.cpp`, `core\src\RajaParser.cpp`) и подключает `core\include`. Без него сборка не пройдёт.
 - Автотестов и линтера в проекте нет.
 
 ## Архитектура
 
-Весь код — в `OpenGL/`. Точка входа и главный цикл: `src/core/main.cpp`.
+Раскладка репозитория:
+
+```
+OpenGL-BONI-MVP-/
+├── OpenGL.sln
+├── docs/          стандарты кода, ревью, заметки, отчёты
+├── installer/     Inno Setup: installer.iss, redist/, out/
+├── tools/         вспомогательные скрипты
+└── OpenGL/        проект приложения
+    ├── src/          исходники — ЕДИНСТВЕННЫЙ корень #include
+    ├── third_party/  вендоренные библиотеки (include/, lib/, glad/)
+    ├── assets/       шрифты, иконки, изображения
+    ├── res/          app.rc + AppIcon.ico
+    └── saves/        данные приложения (tracks/results/replays/logs)
+```
+
+Весь код — в `OpenGL/src/`. Точка входа и главный цикл: `src/core/main.cpp`.
+
+### Пути в #include
+
+`$(ProjectDir)src` подключён как корень заголовков, поэтому внутренние
+включения пишутся ОТ НЕГО и только так:
+
+```cpp
+#include "core/AppPaths.h"
+#include "ui/pro/ProView.h"
+```
+
+Относительных `../..` в проекте нет. Это не косметика: пока пути считались от
+файла, любой перенос файла ломал включения у соседей, и одна и та же шапка
+писалась тремя разными способами. Вендоренные библиотеки — угловыми скобками
+(`<imgui.h>`, `<glm/glm.hpp>`, `<serialib/serialib.h>`), их каталог тоже на
+`IncludePath`.
 
 ### Источники данных → пайплайн телеметрии
 
@@ -38,14 +70,14 @@ msbuild OpenGL.sln /p:Configuration=Release /p:Platform=ARM64
 
 ### Хронометраж
 
-`src/racing/RaceManager.*` считает круги, секторы, дельты и позиции локально по положению машин (для COM/симулятора). При подключении к Track Server тайминги сервера авторитетны и пишутся в `g_vehicles` (`serverPosition` = 0 означает локальную сессию). Режимы гонки (Circuit/Time Attack/Rally) и фазы (Practice → Race → Finishing → Finished) — в `src/racing/ModeManager/` и `StopReset/`.
+`src/racing/RaceManager.*` считает круги, секторы, дельты и позиции локально по положению машин (для COM/симулятора). При подключении к Track Server тайминги сервера авторитетны и пишутся в `g_vehicles` (`serverPosition` = 0 означает локальную сессию). Режимы гонки (Circuit/Time Attack/Rally) и фазы (Practice → Race → Finishing → Finished) — в `src/racing/ModeManager.h` и `StartStop.*`.
 
-### UI — важная ловушка
+### UI
 
-- `OpenGL/UI.cpp`, `UI.h`, `UI_Elements.cpp`, `UI_Elements.h` в **корне проекта** — это реальные компилируемые файлы главного UI (большие, легаси).
-- `OpenGL/src/ui/UI.cpp` и `src/ui/UI.h` существуют, но **не включены в vcxproj — их правка ничего не меняет**. При сомнениях проверяйте `<ClCompile>` в `OpenGL.vcxproj`.
-- Новый UI — модульный в `src/ui/`: `pro/` (PRO-экран Pit Wall — ProView + по файлу на плавающую панель: Laptime, LapList, SessionInfo, Sectors, TrackMap, TrackReport, GForce, Channels, Graphs, Events), `UIRaceManager/` (табло, флаги, статус-бар), `Accounts` (админ-токены), `ui_scale.*` (DPI-масштабирование по мониторам с пересборкой шрифтов при смене монитора).
-- Масштабы каналов панелей хранятся в `pro_scales.ini`, раскладка ImGui — в `imgui.ini` (оба в `OpenGL/`, отслеживаются git и часто «грязные» — обычно не предназначены для коммита).
+- `src/ui/UI.cpp` (~200 КБ) и `UI_Elements.cpp` — главный UI, легаси, но живой и компилируемый. Раньше эти файлы лежали в корне проекта, а рядом в `src/ui/` лежали одноимённые пустышки, не включённые в сборку: правка «того самого» файла ничего не меняла. Пустышек больше нет, дубля имён тоже — файл ровно один.
+- Модульный UI — рядом, в `src/ui/`: `pro/` (PRO-экран Pit Wall — ProView + по файлу на плавающую панель: Laptime, LapList, SessionInfo, Sectors, TrackMap, TrackReport, GForce, Channels, Graphs, Events), `race/` (табло, флаги, статус-бар), `Accounts` (админ-токены), `SettingsPanel`, `ui_scale.*` (DPI-масштабирование по мониторам с пересборкой шрифтов при смене монитора).
+- Локальное состояние — `imgui.ini` (раскладка), `pro_scales.ini`, `pro_panels.ini`, `ui_scale.ini`, `recent_files.txt`, `devices.db` — пишется рядом с рабочим каталогом и **в git не versionируется**: у каждого своё, коммитить нечего.
+- Шрифты, иконки и картинки — в `assets/` (пути к ним заданы в `src/ui/UI_Config.h`, отсчитываются от рабочего каталога).
 
 ### Каталоги данных
 
@@ -57,7 +89,7 @@ msbuild OpenGL.sln /p:Configuration=Release /p:Platform=ARM64
 
 ### Сторонние библиотеки
 
-Вендоренные библиотеки — в `libraries/include/` (ImGui, заголовки GLFW и GeographicLib, serialib, stb, nlohmann/json) — их не редактируем. `src/thirdparty/glad.c` — сгенерированный файл.
+Вендоренные библиотеки — в `third_party/include/` (ImGui, GLM, заголовки GLFW и GeographicLib, serialib, stb, nlohmann/json) — их не редактируем. `third_party/glad/glad.c` — сгенерированный файл, `third_party/lib/` — статические библиотеки.
 
 ---
 

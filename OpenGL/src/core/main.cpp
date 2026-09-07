@@ -15,7 +15,7 @@
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
 #include <fstream>
-#include "../../libraries/include/stb_image.h"
+#include <stb_image.h>
 
 
 // === WINDOWS BORDER COLOR ===
@@ -35,29 +35,29 @@
 
 // =================================
 // === PROJECTS FILES ===
-#include "../Config.h"
-#include "../ui/UI_Config.h"
-#include "../ui/ui_scale.hpp"
-#include "AppPaths.h"
-#include "DeviceRegistry.h"
-#include "../logging/ConsoleLog.h"
-#include "../network/SyntheticTelemetry.h"
-#include "../network/ReplayPlayer.h"
-#include "../input/Input.h"
-#include "../rendering/Interpolation.h"
-#include "../rendering/Render.h"          
-#include "../rendering/VehicleNameRenderer.h"
-#include "../../UI.h"
-#include "../../UI_Elements.h"
-#include "../network/Server.h"
-#include "../network/TrackServerClient.h"
-#include "../network/ESP32_Code.h"
-#include "../network/SimulationServer.h"
-#include "../track/TrackRecorder.h"
-#include "../vehicle/Vehicle.h"
-#include "../racing/RaceManager.h"
-#include "../racing/ModeManager/ModeManager.h"
-#include "../ui/pro/ProView.h"   // Pro::FlushPanelSettings на выходе
+#include "core/Config.h"
+#include "ui/UI_Config.h"
+#include "ui/ui_scale.hpp"
+#include "core/AppPaths.h"
+#include "core/DeviceRegistry.h"
+#include "logging/ConsoleLog.h"
+#include "network/SyntheticTelemetry.h"
+#include "network/ReplayPlayer.h"
+#include "input/Input.h"
+#include "rendering/Interpolation.h"
+#include "rendering/Render.h"          
+#include "rendering/VehicleNameRenderer.h"
+#include "ui/UI.h"
+#include "ui/UI_Elements.h"
+#include "network/Server.h"
+#include "network/TrackServerClient.h"
+#include "network/ESP32_Code.h"
+#include "network/SimulationServer.h"
+#include "track/TrackRecorder.h"
+#include "vehicle/Vehicle.h"
+#include "racing/RaceManager.h"
+#include "racing/ModeManager.h"
+#include "ui/pro/ProView.h"   // Pro::FlushPanelSettings на выходе
 
 
 using namespace std;
@@ -871,9 +871,9 @@ int main(int argc, char** argv)
 	// === SET WINDOW ICON ===
 	{
 		int icon_w = 0, icon_h = 0, icon_channels = 0;
-		unsigned char* icon_pixels = stbi_load("styles/images/Icon", &icon_w, &icon_h, &icon_channels, 4);
+		unsigned char* icon_pixels = stbi_load("assets/images/Icon", &icon_w, &icon_h, &icon_channels, 4);
 		if (!icon_pixels)
-			icon_pixels = stbi_load("./styles/icons/PNG/Icon.png", &icon_w, &icon_h, &icon_channels, 4);
+			icon_pixels = stbi_load("./assets/icons/PNG/Icon.png", &icon_w, &icon_h, &icon_channels, 4);
 		if (icon_pixels)
 		{
 			GLFWimage icon_image;
@@ -882,11 +882,11 @@ int main(int argc, char** argv)
 			icon_image.pixels = icon_pixels;
 			glfwSetWindowIcon(window, 1, &icon_image);
 			stbi_image_free(icon_pixels);
-			std::cout << "[MAIN] Window icon set from styles/images/Icon" << std::endl;
+			std::cout << "[MAIN] Window icon set from assets/images/Icon" << std::endl;
 		}
 		else
 		{
-			std::cerr << "[MAIN] Warning: Could not load window icon from styles/images/Icon(.png)" << std::endl;
+			std::cerr << "[MAIN] Warning: Could not load window icon from assets/images/Icon(.png)" << std::endl;
 		}
 	}
 

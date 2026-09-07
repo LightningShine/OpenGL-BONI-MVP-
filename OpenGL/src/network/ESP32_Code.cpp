@@ -1,9 +1,9 @@
-#include "../network/ESP32_Code.h"
-#include "SimulationServer.h"
-#include "ReplayPlayer.h"
-#include "SyntheticTelemetry.h"
-#include "TelemetryIngest.h"
-#include "../Config.h"
+#include "network/ESP32_Code.h"
+#include "network/SimulationServer.h"
+#include "network/ReplayPlayer.h"
+#include "network/SyntheticTelemetry.h"
+#include "network/TelemetryIngest.h"
+#include "core/Config.h"
 #include <iostream>
 #include <thread>
 #include <chrono>

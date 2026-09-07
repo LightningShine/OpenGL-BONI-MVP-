@@ -1,9 +1,9 @@
-#include "ProEvents.h"
-#include "../../core/WorldSnapshot.h"
-#include "../../racing/RaceManager.h"
-#include "../../vehicle/Vehicle.h"
-#include "../../network/ReplayPlayer.h"
-#include "../../network/TrackServerClient.h"
+#include "ui/pro/ProEvents.h"
+#include "core/WorldSnapshot.h"
+#include "racing/RaceManager.h"
+#include "vehicle/Vehicle.h"
+#include "network/ReplayPlayer.h"
+#include "network/TrackServerClient.h"
 #include <imgui.h>
 #include <mutex>
 #include <deque>

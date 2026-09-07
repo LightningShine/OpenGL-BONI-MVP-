@@ -1,7 +1,7 @@
-#include "ProGraphs.h"
-#include "../../core/WorldSnapshot.h"
-#include "../../network/ReplayPlayer.h"
-#include "../../vehicle/Vehicle.h"
+#include "ui/pro/ProGraphs.h"
+#include "core/WorldSnapshot.h"
+#include "network/ReplayPlayer.h"
+#include "vehicle/Vehicle.h"
 #include <imgui.h>
 #include <algorithm>
 #include <cmath>

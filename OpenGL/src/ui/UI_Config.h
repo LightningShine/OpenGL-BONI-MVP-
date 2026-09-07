@@ -1,6 +1,6 @@
 ﻿#pragma once
 
-#include "ui_scale.hpp"
+#include "ui/ui_scale.hpp"
 
 // ============================================================================
 // UI CONFIGURATION
@@ -56,17 +56,17 @@ static constexpr float FONT_SIZE_TITLE = 24.0f / BASE_HEIGHT;      // 0.026667 (
 static constexpr float FONT_SIZE_RACE = 24.0f / BASE_HEIGHT;       // 0.026667 (2.67%)
 
 // Font paths (relative to executable)
-static constexpr const char* FONT_PATH_UBUNTU_REGULAR = "styles/fonts/Ubuntu/Ubuntu-Regular.ttf";
-static constexpr const char* FONT_PATH_UBUNTU_BOLD = "styles/fonts/Ubuntu/Ubuntu-Bold.ttf";
-static constexpr const char* FONT_PATH_F1 = "styles/fonts/F1-Font-Family/Formula1-Regular-1.ttf";
-static constexpr const char* FONT_PATH_RUSSO_ONE = "styles/fonts/Russo_One/RussoOne-Regular.ttf";
+static constexpr const char* FONT_PATH_UBUNTU_REGULAR = "assets/fonts/Ubuntu/Ubuntu-Regular.ttf";
+static constexpr const char* FONT_PATH_UBUNTU_BOLD = "assets/fonts/Ubuntu/Ubuntu-Bold.ttf";
+static constexpr const char* FONT_PATH_F1 = "assets/fonts/F1-Font-Family/Formula1-Regular-1.ttf";
+static constexpr const char* FONT_PATH_RUSSO_ONE = "assets/fonts/RussoOne/RussoOne-Regular.ttf";
 // Roboto Mono отсутствует в ассетах — вместо него грузим JetBrains Mono,
 // иначе на старте сыпался warning и шрифт подменялся дефолтным ImGui.
-static constexpr const char* FONT_PATH_ROBOTO_MONO = "styles/fonts/JetBrains_Mono/JetBrainsMono-Regular.ttf";
-static constexpr const char* FONT_PATH_OSWALD = "styles/fonts/Oswald/ttf/Oswald-Regular.ttf";
-static constexpr const char* FONT_PATH_OSWALD_BOLD = "styles/fonts/Oswald/ttf/Oswald-Bold.ttf";
-static constexpr const char* FONT_PATH_JETBRAINS_MONO = "styles/fonts/JetBrains_Mono/JetBrainsMono-Regular.ttf";
-static constexpr const char* FONT_PATH_JETBRAINS_MONO_BOLD = "styles/fonts/JetBrains Mono/ttf/JetBrainsMono-Bold.ttf";
+static constexpr const char* FONT_PATH_ROBOTO_MONO = "assets/fonts/JetBrainsMono/JetBrainsMono-Regular.ttf";
+static constexpr const char* FONT_PATH_OSWALD = "assets/fonts/Oswald/Oswald-Regular.ttf";
+static constexpr const char* FONT_PATH_OSWALD_BOLD = "assets/fonts/Oswald/Oswald-Bold.ttf";
+static constexpr const char* FONT_PATH_JETBRAINS_MONO = "assets/fonts/JetBrainsMono/JetBrainsMono-Regular.ttf";
+static constexpr const char* FONT_PATH_JETBRAINS_MONO_BOLD = "assets/fonts/JetBrainsMono/JetBrainsMono-Bold.ttf";
 
 // ============================================================================
 // MENU BAR SETTINGS (as ratios)

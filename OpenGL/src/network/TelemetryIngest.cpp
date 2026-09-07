@@ -1,9 +1,9 @@
-#include "TelemetryIngest.h"
+#include "network/TelemetryIngest.h"
 
-#include "SimulationServer.h"
-#include "../Config.h"
-#include "../core/AppPaths.h"
-#include "../input/Input.h"   // loaded_track_path
+#include "network/SimulationServer.h"
+#include "core/Config.h"
+#include "core/AppPaths.h"
+#include "input/Input.h"   // loaded_track_path
 
 #include <atomic>
 #include <memory>

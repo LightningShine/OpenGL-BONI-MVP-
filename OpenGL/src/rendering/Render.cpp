@@ -1,9 +1,9 @@
-﻿#include "Render.h"
-#include "Interpolation.h"
-#include "../Config.h"
-#include "../vehicle/Vehicle.h"
-#include "../input/Input.h"  //  g_is_map_loaded
-#include "../racing/RaceManager.h"  // For RaceManager
+﻿#include "rendering/Render.h"
+#include "rendering/Interpolation.h"
+#include "core/Config.h"
+#include "vehicle/Vehicle.h"
+#include "input/Input.h"  //  g_is_map_loaded
+#include "racing/RaceManager.h"  // For RaceManager
 #include <iostream>
 
 // ============================================================================

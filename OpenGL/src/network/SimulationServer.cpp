@@ -1,18 +1,18 @@
-#include "../network/SimulationServer.h"
-#include "../network/ESP32_Code.h"
-#include "../network/ReplayPlayer.h"
-#include "../network/Server.h"
-#include "../vehicle/Vehicle.h"
-#include "../vehicle/VehicleInterpolator.h"
-#include "../input/Input.h"
-#include "../rendering/Interpolation.h"
-#include "../Config.h"
-#include "../racing/RaceManager.h"
-#include "../racing/LapClock.h"
-#include "../track/TrackProjection.h"
-#include "../track/TrackRecorder.h"
-#include "../track/TelemetryTrackBuilder.h"
-#include "../core/DeviceRegistry.h"
+#include "network/SimulationServer.h"
+#include "network/ESP32_Code.h"
+#include "network/ReplayPlayer.h"
+#include "network/Server.h"
+#include "vehicle/Vehicle.h"
+#include "vehicle/VehicleInterpolator.h"
+#include "input/Input.h"
+#include "rendering/Interpolation.h"
+#include "core/Config.h"
+#include "racing/RaceManager.h"
+#include "racing/LapClock.h"
+#include "track/TrackProjection.h"
+#include "track/TrackRecorder.h"
+#include "track/TelemetryTrackBuilder.h"
+#include "core/DeviceRegistry.h"
 #include <random>
 #include <chrono>
 #include <unordered_map>
@@ -24,7 +24,7 @@
 #include <iomanip>
 #include <array>
 #include <GeographicLib/UTMUPS.hpp>  // For accurate GPS conversion
-#include "../../UI.h"
+#include "ui/UI.h"
 
 extern UI* g_ui;
 

@@ -3,7 +3,7 @@
 // Только типы круга: писателю нужен ЗАМЕР, а не машина. Vehicle.h тянет ввод и
 // сетевой заголовок, а вместе с ними winsock — в чужой единице трансляции это
 // ломает сборку порядком включений.
-#include "../vehicle/LapTypes.h"
+#include "vehicle/LapTypes.h"
 
 #include <cstdint>
 #include <filesystem>

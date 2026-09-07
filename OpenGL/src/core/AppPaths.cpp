@@ -1,4 +1,4 @@
-#include "AppPaths.h"
+#include "core/AppPaths.h"
 
 #include <iostream>
 #include <string>

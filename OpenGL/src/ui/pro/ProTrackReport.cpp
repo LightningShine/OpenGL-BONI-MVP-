@@ -1,9 +1,9 @@
-#include "ProTrackReport.h"
-#include "../../Config.h"
-#include "../../network/ReplayPlayer.h"
-#include "../../core/WorldSnapshot.h"
-#include "../../rendering/Interpolation.h"
-#include "../../vehicle/Vehicle.h"
+#include "ui/pro/ProTrackReport.h"
+#include "core/Config.h"
+#include "network/ReplayPlayer.h"
+#include "core/WorldSnapshot.h"
+#include "rendering/Interpolation.h"
+#include "vehicle/Vehicle.h"
 #include <imgui.h>
 #include <algorithm>
 #include <cmath>

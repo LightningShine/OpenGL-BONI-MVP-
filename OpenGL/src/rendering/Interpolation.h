@@ -1,5 +1,5 @@
 ﻿#pragma once
-#include "../input/Input.h"
+#include "input/Input.h"
 #include <vector>
 #include <cstdint>
 #include <glm/glm.hpp>

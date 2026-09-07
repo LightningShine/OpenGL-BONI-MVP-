@@ -1,7 +1,7 @@
 #pragma once
 
-#include "../input/Input.h"
-#include "../rendering/Interpolation.h"
+#include "input/Input.h"
+#include "rendering/Interpolation.h"
 
 #include <cstdint>
 #include <vector>

@@ -1,8 +1,8 @@
 #pragma once
-#include "LapTypes.h"          // SECTOR_COUNT, LapData, LapInfo, CarLapSessions
-#include "../input/Input.h"
-#include "../network/Server.h"
-#include "../Config.h"
+#include "vehicle/LapTypes.h"          // SECTOR_COUNT, LapData, LapInfo, CarLapSessions
+#include "input/Input.h"
+#include "network/Server.h"
+#include "core/Config.h"
 #include <array>
 #include <map>
 #include <mutex>

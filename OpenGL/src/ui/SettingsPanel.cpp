@@ -1,4 +1,4 @@
-#include "SettingsPanel.h"
+#include "ui/SettingsPanel.h"
 
 #include <cstring>
 #include <cstdio>
@@ -10,8 +10,8 @@
 
 #include <imgui/imgui.h>
 
-#include "UI_Config.h"
-#include "../core/DeviceRegistry.h"
+#include "ui/UI_Config.h"
+#include "core/DeviceRegistry.h"
 
 #ifdef _WIN32
 #include <windows.h>

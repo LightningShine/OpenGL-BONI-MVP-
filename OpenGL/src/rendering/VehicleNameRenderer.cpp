@@ -1,6 +1,6 @@
-#include "VehicleNameRenderer.h"
+#include "rendering/VehicleNameRenderer.h"
 #include <glm/gtc/type_ptr.hpp>
-#include "../../libraries/include/imgui/imgui.h"
+#include <imgui.h>
 
 namespace VehicleNameRenderer
 {
