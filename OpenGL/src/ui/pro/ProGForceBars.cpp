@@ -81,8 +81,7 @@ void render_bar_panel(const ProContext& ctx, int32_t vehicleId, ImVec2 vpSz, flo
     ImGui::SetNextWindowSizeConstraints({90.f * ui, 90.f * ui}, {vpSz.x, vpSz.y});
 
     if (!ImGui::Begin(window, nullptr,
-        PanelFlags() | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse |
-        ImGuiWindowFlags_NoBringToFrontOnFocus)) {
+        PanelFlags() | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
         ImGui::End(); return;
     }
 

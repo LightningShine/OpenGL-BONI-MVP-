@@ -15,8 +15,7 @@ void RenderGForceWindow(const ProContext& ctx, int32_t vehicleId,
     ImGui::SetNextWindowSizeConstraints({120.f * ui, 120.f * ui}, {vpSz.x, vpSz.y});
 
     if (!ImGui::Begin("##GForce", nullptr,
-        PanelFlags() | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse |
-        ImGuiWindowFlags_NoBringToFrontOnFocus)) {
+        PanelFlags() | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
         ImGui::End(); return;
     }
 

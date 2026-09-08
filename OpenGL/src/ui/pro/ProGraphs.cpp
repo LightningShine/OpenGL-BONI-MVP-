@@ -306,8 +306,7 @@ void RenderGraphsWindow(const ProContext& ctx, int32_t vehicleId, ImVec2 vpSz, f
 
     ImGui::PushStyleColor(ImGuiCol_WindowBg, (ImVec4)ImColor(COL_BG));
     if (!ImGui::Begin("##Graphs", nullptr,
-        PanelFlags() | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse |
-        ImGuiWindowFlags_NoBringToFrontOnFocus)) {
+        PanelFlags() | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
         ImGui::End(); ImGui::PopStyleColor(); return;
     }
 

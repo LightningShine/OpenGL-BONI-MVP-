@@ -50,8 +50,7 @@ void RenderLapListWindow(const ProContext& ctx, int32_t vehicleId,
     ImGui::SetNextWindowSizeConstraints({150.f * ui, 100.f * ui}, {vpSz.x, vpSz.y});
 
     if (!ImGui::Begin("##LapList", nullptr,
-        PanelFlags() | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse |
-        ImGuiWindowFlags_NoBringToFrontOnFocus)) {
+        PanelFlags() | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
         ImGui::End(); return;
     }
 

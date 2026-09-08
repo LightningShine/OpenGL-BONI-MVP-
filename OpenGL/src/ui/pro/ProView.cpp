@@ -18,7 +18,9 @@
 #include "racing/StartStop.h"
 #include "ui/UI_Config.h"
 #include <imgui.h>
+#include <imgui_internal.h>   // BringWindowToDisplayFront — порядок окон
 #include <algorithm>
+#include <cstring>
 #include <memory>
 #include <mutex>
 #include <cstdio>
@@ -83,17 +85,53 @@ bool FlushPanelScales(bool force) {
     return true;
 }
 
+void PinChromeOnTop() {
+    // Пока открыт popup — выпадающий список канала, выбор режима, модальное
+    // окно — не трогаем ничего: popup обязан быть выше того, из чего он вырос,
+    // а поднятый хром накрыл бы его краем полосы.
+    if (ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel))
+        return;
+
+    // Указатели собираем заранее: BringWindowToDisplayFront переставляет
+    // элементы массива, и обход с одновременной правкой пропускал бы окна.
+    ImGuiContext& g = *ImGui::GetCurrentContext();
+    ImVector<ImGuiWindow*> flyouts;
+    for (ImGuiWindow* w : g.Windows)
+        if (strncmp(w->Name, "##flyout_", 9) == 0) flyouts.push_back(w);
+    for (ImGuiWindow* w : flyouts) ImGui::BringWindowToDisplayFront(w);
+
+    // Полосы меню поднимаются последними — они самый верхний слой экрана.
+    for (const char* name : {"##ProSidebar", "##BottomMenu", "##TopMenu"})
+        if (ImGuiWindow* w = ImGui::FindWindowByName(name))
+            ImGui::BringWindowToDisplayFront(w);
+}
+
 float PanelZoom(const char* key) {
     loadScales();
     auto it = g_panelScale.find(key);
     float sc = (it != g_panelScale.end()) ? it->second : 1.f;
 
     ImGuiIO& io = ImGui::GetIO();
+
+    // Флаги с дочерними окнами обязательны. У Channels, Events и LapList
+    // содержимое лежит в BeginChild-списке: как только курсор заходит в список
+    // (или щелчок делает его текущим), голые IsWindowHovered/IsWindowFocused у
+    // РОДИТЕЛЯ дают false — ImGui считает наведённым и сфокусированным ребёнка.
+    // Отсюда и было «Ctrl +/- работает не на всех окнах»: панели без списка
+    // масштабировались, панели со списком — нет.
+    const bool hovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows);
+    const bool focused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
+
+    // Клавиши уходят в панель ПОД КУРСОРОМ, а если курсор не над окном — в
+    // сфокусированную. Иначе одно нажатие меняло бы масштаб сразу двум панелям.
+    const bool keyTarget = hovered ||
+                           (focused && !ImGui::IsWindowHovered(ImGuiHoveredFlags_AnyWindow));
+
     bool changed = false;
-    if (ImGui::IsWindowHovered() && io.KeyCtrl && io.MouseWheel != 0.f) {
+    if (hovered && io.KeyCtrl && io.MouseWheel != 0.f) {
         sc += io.MouseWheel * 0.08f; changed = true;
     }
-    if (ImGui::IsWindowFocused() && io.KeyCtrl) {
+    if (keyTarget && io.KeyCtrl) {
         if (ImGui::IsKeyPressed(ImGuiKey_Equal, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadAdd, false))      { sc += 0.1f; changed = true; }
         if (ImGui::IsKeyPressed(ImGuiKey_Minus, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadSubtract, false)) { sc -= 0.1f; changed = true; }
     }
@@ -640,27 +678,39 @@ void Render(const ProContext& ctx, float swipeAnim) {
     const int32_t analysisId = AnalysisVehicle(vehicleId);
 
     // Панели рисуются только если включены в боковом меню (McLaren-style).
-    if (PanelVisible("LapList"))     RenderLapListWindow    (ctx, vehicleId, sz, panelTopH);
-    if (PanelVisible("Channels"))    RenderChannelsWindow   (ctx, analysisId, sz, panelTopH);
-    if (PanelVisible("SessionInfo")) RenderSessionInfoWindow(ctx, analysisId, sz, panelTopH);
+    // Панель, только что включённую в меню, поднимаем над остальными — окно
+    // могло существовать с прошлого показа и всплыло бы там, где его закрыли.
+    auto show = [](const char* key) {
+        if (!PanelVisible(key)) return false;
+        if (PanelJustShown(key)) ImGui::SetNextWindowFocus();
+        return true;
+    };
 
-    if (PanelVisible("TrackMap"))    RenderTrackMapWindow   (ctx, analysisId, sz, panelTopH);
-    if (PanelVisible("TrackReport")) RenderTrackReportWindow(ctx, analysisId, sz, panelTopH);
-    if (PanelVisible("Relative"))    RenderRelativeWindow   (ctx, analysisId, sz, panelTopH);
+    if (show("LapList"))     RenderLapListWindow    (ctx, vehicleId, sz, panelTopH);
+    if (show("Channels"))    RenderChannelsWindow   (ctx, analysisId, sz, panelTopH);
+    if (show("SessionInfo")) RenderSessionInfoWindow(ctx, analysisId, sz, panelTopH);
 
-    if (PanelVisible("Events"))      RenderEventsWindow     (ctx, sz, panelTopH);
-    if (PanelVisible("GForce"))      RenderGForceWindow     (ctx, analysisId, sz, panelTopH);
-    if (PanelVisible("GForceLong"))  RenderGForceLongWindow (ctx, analysisId, sz, panelTopH);
-    if (PanelVisible("GForceLat"))   RenderGForceLatWindow  (ctx, analysisId, sz, panelTopH);
-    if (PanelVisible("Graphs"))      RenderGraphsWindow     (ctx, analysisId, sz, panelTopH);
-    if (PanelVisible("Sectors"))     RenderSectorsWindow    (ctx, analysisId, sz, panelTopH);
-    if (PanelVisible("Laptime"))     RenderLaptimeWindow    (ctx, analysisId, sz, panelTopH);
+    if (show("TrackMap"))    RenderTrackMapWindow   (ctx, analysisId, sz, panelTopH);
+    if (show("TrackReport")) RenderTrackReportWindow(ctx, analysisId, sz, panelTopH);
+    if (show("Relative"))    RenderRelativeWindow   (ctx, analysisId, sz, panelTopH);
+
+    if (show("Events"))      RenderEventsWindow     (ctx, sz, panelTopH);
+    if (show("GForce"))      RenderGForceWindow     (ctx, analysisId, sz, panelTopH);
+    if (show("GForceLong"))  RenderGForceLongWindow (ctx, analysisId, sz, panelTopH);
+    if (show("GForceLat"))   RenderGForceLatWindow  (ctx, analysisId, sz, panelTopH);
+    if (show("Graphs"))      RenderGraphsWindow     (ctx, analysisId, sz, panelTopH);
+    if (show("Sectors"))     RenderSectorsWindow    (ctx, analysisId, sz, panelTopH);
+    if (show("Laptime"))     RenderLaptimeWindow    (ctx, analysisId, sz, panelTopH);
 
     ImGui::PopStyleColor(8);
     ImGui::PopStyleVar(5);
 
     // Боковое меню групп (правый край) — поверх всего, само управляет видимостью.
     RenderSidebar(ctx, sz, panelTopH, botH);
+
+    // Рама экрана — верхнее меню, нижняя строка, боковая полоса — возвращается
+    // наверх после того, как нарисованы все панели и их всплывающие списки.
+    PinChromeOnTop();
 
     // Настройки, изменённые в этом кадре, уходят на диск не сразу, а когда
     // оператор перестал их крутить.

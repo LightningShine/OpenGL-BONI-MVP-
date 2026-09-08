@@ -26,8 +26,7 @@ void RenderLaptimeWindow(const ProContext& ctx, int32_t vehicleId,
     ImGui::SetNextWindowSizeConstraints({170.f * ui, 120.f * ui}, {vpSz.x, vpSz.y});
 
     if (!ImGui::Begin("##Laptime", nullptr,
-        PanelFlags() | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse |
-        ImGuiWindowFlags_NoBringToFrontOnFocus)) {
+        PanelFlags() | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
         ImGui::End(); return;
     }
 

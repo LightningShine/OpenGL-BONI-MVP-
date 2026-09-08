@@ -268,8 +268,7 @@ void RenderTrackMapWindow(const ProContext& ctx, int32_t vehicleId,
 
     ImGui::PushStyleColor(ImGuiCol_WindowBg, (ImVec4)ImColor(COL_BG));
     if (!ImGui::Begin("##TrackMap", nullptr,
-        PanelFlags() | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse |
-        ImGuiWindowFlags_NoBringToFrontOnFocus)) {
+        PanelFlags() | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
         ImGui::End(); ImGui::PopStyleColor(); return;
     }
 

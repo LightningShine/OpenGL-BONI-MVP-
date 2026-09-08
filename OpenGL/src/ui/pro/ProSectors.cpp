@@ -260,8 +260,7 @@ void RenderSectorsWindow(const ProContext& ctx, int32_t vehicleId,
 
     ImGui::PushStyleColor(ImGuiCol_WindowBg, (ImVec4)ImColor(COL_BG_WIDGET));
     if (!ImGui::Begin("##Sectors", nullptr,
-        PanelFlags() | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse |
-        ImGuiWindowFlags_NoBringToFrontOnFocus)) {
+        PanelFlags() | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
         ImGui::End(); ImGui::PopStyleColor(); return;
     }
 

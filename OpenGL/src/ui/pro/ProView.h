@@ -61,6 +61,24 @@ static constexpr ImU32 COL_S3         = IM_COL32(220,  70,  70, 255);
 inline float pad_px()    { return ui_scale::points(10.f); } // horizontal content padding
 inline float header_h()  { return ui_scale::points(26.f); } // panel header height
 
+// ── Рабочая область PRO-экрана ──────────────────────────────────────────────
+// Верхнее меню и нижняя строка состояния — обычные окна ImGui (RenderTopMenu /
+// RenderBottomMenu). Они рисуются поверх, но НЕ убавляют viewport WorkPos и
+// WorkSize: ImGui сужает рабочую область только под свои главные меню.
+//
+// Клэмп панелей считал по полному вьюпорту, поэтому плавающее окно спокойно
+// уезжало шапкой под футер — а вытащить его было нечем: тянуть окно можно
+// только за ту самую шапку, и крестик закрытия уезжал вместе с ней.
+//
+// Все, кто держит плавающее окно внутри экрана, считают по ЭТОМУ прямоугольнику.
+struct WorkArea { ImVec2 pos, size; };
+inline WorkArea work_area() {
+    const ImGuiViewport* v = ImGui::GetMainViewport();
+    const float top = UIConfig::top_bar_px();
+    const float bot = UIConfig::bottom_bar_px();
+    return {{v->Pos.x, v->Pos.y + top}, {v->Size.x, v->Size.y - top - bot}};
+}
+
 // Layout lock — toggled from View menu; persists per session
 extern bool g_pro_layout_locked;
 
@@ -278,6 +296,21 @@ bool PanelVisible(const char* key);
 void SetPanelVisible(const char* key, bool v);
 void TogglePanel(const char* key);
 
+// Панель, которую включили в боковом меню в этом кадре, — ровно один раз на
+// каждое включение. По ней Render поднимает новое окно над остальными: ImGui
+// поднимает окно на клик и при СОЗДАНИИ, а повторный показ уже существовавшего
+// окна ни тем, ни другим не считается — панель всплывала бы под соседями.
+bool PanelJustShown(const char* key);
+
+// ── Порядок окон PRO-экрана ─────────────────────────────────────────────────
+// ImGui держит порядок отрисовки одним массивом окон: кто в нём последний, тот
+// сверху. Клик по панели переносит её в конец — то есть и над верхним меню, и
+// над нижней строкой, и над боковой полосой.
+//
+// Поэтому в конце кадра хром поднимается обратно. Панели при этом ходят друг
+// над другом свободно, а рама экрана всегда остаётся выше их всех.
+void PinChromeOnTop();
+
 // ── Panel header ─────────────────────────────────────────────────────────────
 // Draws a dark header bar at the current cursor position using DrawList
 // (does not affect ImGui cursor). Then advances cursor via Dummy.
@@ -297,11 +330,11 @@ inline void DrawPanelHeader(const ProContext& ctx, const char* label,
     // Во время DPI-перехода клэмп выключен (см. g_layout_freeze_frames).
     if (g_layout_freeze_frames <= 0)
     {
-        const ImGuiViewport* v = ImGui::GetMainViewport();
+        const WorkArea wa = work_area();
         ImVec2 ws = ImGui::GetWindowSize(), wp = ImGui::GetWindowPos();
-        ImVec2 ns = {fminf(ws.x, v->WorkSize.x), fminf(ws.y, v->WorkSize.y)};
-        ImVec2 np = {fminf(fmaxf(wp.x, v->WorkPos.x), v->WorkPos.x + v->WorkSize.x - ns.x),
-                     fminf(fmaxf(wp.y, v->WorkPos.y), v->WorkPos.y + v->WorkSize.y - ns.y)};
+        ImVec2 ns = {fminf(ws.x, wa.size.x), fminf(ws.y, wa.size.y)};
+        ImVec2 np = {fminf(fmaxf(wp.x, wa.pos.x), wa.pos.x + wa.size.x - ns.x),
+                     fminf(fmaxf(wp.y, wa.pos.y), wa.pos.y + wa.size.y - ns.y)};
         if (ns.x != ws.x || ns.y != ws.y) ImGui::SetWindowSize(ns);
         if (np.x != wp.x || np.y != wp.y) ImGui::SetWindowPos(np);
     }

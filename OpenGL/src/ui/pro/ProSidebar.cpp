@@ -92,10 +92,20 @@ bool PanelVisible(const char* key) {
     return (it != g_visible.end()) ? it->second : defaultVisible(key);
 }
 
+// Панель, включённую в этом кадре, Render поднимает над остальными.
+static std::string g_justShown;
+
 void SetPanelVisible(const char* key, bool v) {
     loadVis();
+    if (v && !PanelVisible(key)) g_justShown = key;
     g_visible[key] = v;
     saveVis();
+}
+
+bool PanelJustShown(const char* key) {
+    if (g_justShown != key) return false;
+    g_justShown.clear();
+    return true;
 }
 
 void TogglePanel(const char* key) { SetPanelVisible(key, !PanelVisible(key)); }
@@ -341,9 +351,10 @@ void RenderSidebar(const ProContext& ctx, ImVec2 vpSz, float topH, float botH) {
         ImVec2 fsz = flyoutSize(ctx, group, rowH, hdrH);
         ImVec2 anchor = iconAnchor[drawGroup];      // { левый край полосы, центр иконки Y }
         ImVec2 pos = { anchor.x - fsz.x, anchor.y - fsz.y * 0.5f };
-        if (pos.y < vp->WorkPos.y + 4.f) pos.y = vp->WorkPos.y + 4.f;
-        if (pos.y + fsz.y > vp->WorkPos.y + vp->WorkSize.y - 4.f)
-            pos.y = vp->WorkPos.y + vp->WorkSize.y - fsz.y - 4.f;
+        const WorkArea wa = work_area();
+        if (pos.y < wa.pos.y + 4.f) pos.y = wa.pos.y + 4.f;
+        if (pos.y + fsz.y > wa.pos.y + wa.size.y - 4.f)
+            pos.y = wa.pos.y + wa.size.y - fsz.y - 4.f;
 
         // Зона удержания: [левый край меню .. правый край полосы] × высота меню.
         ImVec2 m = ImGui::GetIO().MousePos;
@@ -370,9 +381,9 @@ void RenderSidebar(const ProContext& ctx, ImVec2 vpSz, float topH, float botH) {
 
             // Верх подменю — на уровне своей строки, но целиком внутри экрана.
             ImVec2 spos = { pos.x - ssz.x, pos.y + hdrH + 4.f + openSub * rowH - subHdrH - 4.f };
-            if (spos.y < vp->WorkPos.y + 4.f) spos.y = vp->WorkPos.y + 4.f;
-            if (spos.y + ssz.y > vp->WorkPos.y + vp->WorkSize.y - 4.f)
-                spos.y = vp->WorkPos.y + vp->WorkSize.y - ssz.y - 4.f;
+            if (spos.y < wa.pos.y + 4.f) spos.y = wa.pos.y + 4.f;
+            if (spos.y + ssz.y > wa.pos.y + wa.size.y - 4.f)
+                spos.y = wa.pos.y + wa.size.y - ssz.y - 4.f;
 
             overSub = m.x >= spos.x && m.x <= pos.x + fsz.x &&
                       m.y >= spos.y && m.y <= spos.y + ssz.y;

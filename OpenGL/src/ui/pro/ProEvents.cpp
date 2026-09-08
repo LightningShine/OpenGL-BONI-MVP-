@@ -413,8 +413,7 @@ void RenderEventsWindow(const ProContext& ctx, ImVec2 vpSz, float topH) {
     ImGui::SetNextWindowSizeConstraints({120.f * ui, 80.f * ui}, {vpSz.x, vpSz.y});
 
     if (!ImGui::Begin("##Events", nullptr,
-        PanelFlags() | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse |
-        ImGuiWindowFlags_NoBringToFrontOnFocus)) {
+        PanelFlags() | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
         ImGui::End(); return;
     }
 

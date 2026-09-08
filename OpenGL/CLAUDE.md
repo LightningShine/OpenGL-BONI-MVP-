@@ -2,6 +2,19 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+
+
+## graphify
+
+This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.
+
+Rules:
+
+* For codebase questions, first run `graphify query "<question>"` when graphify-out/graph.json exists. Use `graphify path "<A>" "<B>"` for relationships and `graphify explain "<concept>"` for focused concepts. These return a scoped subgraph, usually much smaller than GRAPH_REPORT.md or raw grep output.
+* If graphify-out/wiki/index.md exists, use it for broad navigation instead of raw source browsing.
+* Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
+* After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).
+
 ## О проекте
 
 RAJAGP Client — Windows-клиент (x64 / ARM64) хронометража и телеметрии для гонок RC-машин и картинга в реальном времени. C++17, OpenGL 3.3 (glad) + GLFW + Dear ImGui, GeographicLib (UTM-геодезия), WinHTTP WebSocket, serialib (COM-порты). Подробное описание функционала и использования — в корневом `README.md`.
@@ -115,7 +128,7 @@ OpenGL-BONI-MVP-/
 - **Приватные поля класса** — с суффиксом `_`: `socket_`, `buffer_`, `last_fix_`. Сразу видно «это состояние объекта, а не локальная переменная».
 - **Файлы** — `snake_case`: `packet_parser.cpp`, `data_source.hpp`.
 
-Имя говорит **что это**, а не какого оно типа. `car_count`, а не `int_cars`. Не сокращаем до неузнаваемости: `receiver`, а не `rcv`. Исключение — общепринятое в вашей области: `crc`, `gps`, `rtk`, `id`, `utc` понятны всем.
+Имя говорит **что это**, а не какого оно типа. `car_count`, а не `int_cars`. Не сокращаем до неузнаваемости: `receiver`, а не `rcv` нельзя сокращать как например `vpSz.x` должно чётко быть понятно что это и к чему относиться . Исключение — общепринятое в вашей области: `crc`, `gps`, `rtk`, `id`, `utc` понятны всем использованные в летературе или общепринятые сокращение .
 
 ```cpp
 // плохо
