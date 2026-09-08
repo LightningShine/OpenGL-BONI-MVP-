@@ -1,14 +1,18 @@
-#include "../network/SimulationServer.h"
-#include "../network/ESP32_Code.h"
-#include "../network/Server.h"
-#include "../vehicle/Vehicle.h"
-#include "../vehicle/VehicleInterpolator.h"
-#include "../input/Input.h"
-#include "../rendering/Interpolation.h"
-#include "../Config.h"
-#include "../racing/RaceManager.h"
-#include "../track/TrackRecorder.h"
-#include "../track/TelemetryTrackBuilder.h"
+#include "network/SimulationServer.h"
+#include "network/ESP32_Code.h"
+#include "network/ReplayPlayer.h"
+#include "network/Server.h"
+#include "vehicle/Vehicle.h"
+#include "vehicle/VehicleInterpolator.h"
+#include "input/Input.h"
+#include "rendering/Interpolation.h"
+#include "core/Config.h"
+#include "racing/RaceManager.h"
+#include "racing/LapClock.h"
+#include "track/TrackProjection.h"
+#include "track/TrackRecorder.h"
+#include "track/TelemetryTrackBuilder.h"
+#include "core/DeviceRegistry.h"
 #include <random>
 #include <chrono>
 #include <unordered_map>
@@ -20,7 +24,7 @@
 #include <iomanip>
 #include <array>
 #include <GeographicLib/UTMUPS.hpp>  // For accurate GPS conversion
-#include "../../UI.h"
+#include "ui/UI.h"
 
 extern UI* g_ui;
 
@@ -28,7 +32,6 @@ extern UI* g_ui;
 // EXTERNAL GLOBALS
 // ============================================================================
 extern std::map<int32_t, Vehicle> g_vehicles;
-extern std::mutex g_vehicles_mutex;
 extern MapOrigin g_map_origin;
 extern std::atomic<bool> g_is_map_loaded;
 extern std::vector<SplinePoint> g_smooth_track_points;
@@ -49,6 +52,13 @@ namespace {
     size_t g_pps_count = 0;
     uint32_t g_pps_last_packet_ms = 0;
 
+    // Потолок неразобранных пересечений на машину. Хронометраж вычерпывает их
+    // каждый кадр, так что копиться им негде — кроме случая «окно свёрнуто на
+    // час». Круг на пересечение, поэтому шестидесяти хватает с запасом.
+    // Пересчёт после перемотки скармливает всю запись разом, а хронометраж
+    // разбирает очередь уже потом — значит сюда ложатся все круги заезда.
+    constexpr size_t MAX_PENDING_CROSSINGS = 512;
+
     // Prototype (hardware) ID -> race vehicle ID mapping.
     // Race IDs are limited to 1..99.
     std::mutex s_proto_map_mutex;
@@ -57,6 +67,13 @@ namespace {
     // Track mismatch debounce (per race vehicle id)
     std::mutex g_track_mismatch_mutex;
     std::unordered_map<int32_t, uint32_t> g_track_mismatch_start_ms;
+
+    // Replication rate limiter (per race vehicle id). Лежит на уровне файла, а не
+    // статиком внутри функции, чтобы telemetryForgetVehicle() мог его почистить:
+    // иначе запись переживала бы машину и новый участник в том же слоте
+    // наследовал бы чужой таймер отправки.
+    std::mutex s_send_rate_mutex;
+    std::unordered_map<int32_t, uint32_t> s_last_send_time_ms;
 }
 uint32_t telemetryGetPacketsPerSecond()
 {
@@ -84,6 +101,21 @@ void telemetryResetPrototypeIdMapping()
     s_proto_to_race_id.clear();
 }
 
+void telemetryReleaseRaceIdMapping(int32_t raceID)
+{
+    // Вызывается, когда машина реально удалена. Убираем запись прототип->race,
+    // чтобы освободившийся номер мог быть переиспользован.
+    // ВАЖНО: аргумент — именно race ID (значение в карте), а не ID железки.
+    std::lock_guard<std::mutex> lock(s_proto_map_mutex);
+    for (auto it = s_proto_to_race_id.begin(); it != s_proto_to_race_id.end();)
+    {
+        if (it->second == raceID)
+            it = s_proto_to_race_id.erase(it);
+        else
+            ++it;
+    }
+}
+
 int32_t telemetryGetRaceIdForPrototype(int32_t prototype_id)
 {
     std::lock_guard<std::mutex> lock(s_proto_map_mutex);
@@ -91,17 +123,29 @@ int32_t telemetryGetRaceIdForPrototype(int32_t prototype_id)
     return it != s_proto_to_race_id.end() ? it->second : -1;
 }
 
-static bool isRaceIdOccupiedLocked(int32_t raceId)
+// Номер занят, если на него ссылается либо живая машина, либо ещё не снятая
+// привязка устройства. Второе условие критично: без него номер удалённой (но не
+// отвязанной) машины выдавался бы второму устройству, и два передатчика писали
+// бы в один Vehicle — позиция скакала бы между двумя машинами, а пересечения
+// старт/финиша перестали бы определяться вовсе.
+static bool isRaceIdOccupiedLocked(int32_t race_id)
 {
-    return g_vehicles.find(raceId) != g_vehicles.end();
+    if (g_vehicles.find(race_id) != g_vehicles.end())
+        return true;
+
+    for (const auto& [device_id, mapped_race_id] : s_proto_to_race_id)
+    {
+        (void)device_id;
+        if (mapped_race_id == race_id)
+            return true;
+    }
+    return false;
 }
 
 static int32_t allocateRaceIdLocked()
 {
-    // g_vehicles_mutex MUST be held by caller.
-    // We intentionally derive availability from current authoritative vehicles instead of a
-    // separate registry to prevent leaks when vehicles time out and are erased.
-    for (int32_t id = 1; id <= 99; ++id)
+    // Вызывающий держит s_proto_map_mutex И g_vehicles_mutex (в этом порядке).
+    for (int32_t id = 1; id <= RaceConstants::MAX_RACE_VEHICLE_ID; ++id)
     {
         if (!isRaceIdOccupiedLocked(id))
             return id;
@@ -151,6 +195,62 @@ namespace {
     std::unordered_map<int32_t, VehicleTimeSync> g_time_sync;
 }
 
+void telemetryResetAllVehicleState()
+{
+    telemetryResetPrototypeIdMapping();
+    telemetryResetInterpolationState();
+}
+
+void telemetryResetInterpolationState()
+{
+    VehicleInterpolator::Get().Clear();
+
+    {
+        std::lock_guard<std::mutex> lock(g_time_sync_mutex);
+        g_time_sync.clear();
+    }
+    {
+        std::lock_guard<std::mutex> lock(g_lap_smoother_mutex);
+        g_lap_smoother.clear();
+    }
+    {
+        std::lock_guard<std::mutex> lock(s_send_rate_mutex);
+        s_last_send_time_ms.clear();
+    }
+    {
+        std::lock_guard<std::mutex> lock(g_track_mismatch_mutex);
+        g_track_mismatch_start_ms.clear();
+    }
+}
+
+void telemetryForgetVehicle(int32_t race_id)
+{
+    // Единственная точка «машины больше нет». Всё, что заведено на race ID,
+    // снимается здесь — иначе новый участник в том же слоте унаследует чужой
+    // буфер интерполяции, тайм-синк и сглаживание таймера круга.
+    // Вызывать БЕЗ удерживаемого g_vehicles_mutex: внутри берётся s_proto_map_mutex,
+    // а allocate-путь захватывает их в обратном порядке.
+    telemetryReleaseRaceIdMapping(race_id);
+    VehicleInterpolator::Get().RemoveVehicle(race_id);
+
+    {
+        std::lock_guard<std::mutex> lock(g_time_sync_mutex);
+        g_time_sync.erase(race_id);
+    }
+    {
+        std::lock_guard<std::mutex> lock(g_lap_smoother_mutex);
+        g_lap_smoother.erase(race_id);
+    }
+    {
+        std::lock_guard<std::mutex> lock(s_send_rate_mutex);
+        s_last_send_time_ms.erase(race_id);
+    }
+    {
+        std::lock_guard<std::mutex> lock(g_track_mismatch_mutex);
+        g_track_mismatch_start_ms.erase(race_id);
+    }
+}
+
 double getSynchronizedSnapshotTimeSeconds(int32_t vehicleID, uint32_t sourceTimeMs)
 {
     const double localNow = VehicleInterpolator::GetTime();
@@ -190,154 +290,70 @@ double getSynchronizedSnapshotTimeSeconds(int32_t vehicleID, uint32_t sourceTime
 }
 
 namespace {
-    // Returns true if (x,y) is within `radius_meters` of the track polyline.
-    // NOTE: x,y are in normalized coordinates; we convert radius to normalized units.
-    static bool isPositionNearCurrentTrack(double x, double y, double radius_meters)
-    {
-        if (!g_is_map_loaded) {
-            return false;
-        }
+    // ------------------------------------------------------------------------
+    // Кеш геометрии трека для проекции позиций машин.
+    //
+    // Сама геометрия и поиск живут в track::Geometry (src/track/TrackProjection.*),
+    // здесь только снимок: трек копируется один раз на его загрузку, а не на
+    // каждый из сотен пакетов в секунду. Признак устаревания — версия, которую
+    // двигает publish_smooth_track_points().
+    // ------------------------------------------------------------------------
+    std::mutex g_track_geometry_mutex;
+    track::Geometry g_track_geometry;
+    uint32_t g_track_geometry_generation = 0;   // 0 = снимок ещё не брался
 
-        std::vector<SplinePoint> trackCopy;
+    /// Обновляет снимок, если трек перезаписан.
+    /// Вызывающий держит g_track_geometry_mutex.
+    void refresh_track_geometry_locked()
+    {
+        const uint32_t generation = track_geometry_generation();
+        if (generation == g_track_geometry_generation)
+            return;
+
+        std::vector<SplinePoint> points;
         {
             std::lock_guard<std::mutex> lock(g_track_mutex);
-            trackCopy = g_smooth_track_points;
+            points = g_smooth_track_points;
         }
+        g_track_geometry.build(std::move(points));
+        g_track_geometry_generation = generation;
+    }
 
-        if (trackCopy.size() < 2) {
-            return false;
-        }
-
-        const double radius_norm = radius_meters / MapConstants::MAP_SIZE;
-        const double radius_sq = radius_norm * radius_norm;
+    /// Прогресс 0..1 вдоль трека для позиции в кадре трека.
+    /// segment_hint — подсказка этой машины, функция её обновляет.
+    double calculateTrackProgressFromPosition(double x, double y, size_t& segment_hint)
+    {
+        if (!g_is_map_loaded)
+            return 0.0;
 
         const glm::vec2 p(static_cast<float>(x), static_cast<float>(y));
 
-        const size_t segmentCount = trackCopy.size() - 1;
-        for (size_t i = 0; i < segmentCount; ++i)
-        {
-            const glm::vec2 a = trackCopy[i].position;
-            const glm::vec2 b = trackCopy[i + 1].position;
-
-            const glm::vec2 ab = b - a;
-            const float abLenSq = glm::dot(ab, ab);
-            if (abLenSq <= 1e-12f)
-                continue;
-
-            const float t = glm::clamp(glm::dot(p - a, ab) / abLenSq, 0.0f, 1.0f);
-            const glm::vec2 closest = a + ab * t;
-            const glm::vec2 d = p - closest;
-            const double distSq = static_cast<double>(glm::dot(d, d));
-            if (distSq <= radius_sq)
-                return true;
-        }
-
-        return false;
-    }
-}
-
-namespace {
-    // ------------------------------------------------------------------------
-    // Track progress: compute 0..1 progress from current normalized position by
-    // projecting onto the closest track segment (server and client will match
-    // as long as they share the same `g_smooth_track_points`).
-    // ------------------------------------------------------------------------
-    struct TrackProgressCache {
-        size_t pointCount = 0;
-        std::vector<float> cumulativeDistances;
-        float totalLength = 0.0f;
-    };
-
-    std::mutex g_track_progress_mutex;
-    TrackProgressCache g_track_progress_cache;
-
-    void ensureTrackProgressCacheLocked(const std::vector<SplinePoint>& track)
-    {
-        if (track.size() == g_track_progress_cache.pointCount && g_track_progress_cache.totalLength > 1e-6f) {
-            return;
-        }
-
-        g_track_progress_cache.pointCount = track.size();
-        g_track_progress_cache.cumulativeDistances.clear();
-        g_track_progress_cache.totalLength = 0.0f;
-
-        if (track.size() < 2) {
-            return;
-        }
-
-        g_track_progress_cache.cumulativeDistances.reserve(track.size());
-        g_track_progress_cache.cumulativeDistances.push_back(0.0f);
-
-        float total = 0.0f;
-        for (size_t i = 1; i < track.size(); ++i)
-        {
-            const float seg = glm::distance(track[i - 1].position, track[i].position);
-            total += seg;
-            g_track_progress_cache.cumulativeDistances.push_back(total);
-        }
-
-        g_track_progress_cache.totalLength = total;
+        std::lock_guard<std::mutex> lock(g_track_geometry_mutex);
+        refresh_track_geometry_locked();
+        return track::progress_at(g_track_geometry, p, segment_hint);
     }
 
-    double calculateTrackProgressFromPosition(double x, double y)
+    /// Грубая проверка «та ли это трасса»: машина может законно стоять в боксах,
+    /// поэтому чужой телеметрию считаем только при удалении от всего круга.
+    bool isPositionNearCurrentTrack(double x, double y, double radius_meters)
     {
-        if (!g_is_map_loaded) {
-            return 0.0;
-        }
+        if (!g_is_map_loaded)
+            return false;
 
-        std::vector<SplinePoint> trackCopy;
-        {
-            std::lock_guard<std::mutex> lock(g_track_mutex);
-            trackCopy = g_smooth_track_points;
-        }
-
-        if (trackCopy.size() < 2) {
-            return 0.0;
-        }
-
-        std::lock_guard<std::mutex> lock(g_track_progress_mutex);
-        ensureTrackProgressCacheLocked(trackCopy);
-
-        if (g_track_progress_cache.totalLength <= 1e-6f) {
-            return 0.0;
-        }
-
-        // Track points may be recentred and rendered with an offset. Vehicle positions are stored
-        // in raw normalized coordinates (relative to origin) and rendered with that same offset.
-        // To validate against the current recentered track geometry, compare in track space.
         const glm::vec2 p(static_cast<float>(x), static_cast<float>(y));
 
-        double bestDistSq = std::numeric_limits<double>::infinity();
-        double bestDistanceAlong = 0.0;
+        std::lock_guard<std::mutex> lock(g_track_geometry_mutex);
+        refresh_track_geometry_locked();
+        return track::is_near_track(g_track_geometry, p, radius_meters);
+    }
 
-        const size_t segmentCount = trackCopy.size() - 1;
-        for (size_t i = 0; i < segmentCount; ++i)
-        {
-            const glm::vec2 a = trackCopy[i].position;
-            const glm::vec2 b = trackCopy[i + 1].position;
-            const glm::vec2 ab = b - a;
-            const float abLenSq = glm::dot(ab, ab);
-            if (abLenSq < 1e-10f) {
-                continue;
-            }
-
-            const float t = glm::clamp(glm::dot(p - a, ab) / abLenSq, 0.0f, 1.0f);
-            const glm::vec2 proj = a + ab * t;
-            const glm::vec2 d = p - proj;
-            const double distSq = static_cast<double>(glm::dot(d, d));
-
-            if (distSq < bestDistSq)
-            {
-                bestDistSq = distSq;
-                const float segLen = std::sqrt(abLenSq);
-                bestDistanceAlong = static_cast<double>(g_track_progress_cache.cumulativeDistances[i]) + static_cast<double>(segLen * t);
-            }
-        }
-
-
-        double progress = bestDistanceAlong / static_cast<double>(g_track_progress_cache.totalLength);
-        progress = std::clamp(progress, 0.0, 1.0);
-        return progress;
+    /// Нормализованные координаты точки по её широте/долготе.
+    void normalized_from_gps(double lat_deg, double lon_deg, double& out_x, double& out_y)
+    {
+        double easting = 0.0;
+        double northing = 0.0;
+        coordinatesToMeters(lat_deg, lon_deg, easting, northing);
+        getCoordinateDifferenceFromOrigin(easting, northing, out_x, out_y);
     }
 
     static bool isPositionOnCurrentTrack(double x, double y)
@@ -454,8 +470,40 @@ void telemetryCountPacket()
     g_telemetry_packets_per_second.store(static_cast<uint32_t>(g_pps_count), std::memory_order_relaxed);
 }
 
+bool positionIsNearLoadedTrack(double normalized_x, double normalized_y, double radius_meters)
+{
+    return isPositionNearCurrentTrack(normalized_x, normalized_y, radius_meters);
+}
+
+void normalizedFromGps(double lat_deg, double lon_deg, double& out_x, double& out_y)
+{
+    normalized_from_gps(lat_deg, lon_deg, out_x, out_y);
+}
+
 void processIncomingTelemetry(const TelemetryPacket& packet, bool count_pps)
 {
+    // ------------------------------------------------------------------------
+    // ЧУЖИЕ ИСТОЧНИКИ ВО ВРЕМЯ ПОВТОРА
+    //
+    // Пока идёт повтор, в пайплайне живёт ПРОШЛЫЙ заезд. Любой пакет со стороны
+    // — приёмник, который оператор подключил на ходу, машина, приехавшая на
+    // трассу прямо сейчас, поток с Track Server — добавил бы к нему машину из
+    // настоящего времени. На экране она неотличима от участника записи, и
+    // разобрать потом, что было в заезде, а что приехало сбоку, уже нельзя.
+    //
+    // Проверка стоит ЗДЕСЬ, в единственной точке, куда сходятся все источники.
+    // Закрывать каждый источник по отдельности — значит забыть следующий.
+    if (telemetry::replay_is_active() && !telemetry::replay_is_feeding())
+    {
+        static std::atomic<bool> warned{ false };
+        if (!warned.exchange(true))
+        {
+            std::cout << "[TELEMETRY] Replay is open: live telemetry is ignored "
+                         "until it is closed" << std::endl;
+        }
+        return;
+    }
+
     // If we are in telemetry track creation mode, feed packets into builder.
     // Builder will auto-initialize origin from the first packet.
     if (TelemetryTrackBuilder::IsActive())
@@ -469,6 +517,10 @@ void processIncomingTelemetry(const TelemetryPacket& packet, bool count_pps)
     {
         return;
     }
+
+    // Регистрируем устройство как «на связи» ещё до загрузки трека — оператор
+    // должен видеть подключённые/ранее виденные трекеры в настройках сразу.
+    DeviceRegistry::instance().mark_seen(packet.ID);
 
     // Map prototype/device IDs (coming from hardware) to race vehicle IDs (1..99).
     // This decouples device identity from race identity and keeps IDs UI-friendly.
@@ -499,7 +551,7 @@ void processIncomingTelemetry(const TelemetryPacket& packet, bool count_pps)
         {
             // Allocate a free race ID (1..99) that is not currently in use.
             // Must coordinate with g_vehicles to avoid collisions with simulated racers.
-            std::lock_guard<std::mutex> vlock(g_vehicles_mutex);
+            VehiclesLock vlock;
             raceID = allocateRaceIdLocked();
             if (raceID != -1)
             {
@@ -550,16 +602,14 @@ void processIncomingTelemetry(const TelemetryPacket& packet, bool count_pps)
     // so we only treat telemetry as incompatible if it is FAR from the whole circuit.
     // If it is near the track (within a large radius), keep the vehicle alive.
     {
-        const double lat_deg = static_cast<double>(packet.lat) / 1e7;
-        const double lon_deg = static_cast<double>(packet.lon) / 1e7;
-        double easting = 0.0;
-        double northing = 0.0;
-        coordinatesToMeters(lat_deg, lon_deg, easting, northing);
         double nx = 0.0;
         double ny = 0.0;
-        getCoordinateDifferenceFromOrigin(easting, northing, nx, ny);
+        normalized_from_gps(static_cast<double>(packet.lat) / 1e7,
+                            static_cast<double>(packet.lon) / 1e7, nx, ny);
 
-        constexpr double kNearTrackRadiusMeters = 1000.0; // 1km
+        // Тот же критерий, по которому проверяется трасса при открытии повтора:
+        // «наша машина» должна значить одно и то же в обоих местах.
+        constexpr double kNearTrackRadiusMeters = TrackConstants::FOREIGN_VEHICLE_RADIUS_METERS;
         const bool nearTrack = isPositionNearCurrentTrack(nx, ny, kNearTrackRadiusMeters);
         const uint32_t now_ms = getMonotonicTimeMs();
         constexpr uint32_t kFarFromTrackGraceMs = 5000; // debounce for wrong-track / wrong-origin
@@ -577,17 +627,27 @@ void processIncomingTelemetry(const TelemetryPacket& packet, bool count_pps)
 
             if ((now_ms - start_ms) >= kFarFromTrackGraceMs)
             {
-                std::lock_guard<std::mutex> lock(g_vehicles_mutex);
-                auto it = g_vehicles.find(raceID);
-                if (it != g_vehicles.end())
+                bool erased = false;
                 {
-                    g_vehicles.erase(it);
-                    VehicleInterpolator::Get().RemoveVehicle(raceID);
-                    std::cout << "[TELEMETRY] Vehicle #" << raceID << " removed: far from track (>" << kNearTrackRadiusMeters << "m)" << std::endl;
+                    VehiclesLock lock;
+                    auto it = g_vehicles.find(raceID);
+                    if (it != g_vehicles.end())
+                    {
+                        g_vehicles.erase(it);
+                        erased = true;
+                        std::cout << "[TELEMETRY] Vehicle #" << raceID << " removed: far from track (>" << kNearTrackRadiusMeters << "m)" << std::endl;
+                    }
                 }
 
-                std::lock_guard<std::mutex> mlock(g_track_mismatch_mutex);
-                g_track_mismatch_start_ms.erase(raceID);
+                // Чистим сопутствующее состояние тем же путём, что и таймаут, и
+                // обязательно вне g_vehicles_mutex — порядок захвата локов.
+                if (erased)
+                    telemetryForgetVehicle(raceID);
+                else
+                {
+                    std::lock_guard<std::mutex> mlock(g_track_mismatch_mutex);
+                    g_track_mismatch_start_ms.erase(raceID);
+                }
             }
 
             return;
@@ -603,7 +663,7 @@ void processIncomingTelemetry(const TelemetryPacket& packet, bool count_pps)
     // ? Debug: print packet info to diagnose coordinate issues
     static int packet_count = 0;
     packet_count++;
-    if (packet_count % 60 == 0) { // Log every 60th packet (once per second at ~60Hz)
+    if (LoggingConstants::VERBOSE_TELEMETRY && packet_count % 60 == 0) {
         // Arduino packs GPS as scaled integers: degrees * 1e7
         const double lat_deg = static_cast<double>(packet.lat) / 1e7;
         const double lon_deg = static_cast<double>(packet.lon) / 1e7;
@@ -615,7 +675,7 @@ void processIncomingTelemetry(const TelemetryPacket& packet, bool count_pps)
     // ? CRITICAL DEBUG: Check vehicle existence BEFORE lock
     bool vehicle_exists = false;
     {
-        std::lock_guard<std::mutex> check_lock(g_vehicles_mutex);
+        VehiclesLock check_lock;
         vehicle_exists = (g_vehicles.find(raceID) != g_vehicles.end());
 
         // Print map contents on creation
@@ -630,12 +690,12 @@ void processIncomingTelemetry(const TelemetryPacket& packet, bool count_pps)
 
     // 1) Update authoritative server-side vehicle state from telemetry.
     // Also replicate at a bounded rate to avoid UI jitter from uneven serial packet timing.
-    static std::mutex s_send_rate_mutex;
-    static std::unordered_map<int32_t, uint32_t> s_last_send_time_ms;
+    // (s_send_rate_mutex / s_last_send_time_ms живут на уровне файла — их чистит
+    //  telemetryForgetVehicle вместе с остальным состоянием машины.)
     const uint32_t now_ms = getMonotonicTimeMs();
     constexpr uint32_t kMinSendIntervalMs = 16; // ~60 Hz
     {
-        std::lock_guard<std::mutex> lock(g_vehicles_mutex);
+        VehiclesLock lock;
 
         auto it = g_vehicles.find(raceID);
 
@@ -650,12 +710,25 @@ void processIncomingTelemetry(const TelemetryPacket& packet, bool count_pps)
             vehicle.m_prev_y = vehicle.m_normalized_y;
             vehicle.m_prev_track_progress = vehicle.m_track_progress;
 
+            // Метка времени источника едет вместе с позицией: время круга
+            // считается по паре меток того же отрезка, что и пересечение.
+            vehicle.m_prev_packet_utc_ms = vehicle.m_packet_utc_ms;
+            vehicle.m_packet_utc_ms = packet.time;
+            vehicle.m_has_source_time = (packet.time != 0);
+
+            // Связь была потеряна: отрезок prev->cur сейчас соединил бы точку
+            // до обрыва с текущей — хорду через полтрассы. Её нельзя проверять
+            // на пересечение старт/финиша, поэтому начинаем измерение заново.
+            const bool resumed_after_gap = vehicle.m_signal_lost;
+
             vehicle.m_lat_dd = packet.lat / 1e7;
             vehicle.m_lon_dd = packet.lon / 1e7;
             vehicle.m_speed_kph = packet.speed / 100.0;
-            vehicle.m_acceleration = packet.acceleration / 100.0;
-            vehicle.m_g_force_x = packet.gForceX / 100.0;
-            vehicle.m_g_force_y = packet.gForceY / 100.0;
+            // Ускорение и перегрузки — со знаком, как в конструкторе Vehicle
+            // (см. пояснение там).
+            vehicle.m_acceleration = static_cast<int32_t>(packet.acceleration) / 100.0;
+            vehicle.m_g_force_x = static_cast<int16_t>(packet.gForceX) / 100.0;
+            vehicle.m_g_force_y = static_cast<int16_t>(packet.gForceY) / 100.0;
             vehicle.m_fix_type = packet.fixtype;
 
             coordinatesToMeters(vehicle.m_lat_dd, vehicle.m_lon_dd, 
@@ -670,7 +743,7 @@ void processIncomingTelemetry(const TelemetryPacket& packet, bool count_pps)
             TrackRecorder::OnTelemetryPosition(raceID, glm::vec2(static_cast<float>(vehicle.m_normalized_x), static_cast<float>(vehicle.m_normalized_y)));
 
             // [DEBUG_ALIGN_TMP] Raw vs render position (once per second)
-            if ((packet_count % 60) == 0)
+            if (LoggingConstants::VERBOSE_TELEMETRY && (packet_count % 60) == 0)
             {
                 // vehicle.m_normalized_* is already in race/render space (offset applied above)
                 const double rx = vehicle.m_normalized_x;
@@ -684,11 +757,133 @@ void processIncomingTelemetry(const TelemetryPacket& packet, bool count_pps)
                     << std::endl;
             }
 
-            // Update track progress (needed for consistent leader + lap logic on clients)
-            vehicle.m_track_progress = calculateTrackProgressFromPosition(vehicle.m_normalized_x, vehicle.m_normalized_y);
+            // Update track progress (needed for consistent leader + lap logic on clients).
+            // Track points live in the centered frame; GPS coords are raw, so
+            // shift by the render offset before matching against the track.
+            {
+                const glm::vec2 off = vehicle.m_apply_track_render_offset
+                                        ? getTrackRenderOffset() : glm::vec2(0.0f, 0.0f);
+                vehicle.m_track_progress = calculateTrackProgressFromPosition(
+                    vehicle.m_normalized_x + off.x, vehicle.m_normalized_y + off.y,
+                    vehicle.m_track_segment_hint);
+            }
 
             vehicle.m_last_update_time = std::chrono::steady_clock::now();
             vehicle.m_has_authoritative_state = false;
+
+            if (resumed_after_gap)
+            {
+                // Схлопываем отрезок: пересечения по этой хорде не считаем.
+                vehicle.m_prev_x = vehicle.m_normalized_x;
+                vehicle.m_prev_y = vehicle.m_normalized_y;
+                vehicle.m_prev_track_progress = vehicle.m_track_progress;
+                vehicle.m_prev_packet_utc_ms = vehicle.m_packet_utc_ms;
+                vehicle.m_signal_lost = false;
+                std::cout << "[SIGNAL] Vehicle #" << raceID
+                          << " (device #" << vehicle.m_device_id
+                          << ") signal restored, lap timing continues" << std::endl;
+            }
+
+            // Пересечение старт/финиша ищем ЗДЕСЬ, на каждом отрезке движения.
+            // Раньше это делал RaceManager раз в кадр по последней паре точек —
+            // и терял проезды, если кадр занимал больше интервала между
+            // пакетами, а при свёрнутом окне терял все.
+            {
+                glm::vec2 line_a;
+                glm::vec2 line_b;
+                if (g_race_manager && g_race_manager->GetStartFinishLine(line_a, line_b))
+                {
+                    const glm::vec2 off = vehicle.m_apply_track_render_offset
+                                            ? getTrackRenderOffset() : glm::vec2(0.0f, 0.0f);
+                    const glm::vec2 from(static_cast<float>(vehicle.m_prev_x) + off.x,
+                                         static_cast<float>(vehicle.m_prev_y) + off.y);
+                    const glm::vec2 to(static_cast<float>(vehicle.m_normalized_x) + off.x,
+                                       static_cast<float>(vehicle.m_normalized_y) + off.y);
+
+                    // Взвод: круг засчитывается, только если машина побывала на
+                    // дальней половине трассы с прошлого зачёта. Ведём здесь —
+                    // кадр видит не каждое значение прогресса, а мы видим все.
+                    if (vehicle.m_track_progress > 0.5)
+                        vehicle.m_lap_armed = true;
+
+                    float fraction = 0.0f;
+                    bool hit = track::segment_intersection(from, to, line_a, line_b, fraction);
+                    const bool from_geometry = hit;
+
+                    // Резерв: строгое пересечение могло промахнуться мимо концов
+                    // линии, если позицию увело вбок. Доли отрезка тут нет —
+                    // берём середину.
+                    if (!hit && vehicle.m_prev_track_progress > 0.85 &&
+                        vehicle.m_track_progress < 0.15)
+                    {
+                        hit = true;
+                        fraction = 0.5f;
+                    }
+
+                    if (hit && vehicle.m_pending_crossings.size() < MAX_PENDING_CROSSINGS)
+                    {
+                        LineCrossing crossing;
+                        crossing.fraction = fraction;
+                        crossing.from_geometry = from_geometry;
+                        crossing.armed = vehicle.m_lap_armed;
+                        vehicle.m_lap_armed = false;
+                        crossing.has_source_time = vehicle.m_has_source_time;
+                        if (crossing.has_source_time)
+                        {
+                            crossing.utc_ms = racing::utc_at_fraction(vehicle.m_prev_packet_utc_ms,
+                                                                      vehicle.m_packet_utc_ms,
+                                                                      fraction);
+                        }
+                        vehicle.m_pending_crossings.push_back(crossing);
+                    }
+                }
+            }
+
+            // Промежуточные точки замера — здесь же и по той же схеме, что и
+            // линия: момент пересечения интерполируется между метками двух
+            // пакетов. Именно это делает время сектора измерением, а не оценкой
+            // по накопленному логу (см. SECTOR_COUNT в Vehicle.h).
+            //
+            // Ищем по прогрессу, а не по геометрии: в середине круга прогресс
+            // монотонен и без перехода через ноль, поэтому отрезок либо
+            // содержит точку, либо нет — двух толкований быть не может. Своей
+            // линии на карте для каждого сектора при этом не требуется.
+            if (vehicle.m_has_source_time)
+            {
+                const double prev_progress = vehicle.m_prev_track_progress;
+                const double curr_progress = vehicle.m_track_progress;
+
+                // Только движение вперёд и только внутри круга: переход через
+                // старт/финиш (прогресс падает с ~1 на ~0) разбирает линия, а
+                // рывок назад — это шум позиции, а не проезд.
+                if (curr_progress > prev_progress)
+                {
+                    for (int point = 1; point < SECTOR_COUNT; ++point)
+                    {
+                        const double split = sector_split_position(point);
+                        if (prev_progress >= split || curr_progress < split)
+                            continue;
+
+                        if (vehicle.m_pending_crossings.size() >= MAX_PENDING_CROSSINGS)
+                            break;
+
+                        const double span = curr_progress - prev_progress;
+                        const float fraction = span > 1e-9
+                            ? static_cast<float>((split - prev_progress) / span)
+                            : 0.5f;
+
+                        LineCrossing crossing;
+                        crossing.point_index = point;
+                        crossing.fraction = fraction;
+                        crossing.from_geometry = false;
+                        crossing.has_source_time = true;
+                        crossing.utc_ms = racing::utc_at_fraction(vehicle.m_prev_packet_utc_ms,
+                                                                  vehicle.m_packet_utc_ms,
+                                                                  fraction);
+                        vehicle.m_pending_crossings.push_back(crossing);
+                    }
+                }
+            }
 
             // ? Calculate heading from movement (only if vehicle moved significantly)
             double dx = vehicle.m_normalized_x - vehicle.m_prev_x;
@@ -750,7 +945,13 @@ void processIncomingTelemetry(const TelemetryPacket& packet, bool count_pps)
             // Track Server WebSocket stream land here and need vehicles.
             std::cout << "[TELEMETRY] Creating new vehicle #" << raceID << " from prototype #" << packet.ID << std::endl;
 
-            Vehicle new_vehicle(packet);
+            // race ID передаём явно: внутри пакета лежит ID железки, и раньше
+            // именно он оседал в Vehicle::m_id, расходясь с ключом g_vehicles.
+            Vehicle new_vehicle(raceID, packet);
+            new_vehicle.m_packet_utc_ms = packet.time;
+            new_vehicle.m_prev_packet_utc_ms = packet.time;
+            new_vehicle.m_first_packet_utc_ms = packet.time;
+            new_vehicle.m_has_source_time = (packet.time != 0);
 
             // [DEBUG_ALIGN_TMP] Raw vs render position on create
             {
@@ -765,8 +966,15 @@ void processIncomingTelemetry(const TelemetryPacket& packet, bool count_pps)
                     << std::endl;
             }
 
-            // Compute initial track progress (needed for correct leader/standings immediately)
-            new_vehicle.m_track_progress = calculateTrackProgressFromPosition(new_vehicle.m_normalized_x, new_vehicle.m_normalized_y);
+            // Compute initial track progress (needed for correct leader/standings
+            // immediately). Same frame shift as in the update path above.
+            {
+                const glm::vec2 off = new_vehicle.m_apply_track_render_offset
+                                        ? getTrackRenderOffset() : glm::vec2(0.0f, 0.0f);
+                new_vehicle.m_track_progress = calculateTrackProgressFromPosition(
+                    new_vehicle.m_normalized_x + off.x, new_vehicle.m_normalized_y + off.y,
+                    new_vehicle.m_track_segment_hint);
+            }
 
             TrackRecorder::OnTelemetryPosition(raceID, glm::vec2(static_cast<float>(new_vehicle.m_normalized_x), static_cast<float>(new_vehicle.m_normalized_y)));
 
@@ -781,9 +989,11 @@ void processIncomingTelemetry(const TelemetryPacket& packet, bool count_pps)
 
             new_vehicle.m_has_authoritative_state = false;
 
-            // Assign display name: simulation vehicles get "CAR<ID>", real prototypes "Unknown"
-            // (Real prototype name lookup will be added when PilotDatabase is implemented.)
-            new_vehicle.name = "CAR" + std::to_string(raceID);
+            // Имя из реестра устройств по аппаратному ID; если не задано —
+            // fallback "CAR<raceID>". Реестр — источник имён (DeviceRegistry).
+            new_vehicle.name = DeviceRegistry::instance()
+                                   .name_of(packet.ID)
+                                   .value_or("CAR" + std::to_string(raceID));
 
             // ? Use emplace to avoid default constructor call!
             auto [insertIt, inserted] = g_vehicles.emplace(raceID, std::move(new_vehicle));
@@ -816,7 +1026,7 @@ void processIncomingVehicleState(const VehicleStatePacket& packet)
         return;
     }
 
-    std::lock_guard<std::mutex> lock(g_vehicles_mutex);
+    VehiclesLock lock;
 
     auto it = g_vehicles.find(packet.vehicle_id);
     if (it != g_vehicles.end())
@@ -832,6 +1042,7 @@ void processIncomingVehicleState(const VehicleStatePacket& packet)
         vehicle.m_speed_kph = packet.speed_kph;
         vehicle.m_heading = packet.heading;
         vehicle.m_last_update_time = std::chrono::steady_clock::now();
+        vehicle.m_signal_lost = false;
 
         applyRaceStateFromPacket(vehicle, packet);
 
@@ -1162,7 +1373,7 @@ static void simulationThreadWorker(int vehicle_id, std::vector<SplinePoint> smoo
 
         // ? Update local authoritative server state exactly, without GPS roundtrip
         {
-            std::lock_guard<std::mutex> lock(g_vehicles_mutex);
+            VehiclesLock lock;
             auto it = g_vehicles.find(vehicle_id);
 
             if (it == g_vehicles.end())
@@ -1177,6 +1388,9 @@ static void simulationThreadWorker(int vehicle_id, std::vector<SplinePoint> smoo
                 new_vehicle.m_has_authoritative_state = false;
                 new_vehicle.m_last_update_time = std::chrono::steady_clock::now();
                 new_vehicle.name = "CAR" + std::to_string(vehicle_id);
+                // Sim positions come straight from the recentered track points, so
+                // the render offset (meant for raw-GPS vehicles) must not be added.
+                new_vehicle.m_apply_track_render_offset = false;
                 auto [insertedIt, inserted] = g_vehicles.emplace(vehicle_id, std::move(new_vehicle));
                 it = insertedIt;
             }
@@ -1193,6 +1407,7 @@ static void simulationThreadWorker(int vehicle_id, std::vector<SplinePoint> smoo
                 vehicle.m_track_progress = track_progress;
                 vehicle.m_has_authoritative_state = false;
                 vehicle.m_last_update_time = std::chrono::steady_clock::now();
+                vehicle.m_apply_track_render_offset = false;  // track-frame coords
             }
 
             fillPacketRaceStateFromVehicle(packet, it->second);

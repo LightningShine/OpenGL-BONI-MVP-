@@ -1,55 +1,67 @@
-#include "ProChannels.h"
-#include "../../vehicle/Vehicle.h"
+#include "ui/pro/ProChannels.h"
+#include "core/WorldSnapshot.h"
+#include "vehicle/Vehicle.h"
 #include <imgui.h>
-#include <mutex>
 #include <cstdio>
-
-extern std::map<int32_t, Vehicle> g_vehicles;
-extern std::mutex g_vehicles_mutex;
 
 namespace Pro {
 
 void RenderChannelsWindow(const ProContext& ctx, int32_t vehicleId,
                            ImVec2 vpSz, float topH) {
-    ImGui::SetNextWindowPos ({0.f,   topH + 310.f},  ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize({210.f, 240.f},          ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSizeConstraints({140.f, 80.f}, {vpSz.x, vpSz.y});
+    const float ui = ui_scale::get();
+    ImGui::SetNextWindowPos ({0.f,   topH + 310.f * ui},      ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize({210.f * ui, 240.f * ui},        ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSizeConstraints({140.f * ui, 80.f * ui}, {vpSz.x, vpSz.y});
 
     if (!ImGui::Begin("##Channels", nullptr,
-        PanelFlags() | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse |
-        ImGuiWindowFlags_NoBringToFrontOnFocus)) {
+        PanelFlags() | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
         ImGui::End(); return;
     }
 
     float w = ImGui::GetWindowWidth();
     float z = PanelZoom("Channels");
-    DrawPanelHeader(ctx, "CHANELS", false, nullptr, z);
+    DrawPanelHeader(ctx, "CHANELS", false, "Channels");
     ImGui::SetWindowFontScale(z);
 
-    // Live GPS data
+    // Данные машины — из опубликованного снимка, а не из рабочего состояния
+    // пайплайна: панель обязана показывать тот же момент, что и карта с
+    // таблицей, и не ждать на мьютексе, пока повтор перестраивает состояние.
     double speed = 0, gx = 0, gy = 0, accel = 0, progress = 0;
     int16_t fixType = 0;
     {
-        std::lock_guard<std::mutex> lk(g_vehicles_mutex);
-        auto it = g_vehicles.find(vehicleId);
-        if (it != g_vehicles.end()) {
-            const Vehicle& v = it->second;
-            speed = v.m_speed_kph; gx = v.m_g_force_x; gy = v.m_g_force_y;
-            accel = v.m_acceleration; fixType = v.m_fix_type;
-            progress = v.m_track_progress;
+        const std::shared_ptr<const world::Snapshot> snapshot = world::current();
+        if (const world::VehicleView* v = world::find(*snapshot, vehicleId)) {
+            speed = v->speed_kph; gx = v->g_force_x; gy = v->g_force_y;
+            accel = v->acceleration; fixType = v->fix_type;
+            progress = v->track_progress;
         }
     }
-    const char* fixLabel = fixType == 5 ? "RTK Fixed" :
-                           fixType == 4 ? "RTK Float" :
+    // Шкала качества решения - NMEA GGA, ровно как в протоколе
+    // (rajagp/Protocol.h: "0=none, 4=RTK_FIXED") и как её читают остальные
+    // потребители (UI.cpp: "fix type 4+ means RTK-grade", LapTypes.h).
+    // Панель раньше подписывала 4 как "RTK Float", а 5 как "RTK Fixed" - то
+    // есть на реальной записи с сантиметровой точностью инженер видел Float и
+    // не верил координатам. Это единственное число, по которому судят, можно
+    // ли верить сантиметрам, и оно обязано совпадать с протоколом.
+    // Сторона сравнения: те же каналы круга-образца в той же точке трассы.
+    // Пока образец не выбран, колонки REF нет вовсе и панель выглядит как
+    // раньше — лишний столбец прочерков ничего не сообщает.
+    LapInfo     refAt;
+    const bool  hasRef = ReferenceAtVehicle(vehicleId, refAt);
+
+    const char* fixLabel = fixType == 4 ? "RTK Fixed" :
+                           fixType == 5 ? "RTK Float" :
+                           fixType == 2 ? "DGPS"      :
                            fixType >= 1 ? "GPS"       : "No Fix";
-    ImU32 fixCol = fixType == 5 ? COL_GREEN : fixType >= 1 ? COL_GOLD : COL_RED;
+    ImU32 fixCol = fixType == 4 ? COL_GREEN : fixType >= 1 ? COL_GOLD : COL_RED;
 
     char vb[24];
 
     // Column header
     const float colIdR   = w * 0.12f;
     const float colNameX = w * 0.17f;
-    const float colValX  = w * 0.56f;
+    const float colValX  = hasRef ? w * 0.44f : w * 0.56f;
+    const float colRefX  = w * 0.72f;
 
     auto colHdr = [&](const char* s, float x, bool right) {
         if (right) {
@@ -66,10 +78,20 @@ void RenderChannelsWindow(const ProContext& ctx, int32_t vehicleId,
     colHdr("ID", colIdR, true);
     ImGui::SameLine(colNameX); colHdr("NAME", colNameX, false);
     ImGui::SameLine(colValX);  colHdr("VALUE", colValX, false);
+    if (hasRef) { ImGui::SameLine(colRefX); colHdr("REF", colRefX, false); }
     DrawSep();
 
-    // Channels: first 8 = future CAN placeholders, rest = live GPS
-    struct Ch { int id; const char* name; const char* val; ImU32 valCol; };
+    // Каналы панели — только те, что реально приходят с трекера.
+    //
+    // Каналы шины CAN (обороты, передача, газ, тормоз, руль, температуры,
+    // топливо) отсюда убраны: такой шины у нас нет, и панель показывала ЗАШИТЫЕ
+    // В КОД числа. Постоянные «9158 rpm» и «92 C» на экране инженера неотличимы
+    // от настоящих данных — а решения по ним принимают всерьёз.
+    //
+    // Нумерация сплошная с единицы: номер здесь — порядок строки в списке, а не
+    // адрес канала в каком-либо протоколе. Дыра в начале (список открывался
+    // восьмёркой) читалась как «шесть каналов из тринадцати потеряны».
+    struct Ch { int id; const char* name; const char* val; ImU32 valCol; const char* ref; };
 
     snprintf(vb, sizeof(vb), "%.1f km/h", speed); char vSpeed[24]; snprintf(vSpeed, 24, "%s", vb);
     char vGLong[24]; snprintf(vGLong, 24, "%.2f g", gy);
@@ -77,31 +99,36 @@ void RenderChannelsWindow(const ProContext& ctx, int32_t vehicleId,
     char vAccel[24]; snprintf(vAccel, 24, "%.2f m/s\xc2\xb2", accel);
     char vProg[24];  snprintf(vProg,  24, "%.1f %%", progress * 100.0);
 
+    // Значения образца. Формат тот же, что и у своей колонки: два числа в
+    // строке сравнивают глазом, и разный вид записи этому мешает.
+    char rSpeed[24] = "", rGLong[24] = "", rGLat[24] = "", rAccel[24] = "";
+    if (hasRef) {
+        snprintf(rSpeed, sizeof(rSpeed), "%.1f",  refAt.speed);
+        snprintf(rGLong, sizeof(rGLong), "%.2f",  refAt.gForceY);
+        snprintf(rGLat,  sizeof(rGLat),  "%.2f",  refAt.gForceX);
+        snprintf(rAccel, sizeof(rAccel), "%.2f",  refAt.aceleration);
+    }
+
     const Ch channels[] = {
-        {  0, "RPM",       "9158 rpm",  COL_DIM   }, // CAN placeholder
-        {  1, "Gear",      "3",         COL_DIM   },
-        {  2, "Throttle",  "100 %",     COL_DIM   },
-        {  3, "Brake",     "0 %",       COL_DIM   },
-        {  4, "Steering",  "-4 deg",    COL_DIM   },
-        {  5, "Oil Temp",  "92 C",      COL_DIM   },
-        {  6, "H2O Temp",  "78 C",      COL_DIM   },
-        {  7, "Fuel",      "55 l",      COL_DIM   },
-        {  8, "Speed",     vSpeed,      COL_WHITE  },
-        {  9, "gForce Lg", vGLong,      COL_WHITE  },
-        { 10, "gForce Lt", vGLat,       COL_WHITE  },
-        { 11, "Accel",     vAccel,      COL_WHITE  },
-        { 12, "GPS Fix",   fixLabel,    fixCol     },
-        { 13, "Lap Prog",  vProg,       COL_WHITE  },
+        { 1, "Speed",     vSpeed,   COL_WHITE, rSpeed },
+        { 2, "gForce Lg", vGLong,   COL_WHITE, rGLong },
+        { 3, "gForce Lt", vGLat,    COL_WHITE, rGLat  },
+        { 4, "Accel",     vAccel,   COL_WHITE, rAccel },
+        // Тип решения и прогресс круга у образца не спрашиваем: первое —
+        // свойство приёма прямо сейчас, второе — та самая точка, по которой
+        // образец и выбран. Сравнивать их не с чем.
+        { 5, "GPS Fix",   fixLabel, fixCol,    ""     },
+        { 6, "Lap Prog",  vProg,    COL_WHITE, ""     },
     };
 
     float scrollH = ImGui::GetContentRegionAvail().y;
-    ImGui::BeginChild("##chanScroll", {w, scrollH}, false);
+    ImGui::BeginChild("##chanScroll", {w, scrollH}, false, ImGuiWindowFlags_NoNav);
     ImGui::SetWindowFontScale(z);
 
     ImDrawList* dl  = ImGui::GetWindowDrawList();
     ImVec2      wp  = ImGui::GetWindowPos();
     char        id[8];
-    const float eyeX = w - PAD - 4.f;
+    const float eyeX = w - pad_px() - 4.f;
 
     for (auto& ch : channels) {
         snprintf(id, sizeof(id), "%d", ch.id);
@@ -131,6 +158,13 @@ void RenderChannelsWindow(const ProContext& ctx, int32_t vehicleId,
         ImGui::PushStyleColor(ImGuiCol_Text, (ImVec4)ImColor(ch.valCol));
         ImGui::TextUnformatted(ch.val);
         ImGui::PopStyleColor();
+
+        if (hasRef && ch.ref[0] != '\0') {
+            ImGui::SameLine(colRefX);
+            ImGui::PushStyleColor(ImGuiCol_Text, (ImVec4)ImColor(COL_REF));
+            ImGui::TextUnformatted(ch.ref);
+            ImGui::PopStyleColor();
+        }
         if (ctx.regular) ImGui::PopFont();
 
         // Decorative eye icon

@@ -1,0 +1,1 @@
+{"nodes": [{"id": "$graphify-root$_opengl_third_party_include_nlohmann_detail_abi_macros_hpp", "label": "abi_macros.hpp", "file_type": "code", "source_file": "OpenGL/third_party/include/nlohmann/detail/abi_macros.hpp", "source_location": "L1"}], "edges": [], "raw_calls": [], "parse_errors": {"first_error_line": 108, "multiline_error": true}}

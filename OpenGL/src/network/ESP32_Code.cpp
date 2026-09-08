@@ -1,5 +1,9 @@
-#include "../network/ESP32_Code.h"
-#include "SimulationServer.h"
+#include "network/ESP32_Code.h"
+#include "network/SimulationServer.h"
+#include "network/ReplayPlayer.h"
+#include "network/SyntheticTelemetry.h"
+#include "network/TelemetryIngest.h"
+#include "core/Config.h"
 #include <iostream>
 #include <thread>
 #include <chrono>
@@ -36,10 +40,6 @@ static std::atomic<bool> g_capture_stop_requested{ false };
 static std::thread g_capture_thread;
 static std::mutex g_serial_mutex;
 
-static std::mutex g_last_packet_mutex;
-static TelemetryPacket g_last_packet{};
-static std::atomic<bool> g_has_last_packet{ false };
-
 static std::atomic<bool> g_discovery_running{ false };
 static std::atomic<bool> g_discovery_stop_requested{ false };
 static std::thread g_discovery_thread;
@@ -67,12 +67,8 @@ bool calibrateOriginToStartFinish()
         return false;
 
     TelemetryPacket packet{};
-    {
-        if (!g_has_last_packet.load(std::memory_order_relaxed))
-            return false;
-        std::lock_guard<std::mutex> lock(g_last_packet_mutex);
-        packet = g_last_packet;
-    }
+    if (!telemetry::last_received_packet(packet))
+        return false;
 
     glm::vec2 startPoint(0.0f, 0.0f);
     {
@@ -285,6 +281,11 @@ std::string getSelectedComPort()
     return g_selected_port;
 }
 
+bool isRealDataCaptureRunning()
+{
+    return g_capture_running.load();
+}
+
 void stopRealDataCapture()
 {
     g_capture_stop_requested.store(true);
@@ -305,6 +306,11 @@ static void realDataThreadWorker(const std::string& com_port)
 
     std::cout << "[REAL DATA] Listening on " << com_port << std::endl;
 
+    // Журнал заезда здесь НЕ открывается: запись начинается со стартом сессии
+    // (см. RaceManager::StartSession). Раньше файл заводился на каждое
+    // подключение порта, и свободные выезды копились в saves/replays наравне с
+    // заездами — среди них было не найти нужный.
+
     uint64_t bytes_seen = 0;
     uint64_t telemetry_headers_seen = 0;
     uint64_t telemetry_packets_ok = 0;
@@ -322,17 +328,53 @@ static void realDataThreadWorker(const std::string& com_port)
     uint8_t window[4] = { 0, 0, 0, 0 };
     int windowCount = 0;
 
+    // Порт может «зависнуть» после долгой работы: на Windows при comm-ошибке
+    // (RX-overrun/framing или просадка/пересброс USB) ReadFile начинает
+    // возвращать ошибку (-2) или ноль, и порт остаётся мёртвым, пока его не
+    // переоткрыть — ровно то, что оператор делает вручную, повторно выбирая COM.
+    // Делаем это автоматически: следим за ошибками чтения и за «тишиной».
+    auto last_rx = std::chrono::steady_clock::now();
+    constexpr auto kStallReopenTimeout = std::chrono::seconds(3);
+
+    auto reopenPort = [&]() {
+        std::cerr << "[SERIAL] Link stalled on " << com_port << " — reopening..." << std::endl;
+        closeSerialNoThrow();
+        // Небольшая пауза, чтобы драйвер освободил ресурс перед повторным открытием.
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        if (openCOMPort(com_port))
+            std::cout << "[SERIAL] Reopened " << com_port << std::endl;
+        else
+            std::cerr << "[SERIAL] Failed to reopen " << com_port << ", will retry" << std::endl;
+        // Ресинхронизируемся на magic marker с чистого листа.
+        window[0] = window[1] = window[2] = window[3] = 0;
+        windowCount = 0;
+        last_rx = std::chrono::steady_clock::now();
+    };
+
     while (!g_capture_stop_requested.load())
     {
       const auto now = std::chrono::steady_clock::now();
         // Read stream byte-by-byte and scan for magic marker.
         uint8_t byte = 0;
-        if (serial.readBytes(&byte, 1, 100) <= 0)
+        const int rd = serial.readBytes(&byte, 1, 100);
+        if (rd < 0)
         {
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            // Явная ошибка чтения (ReadFile/SetCommTimeouts не удались) — порт в
+            // ошибочном состоянии, переоткрываем немедленно.
+            reopenPort();
+            continue;
+        }
+        else if (rd == 0)
+        {
+            // Таймаут без данных. Если тишина затянулась — порт завис, переоткрываем.
+            if (now - last_rx >= kStallReopenTimeout)
+                reopenPort();
+            else
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
         else
         {
+            last_rx = now;
             bytes_seen++;
 
             // shift window
@@ -362,39 +404,35 @@ static void realDataThreadWorker(const std::string& com_port)
                 const size_t payloadSize = rajagp::kRajaPayloadAfterMagic;
                 uint8_t payload[rajagp::kRajaPayloadAfterMagic];
                 size_t totalRead = 0;
+                // Ограничиваем ожидание payload, чтобы не крутиться вечно на
+                // мёртвом порте: при ошибке/затянувшемся таймауте бросаем пакет,
+                // внешний цикл сам переоткроет порт при следующем чтении.
+                const auto payloadDeadline = now + std::chrono::milliseconds(500);
                 while (totalRead < payloadSize && !g_capture_stop_requested.load())
                 {
                     const int r = serial.readBytes(reinterpret_cast<char*>(payload + totalRead), static_cast<int>(payloadSize - totalRead), 100);
-                    if (r > 0)
+                    if (r > 0) {
                         totalRead += static_cast<size_t>(r);
+                        last_rx = std::chrono::steady_clock::now();
+                    }
+                    else if (r < 0 || std::chrono::steady_clock::now() >= payloadDeadline)
+                        break;
                     else
                         std::this_thread::sleep_for(std::chrono::milliseconds(1));
                 }
 
-                // CRC check + RAJA→TelemetryPacket translation (rajagp_core).
+                // Отдаём сырые байты в общую точку приёма: она проверит CRC,
+                // запишет их в журнал и подаст в пайплайн. Здесь остаётся
+                // только диагностика самого порта.
                 TelemetryPacket packet{};
                 const bool crc_ok = (totalRead == payloadSize) &&
-                    rajagp::parseRajaPayload(payload, packet);
+                    telemetry::ingest_wire_packet(payload, &packet);
 
                 if (crc_ok)
                 {
                     telemetry_packets_ok++;
-                   last_packet = packet;
+                    last_packet = packet;
                     has_last_packet = true;
-
-                    {
-                        std::lock_guard<std::mutex> lock(g_last_packet_mutex);
-                        g_last_packet = packet;
-                        g_has_last_packet.store(true, std::memory_order_relaxed);
-                    }
-
-                    processIncomingTelemetry(packet);
-
-                    // ✅ 2. Broadcast to network clients (if server is running)
-                    // Only broadcast if in server mode (not client mode)
-                    if (g_is_server_mode && !g_is_client_mode) {
-                        BroadcastTelemetryToClients(packet);
-                    }
                 }
                 else
                 {
@@ -441,6 +479,7 @@ static void realDataThreadWorker(const std::string& com_port)
         }
     }
 
+    telemetry::ingest_stop();
     std::cout << "[REAL DATA] Stopped listening on " << com_port << std::endl;
     closeSerialNoThrow();
 }
@@ -458,6 +497,19 @@ bool selectAndOpenComPort(const std::string& port)
     if (port.empty())
         return false;
 
+    // Живой приём вытесняет повтор и генератор: пайплайн один, и настоящая
+    // телеметрия в нём главнее. Закрываем их явно, а не молча мешаем потоки.
+    if (telemetry::replay_is_active())
+    {
+        std::cout << "[SERIAL] Closing replay: live capture takes over" << std::endl;
+        telemetry::replay_close();
+    }
+    if (telemetry::synthetic_is_running())
+    {
+        std::cout << "[SERIAL] Stopping synthetic generator: live capture takes over" << std::endl;
+        telemetry::synthetic_stop();
+    }
+
     {
         std::lock_guard<std::mutex> lock(g_selected_port_mutex);
         g_selected_port = port;
@@ -467,7 +519,11 @@ bool selectAndOpenComPort(const std::string& port)
 
     // Avoid showing stale PPS from the previous source while the new port is opening.
     telemetryResetPpsCounters();
-    telemetryResetPrototypeIdMapping();
+    // НЕ сбрасываем prototype->race маппинг при смене порта: он привязан к
+    // статическому ID устройства из пакета и живёт ровно столько, сколько живёт
+    // машина (пруним в removeVehicles при таймауте). Иначе тот же трекер после
+    // возврата на порт считался бы новым прототипом и заводил дубль в лидерборде
+    // со сбросом таймингов, пока старая машина ещё не истекла по VEHICLE_TIMEOUT_MS.
     startRealDataCapture(port);
     return true;
 }

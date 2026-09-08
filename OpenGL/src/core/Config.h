@@ -1,0 +1,221 @@
+﻿#pragma once
+
+// Map and coordinate system constants
+namespace MapConstants {
+    static constexpr double MAP_SIZE = 100.0; // 100 meters = 1.0 in OpenGL coordinates
+    static constexpr float MAP_BOUND_X = 2.0f;
+    static constexpr float MAP_BOUND_Y = 2.0f;
+}
+
+// Vehicle rendering constants
+namespace VehicleConstants {
+    static constexpr float VEHICLE_BODY_RADIUS = 0.05f;      // 5 meters (радиус тела)
+    static constexpr float VEHICLE_OUTLINE_WIDTH = 0.005f;   // ✅ Толщина обводки (белая рамка)
+    static constexpr float VEHICLE_OUTLINE_RADIUS = VEHICLE_BODY_RADIUS + VEHICLE_OUTLINE_WIDTH;  // Автоматический расчёт
+    static constexpr int VEHICLE_CIRCLE_SEGMENTS = 20;
+    static constexpr int VEHICLE_TIMEOUT_MS = 60000;         // 60 seconds (was 300ms - too short!)
+    static constexpr int AUTHORITATIVE_VEHICLE_TIMEOUT_MS = 2500; // Remote processed-state vehicles disappear quickly after server stop
+
+    // ✅ Цвет обводки (RGB)
+    static constexpr float VEHICLE_OUTLINE_COLOR_R = 1.0f;
+    static constexpr float VEHICLE_OUTLINE_COLOR_G = 1.0f;
+    static constexpr float VEHICLE_OUTLINE_COLOR_B = 1.0f;
+}
+
+// Camera constants
+namespace CameraConstants {
+    static constexpr float CAMERA_MOVE_SPEED = 0.01f;
+    static constexpr float CAMERA_ZOOM_MIN = 0.1f;
+    static constexpr float CAMERA_ZOOM_MAX = 10.0f;
+    static constexpr float CAMERA_FRICTION = 0.85f;
+    
+    // Rotation constants
+    static constexpr float CAMERA_ROTATION_SPEED = 0.5f;  // degrees per frame
+    static constexpr float CAMERA_ROTATION_MIN = -180.0f;  // degrees
+    static constexpr float CAMERA_ROTATION_MAX = 180.0f;   // degrees
+}
+
+// Network constants
+namespace NetworkConstants {
+    static constexpr int DEFAULT_SERVER_PORT = 777;
+    static constexpr const char* DEFAULT_SERVER_IP = "136.169.18.31";
+    static constexpr const char* DEFAULT_LOCAL_SERVER_IP = "127.0.0.1";
+    static constexpr const char* SERVER_PASSWORD = "mypassword123";  
+    static constexpr int MAX_AUTH_ATTEMPTS = 10;
+    // ✅ Network performance settings
+    static constexpr int TELEMETRY_SEND_RATE_HZ = 60;  // 60 updates/sec (smooth)
+    static constexpr int TELEMETRY_SEND_INTERVAL_MS = 1000 / TELEMETRY_SEND_RATE_HZ;
+
+    // ✅ Connection reliability settings
+    static constexpr int MAP_REQUEST_TIMEOUT_MS = 10000;  // 10 seconds to receive full map
+    static constexpr int MAP_PACKET_TIMEOUT_MS = 2000;    // 2 seconds per packet
+    static constexpr int CONNECTION_TIMEOUT_MS = 5000;     // 5 seconds no packets = disconnect
+    static constexpr int MAX_MAP_RETRIES = 3;              // Retry map request 3 times
+    static constexpr int MAX_POINTS_PER_MAP_PACKET = 80;   // Max GPS points per UDP packet
+
+    static constexpr int SERVER_POLL_INTERVAL_MS = 10;
+    static constexpr int CLIENT_POLL_INTERVAL_MS = 5;
+    static constexpr int AUTH_POLL_INTERVAL_MS = 10;
+}
+
+// Values come from rajagp_core (shared with the track server) — single source
+// of truth. This namespace stays for compatibility with existing call sites.
+#include <rajagp/Protocol.h>
+namespace PacketMagic {
+    static constexpr uint32_t AUTH        = rajagp::PacketMagic::AUTH;        // 'AUTH'
+    static constexpr uint32_t RESP        = rajagp::PacketMagic::RESP;        // 'RESP'
+    static constexpr uint32_t DATA        = rajagp::PacketMagic::DATA;        // 'DATA'
+    static constexpr uint32_t MAP_REQUEST = rajagp::PacketMagic::MAP_REQUEST; // 'MAPR'
+    static constexpr uint32_t MAP_DATA    = rajagp::PacketMagic::MAP_DATA;    // 'MAPD'
+    static constexpr uint32_t MAP_POINTS  = rajagp::PacketMagic::MAP_POINTS;  // 'MAPP'
+    static constexpr uint32_t TRCK        = rajagp::PacketMagic::TRCK; // 'TRCK' - Track data header
+    static constexpr uint32_t TCHU        = rajagp::PacketMagic::TCHU; // 'TCHU' - Track chunk
+    static constexpr uint32_t RACE        = rajagp::PacketMagic::RACE; // 'RACE' - Race data
+    static constexpr uint32_t VSTA        = rajagp::PacketMagic::VSTA; // 'VSTA' - processed vehicle state
+    static constexpr uint32_t TRK2        = rajagp::PacketMagic::TRK2; // 'TRK2' - dual-edge track (left + right polylines)
+}
+
+// Track rendering constants
+namespace TrackConstants {
+    static constexpr float TRACK_CORNER_RADIUS = 0.075f;
+    static constexpr float TRACK_BORDER_WIDTH = 0.10f;
+    static constexpr float TRACK_ASPHALT_WIDTH = 0.075f;
+    static constexpr int TRACK_CORNER_SEGMENTS = 10;
+
+    // Насколько далеко от ТРАССЫ (не от начала координат) машина может быть,
+    // чтобы её телеметрию ещё считали относящейся к этому заезду.
+    //
+    // Меряется до ближайшей точки трассы, поэтому боксы, паддок и разгонная
+    // зона проходят свободно: они рядом с полотном. Чужой же заезд — это другая
+    // площадка, то есть километры.
+    //
+    // Порог намеренно НЕ привязан к обзору камеры, хотя вопрос ставился так.
+    // Обзор — выбор оператора: отъехал колесом мыши, и «чужая» машина стала бы
+    // своей. Принимать данные или нет, не может зависеть от того, куда человек
+    // смотрит. Трасса же — объективная опора и известна точно.
+    static constexpr double FOREIGN_VEHICLE_RADIUS_METERS = 1000.0;
+}
+
+// Vehicle simulation constants
+namespace SimulationConstants {
+    static constexpr float DEFAULT_DURATION_SECONDS = 60.0f;
+    static constexpr float UPDATE_RATE_HZ = 60.0f;
+    static constexpr float UPDATE_INTERVAL_MS = 1000.0f / UPDATE_RATE_HZ;
+    static constexpr double METERS_PER_DEGREE_LAT = 111320.0;
+    static constexpr double MIN_SPEED_KPH = 50.0;
+    static constexpr double SPEED_VARIATION_KPH = 30.0;
+    static constexpr double TWO_PI = 6.28318530718;
+    static constexpr int PROGRESS_LOG_INTERVAL = 30;
+}
+
+// Diagnostics / logging
+namespace LoggingConstants {
+    // Подробная отладка приёма телеметрии: координаты, выравнивание, пересечения.
+    // Печатается из горячего пути (сотни пакетов в секунду), а каждая строка
+    // журнала стоит записи на диск — поэтому по умолчанию выключено.
+    static constexpr bool VERBOSE_TELEMETRY = false;
+
+    // Каталоги данных задаёт src/core/AppPaths.h — один раз на всё приложение.
+    // Здесь их нет намеренно: пока каталог был константой, журналы консоли и
+    // записи повторов оказались в одной папке просто потому, что оба модуля
+    // взяли эту константу.
+    //
+    // Сколько последних журналов консоли хранить. Один запуск — один файл,
+    // объём мизерный, поэтому глубины в два десятка хватает с запасом.
+    static constexpr size_t KEEP_CONSOLE_LOG_FILES = 20;
+}
+
+// Race timing constants
+namespace RaceConstants {
+    // ВЫЕЗДНОЙ (ПРОГРЕВОЧНЫЙ) КРУГ.
+    //
+    // Всё, что машина проехала ДО первого пересечения старт/финиша, — это
+    // круг номер ноль. В зачёт он не идёт и времени круга не имеет: считать
+    // его не от чего, машина выехала из боксов посреди трассы.
+    //
+    // Но телеметрия у него настоящая, и её надо хранить. Раньше эти замеры
+    // складывались в корзину первого круга и НА ЛИНИИ СТИРАЛИСЬ — заезд
+    // начинался с обрыва, прогревочный круг посмотреть было нельзя ни живьём,
+    // ни на повторе, хотя в записи он лежал целиком. Отдельный номер решает и
+    // то, и другое: боевой круг не засоряется чужим проездом, а выездной
+    // остаётся на месте и открывается как любой другой.
+    //
+    // Ноль выбран не случайно: круги нумеруются подряд, и «минус первый» или
+    // отдельный флаг заставили бы каждого читателя истории знать про особый
+    // случай. Так же нумеруют выездной круг системы хронометража.
+    static constexpr int OUT_LAP_NUMBER = 0;
+
+    // Номер круга, который машина начинает ехать после пересечения старт/финиша.
+    // Боевой отсчёт начинается ЗДЕСЬ: таймер запускается В МОМЕНТ пересечения
+    // (см. m_has_started_first_lap), поэтому первый же завершённый круг —
+    // полноценный, от линии до линии.
+    static constexpr int LAP_START_NUMBER = 1;
+
+    // Сколько завершённых кругов нужно, чтобы показывать лучшее время. Единица:
+    // выездной круг времени не имеет вовсе (см. OUT_LAP_NUMBER), поэтому в
+    // рекорды попасть не может и отбрасывать отдельно его не нужно.
+    static constexpr int MIN_LAPS_FOR_BEST_LAP = 1;
+    
+    // ✅ Lap Timer Delta Comparison Mode:
+    // -1 = сравнение с лучшим кругом (best lap)
+    // 0 = сравнение с предыдущим кругом (previous lap)
+    // N > 0 = сравнение с конкретным кругом номер N
+    static constexpr int LAP_DELTA_COMPARE_MODE = -1;  // По умолчанию: сравнение с лучшим
+
+    // Верхняя граница номеров участников: race ID выдаётся из диапазона 1..N и
+    // служит ключом в g_vehicles. Держим двузначным, чтобы номер оставался
+    // читаемым на табло.
+    static constexpr int MAX_RACE_VEHICLE_ID = 99;
+
+    // Отставание в кругах считается по ДИСТАНЦИИ: сколько полных кругов лидер
+    // отыграл у машины. Показ «+1 круг» появляется ровно в момент, когда лидер
+    // её физически обходит, а не когда кто-то из двоих пересекает линию.
+    //
+    // Зазор нужен только для снятия уже показанного круга: без него значение
+    // мигало бы, пока разрыв колеблется около целого числа кругов. Прибавляется
+    // круг сразу, снимается — только когда разрыв заметно ушёл вниз.
+    static constexpr double LAPS_BEHIND_HYSTERESIS = 0.05;
+
+    // Порог, с которого в таблице вместо времени показывается «+N кругов».
+    // Пока машина ближе этого к лидеру, оператору важен именно разрыв в
+    // секундах: борьба за подиум не должна выглядеть как отставание на круг.
+    static constexpr float LAP_GAP_DISPLAY_SECONDS = 20.0f;
+}
+
+// Console colors
+namespace ConsoleColors {
+   static constexpr int CONSOLE_COLOR_GREEN = 10;
+   static constexpr int CONSOLE_COLOR_YELLOW = 14;
+   static constexpr int CONSOLE_COLOR_RED = 12;
+   static constexpr int CONSOLE_DEFAULT = 7;
+}
+
+
+// Binary dual-edge track file format (.trk2)
+// Layout: Trk2FileHeader | left_count * vec2 | right_count * vec2
+#pragma pack(push, 1)
+struct Trk2FileHeader {
+    char     magic[4];          // 'T','R','K','2'
+    uint32_t version;           // 2
+    double   origin_easting;
+    double   origin_northing;
+    int32_t  origin_zone;
+    char     origin_zone_char;
+    uint8_t  pad[3];
+    double   map_size;
+    uint32_t left_count;
+    uint32_t right_count;
+};
+#pragma pack(pop)
+
+// Grid rendering constants
+namespace GridConstants {
+   static constexpr float GRID_CELL_SIZE = 20.0f;  // 20 meters per cell
+   static constexpr float GRID_LINE_ALPHA = 0.12f;  // 12% visibility
+   static constexpr float GRID_COLOR_R = 225.0f / 30.0f;     // White
+   static constexpr float GRID_COLOR_G = 225.0f / 30.0f;
+   static constexpr float GRID_COLOR_B = 225.0f / 30.0f;
+}
+
+
+

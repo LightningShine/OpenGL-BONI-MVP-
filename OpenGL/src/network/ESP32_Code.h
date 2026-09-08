@@ -1,5 +1,5 @@
 #pragma once
-#include "../network/Server.h"
+#include "network/Server.h"
 #include <serialib/serialib.h>
 #include <string>
 #include <vector>
@@ -37,6 +37,11 @@ bool selectAndOpenComPort(const std::string& port);
 
 // Stop capture and close port (safe to call multiple times)
 void stopRealDataCapture();
+
+// Идёт ли приём с COM-порта. Нужно источникам данных: живой приём, генератор и
+// повтор кормят ОДИН пайплайн, и запускать их одновременно нельзя — потоки
+// пакетов смешались бы в одних и тех же машинах.
+bool isRealDataCaptureRunning();
 
 // ============================================================================
 // DATA SOURCES

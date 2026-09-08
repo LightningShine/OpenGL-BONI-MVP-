@@ -107,30 +107,30 @@
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <IncludePath>$(ProjectDir)libraries\include;libraries\include\imgui;libraries\include\imgui\backends;$(ProjectDir)libraries\include\GeographicLib;$(ProjectDir)libraries\include;$(IncludePath)</IncludePath>
+    <IncludePath>$(ProjectDir)third_party\include;third_party\include\imgui;third_party\include\imgui\backends;$(ProjectDir)third_party\include\GeographicLib;$(ProjectDir)third_party\include;$(IncludePath)</IncludePath>
     <ExternalIncludePath>$(ExternalIncludePath)</ExternalIncludePath>
-    <LibraryPath>$(ProjectDir)libraries\lib;C:\vcpkg\installed\$(VcpkgTriplet)\lib;$(LibraryPath)</LibraryPath>
+    <LibraryPath>$(ProjectDir)third_party\lib;C:\vcpkg\installed\$(VcpkgTriplet)\lib;$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">
-    <IncludePath>$(ProjectDir)libraries\include;libraries\include\imgui;libraries\include\imgui\backends;$(ProjectDir)libraries\include\GeographicLib;$(ProjectDir)libraries\include;$(IncludePath)</IncludePath>
+    <IncludePath>$(ProjectDir)third_party\include;third_party\include\imgui;third_party\include\imgui\backends;$(ProjectDir)third_party\include\GeographicLib;$(ProjectDir)third_party\include;$(IncludePath)</IncludePath>
     <ExternalIncludePath>$(ExternalIncludePath)</ExternalIncludePath>
-    <LibraryPath>$(ProjectDir)libraries\lib;C:\vcpkg\installed\$(VcpkgTriplet)\lib;$(LibraryPath)</LibraryPath>
+    <LibraryPath>$(ProjectDir)third_party\lib;C:\vcpkg\installed\$(VcpkgTriplet)\lib;$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
-    <IncludePath>$(ProjectDir)libraries\include;libraries\include\imgui;libraries\include\imgui\backends;$(ProjectDir)libraries\include\GeographicLib;$(ProjectDir)libraries\include;$(IncludePath)</IncludePath>
+    <IncludePath>$(ProjectDir)third_party\include;third_party\include\imgui;third_party\include\imgui\backends;$(ProjectDir)third_party\include\GeographicLib;$(ProjectDir)third_party\include;$(IncludePath)</IncludePath>
     <ExternalIncludePath>$(ExternalIncludePath)</ExternalIncludePath>
-    <LibraryPath>$(ProjectDir)libraries\lib;C:\vcpkg\installed\$(VcpkgTriplet)\lib;$(LibraryPath)</LibraryPath>
+    <LibraryPath>$(ProjectDir)third_party\lib;C:\vcpkg\installed\$(VcpkgTriplet)\lib;$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'">
-    <IncludePath>$(ProjectDir)libraries\include;libraries\include\imgui;libraries\include\imgui\backends;$(ProjectDir)libraries\include\GeographicLib;$(ProjectDir)libraries\include;$(IncludePath)</IncludePath>
+    <IncludePath>$(ProjectDir)third_party\include;third_party\include\imgui;third_party\include\imgui\backends;$(ProjectDir)third_party\include\GeographicLib;$(ProjectDir)third_party\include;$(IncludePath)</IncludePath>
     <ExternalIncludePath>$(ExternalIncludePath)</ExternalIncludePath>
-    <LibraryPath>$(ProjectDir)libraries\lib;C:\vcpkg\installed\$(VcpkgTriplet)\lib;$(LibraryPath)</LibraryPath>
+    <LibraryPath>$(ProjectDir)third_party\lib;C:\vcpkg\installed\$(VcpkgTriplet)\lib;$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
-    <IncludePath>$(ProjectDir)libraries\include;$(VC_IncludePath);$(WindowsSDK_IncludePath);</IncludePath>
+    <IncludePath>$(ProjectDir)third_party\include;$(VC_IncludePath);$(WindowsSDK_IncludePath);</IncludePath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
-    <IncludePath>$(ProjectDir)libraries\include;$(VC_IncludePath);$(WindowsSDK_IncludePath);</IncludePath>
+    <IncludePath>$(ProjectDir)third_party\include;$(VC_IncludePath);$(WindowsSDK_IncludePath);</IncludePath>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <ClCompile>
@@ -138,7 +138,7 @@
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>WIN32;_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <AdditionalIncludeDirectories>$(ProjectDir)src\network;$(ProjectDir)..\..\RAJAGP Server\core\include;C:\vcpkg\installed\$(VcpkgTriplet)\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)src;$(ProjectDir)..\..\RAJAGP Server\core\include;C:\vcpkg\installed\$(VcpkgTriplet)\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
@@ -154,7 +154,7 @@
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>WIN32;NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <AdditionalIncludeDirectories>$(ProjectDir)src\network;$(ProjectDir)..\..\RAJAGP Server\core\include;C:\vcpkg\installed\$(VcpkgTriplet)\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)src;$(ProjectDir)..\..\RAJAGP Server\core\include;C:\vcpkg\installed\$(VcpkgTriplet)\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
@@ -171,12 +171,14 @@
       <PreprocessorDefinitions>_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp17</LanguageStandard>
-      <AdditionalIncludeDirectories>$(ProjectDir)src\network;$(ProjectDir)..\..\RAJAGP Server\core\include;C:\vcpkg\installed\$(VcpkgTriplet)\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)src;$(ProjectDir)..\..\RAJAGP Server\core\include;C:\vcpkg\installed\$(VcpkgTriplet)\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalDependencies>glfw3.lib;opengl32.lib;GeographicLib-i.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>glfw3.lib;opengl32.lib;GeographicLib-i.lib;sqlite3.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <!-- glfw3.lib поставляется без PDB — глушим бесполезный поток LNK4099 -->
+      <AdditionalOptions>/ignore:4099 %(AdditionalOptions)</AdditionalOptions>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">
@@ -186,12 +188,13 @@
       <PreprocessorDefinitions>_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp17</LanguageStandard>
-      <AdditionalIncludeDirectories>$(ProjectDir)src\network;$(ProjectDir)..\..\RAJAGP Server\core\include;C:\vcpkg\installed\$(VcpkgTriplet)\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)src;$(ProjectDir)..\..\RAJAGP Server\core\include;C:\vcpkg\installed\$(VcpkgTriplet)\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalDependencies>glfw3.lib;opengl32.lib;GeographicLib-i.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>glfw3.lib;opengl32.lib;GeographicLib-i.lib;sqlite3.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalOptions>/ignore:4099 %(AdditionalOptions)</AdditionalOptions>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -203,14 +206,15 @@
       <PreprocessorDefinitions>NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp17</LanguageStandard>
-      <AdditionalIncludeDirectories>$(ProjectDir)src\network;$(ProjectDir)..\..\RAJAGP Server\core\include;C:\vcpkg\installed\$(VcpkgTriplet)\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)src;$(ProjectDir)..\..\RAJAGP Server\core\include;C:\vcpkg\installed\$(VcpkgTriplet)\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalDependencies>glfw3.lib;opengl32.lib;GeographicLib-i.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>glfw3.lib;opengl32.lib;GeographicLib-i.lib;sqlite3.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalOptions>/ignore:4099 %(AdditionalOptions)</AdditionalOptions>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'">
@@ -222,14 +226,15 @@
       <PreprocessorDefinitions>NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp17</LanguageStandard>
-      <AdditionalIncludeDirectories>$(ProjectDir)src\network;$(ProjectDir)..\..\RAJAGP Server\core\include;C:\vcpkg\installed\$(VcpkgTriplet)\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)src;$(ProjectDir)..\..\RAJAGP Server\core\include;C:\vcpkg\installed\$(VcpkgTriplet)\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalDependencies>glfw3.lib;opengl32.lib;GeographicLib-i.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>glfw3.lib;opengl32.lib;GeographicLib-i.lib;sqlite3.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalOptions>/ignore:4099 %(AdditionalOptions)</AdditionalOptions>
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
@@ -238,99 +243,133 @@
          a sibling of this repo (same parent folder). -->
     <ClCompile Include="..\..\RAJAGP Server\core\src\Crc.cpp" />
     <ClCompile Include="..\..\RAJAGP Server\core\src\RajaParser.cpp" />
-    <ClCompile Include="src\network\TrackServerClient.cpp" />
-    <ClCompile Include="src\network\NetworkCompat.cpp" />
-    <ClCompile Include="libraries\include\serialib\serialib.cpp" />
+    <!-- Vendored third-party sources. Not edited here; see third_party\. -->
+    <ClCompile Include="third_party\glad\glad.c" />
+    <ClCompile Include="third_party\include\serialib\serialib.cpp" />
+    <ClCompile Include="third_party\include\imgui\imgui.cpp" />
+    <ClCompile Include="third_party\include\imgui\imgui_demo.cpp" />
+    <ClCompile Include="third_party\include\imgui\imgui_draw.cpp" />
+    <ClCompile Include="third_party\include\imgui\imgui_tables.cpp" />
+    <ClCompile Include="third_party\include\imgui\imgui_widgets.cpp" />
+    <ClCompile Include="third_party\include\imgui\backends\imgui_impl_glfw.cpp" />
+    <ClCompile Include="third_party\include\imgui\backends\imgui_impl_opengl3.cpp" />
+    <!-- Application sources. -->
+    <ClCompile Include="src\core\AppPaths.cpp" />
+    <ClCompile Include="src\core\DeviceRegistry.cpp" />
+    <ClCompile Include="src\core\WorldSnapshot.cpp" />
     <ClCompile Include="src\core\main.cpp" />
     <ClCompile Include="src\input\Input.cpp" />
+    <ClCompile Include="src\logging\ConsoleLog.cpp" />
+    <ClCompile Include="src\logging\CsvImport.cpp" />
+    <ClCompile Include="src\logging\TelemetryExport.cpp" />
+    <ClCompile Include="src\logging\TelemetryLog.cpp" />
     <ClCompile Include="src\network\ESP32_Code.cpp" />
+    <ClCompile Include="src\network\NetworkCompat.cpp" />
+    <ClCompile Include="src\network\ReplayPlayer.cpp" />
     <ClCompile Include="src\network\SimulationServer.cpp" />
+    <ClCompile Include="src\network\SyntheticTelemetry.cpp" />
+    <ClCompile Include="src\network\TelemetryIngest.cpp" />
+    <ClCompile Include="src\network\TrackServerClient.cpp" />
     <ClCompile Include="src\racing\RaceManager.cpp" />
-    <ClCompile Include="src\racing\StopReset\StartStop.cpp" />
-    <ClCompile Include="src\racing\TimeDiffirence\TimeDiff.cpp" />
+    <ClCompile Include="src\racing\StartStop.cpp" />
+    <ClCompile Include="src\racing\TimeDiff.cpp" />
     <ClCompile Include="src\rendering\Interpolation.cpp" />
     <ClCompile Include="src\rendering\Render.cpp" />
     <ClCompile Include="src\rendering\VehicleNameRenderer.cpp" />
     <ClCompile Include="src\track\TelemetryTrackBuilder.cpp" />
+    <ClCompile Include="src\track\TrackEditor.cpp" />
+    <ClCompile Include="src\track\TrackProjection.cpp" />
     <ClCompile Include="src\track\TrackRecorder.cpp" />
-    <ClCompile Include="src\ui\UIRaceManager\RaceDisplay\RaceDisplay.cpp" />
-    <ClCompile Include="src\ui\UIRaceManager\RaceDisplay\RaceStatusBar.cpp" />
-    <ClCompile Include="src\ui\UIRaceManager\UIRaceManager.cpp" />
-    <ClCompile Include="src\ui\pro\ProView.cpp" />
-    <ClCompile Include="src\ui\pro\ProLapList.cpp" />
-    <ClCompile Include="src\ui\pro\ProChannels.cpp" />
-    <ClCompile Include="src\ui\pro\ProLapInfo.cpp" />
-    <ClCompile Include="src\ui\pro\ProGForce.cpp" />
-    <ClCompile Include="src\ui\pro\ProTrackMap.cpp" />
-    <ClCompile Include="src\ui\pro\ProLaptime.cpp" />
-    <ClCompile Include="src\ui\pro\ProEvents.cpp" />
-    <ClCompile Include="src\ui\pro\ProSectors.cpp" />
     <ClCompile Include="src\ui\Accounts.cpp" />
+    <ClCompile Include="src\ui\SettingsPanel.cpp" />
+    <ClCompile Include="src\ui\TrackReviewPanel.cpp" />
+    <ClCompile Include="src\ui\UI.cpp" />
+    <ClCompile Include="src\ui\UI_Elements.cpp" />
+    <ClCompile Include="src\ui\ui_scale.cpp" />
+    <ClCompile Include="src\ui\pro\ProChannels.cpp" />
+    <ClCompile Include="src\ui\pro\ProEvents.cpp" />
+    <ClCompile Include="src\ui\pro\ProGForce.cpp" />
+    <ClCompile Include="src\ui\pro\ProGForceBars.cpp" />
+    <ClCompile Include="src\ui\pro\ProGraphs.cpp" />
+    <ClCompile Include="src\ui\pro\ProLapList.cpp" />
+    <ClCompile Include="src\ui\pro\ProLaptime.cpp" />
+    <ClCompile Include="src\ui\pro\ProRelative.cpp" />
+    <ClCompile Include="src\ui\pro\ProSectors.cpp" />
+    <ClCompile Include="src\ui\pro\ProSessionInfo.cpp" />
+    <ClCompile Include="src\ui\pro\ProSidebar.cpp" />
+    <ClCompile Include="src\ui\pro\ProTrackMap.cpp" />
+    <ClCompile Include="src\ui\pro\ProTrackReport.cpp" />
+    <ClCompile Include="src\ui\pro\ProView.cpp" />
+    <ClCompile Include="src\ui\race\RaceDisplay.cpp" />
+    <ClCompile Include="src\ui\race\RaceStatusBar.cpp" />
+    <ClCompile Include="src\ui\race\UIRaceManager.cpp" />
     <ClCompile Include="src\vehicle\Vehicle.cpp" />
-    <ClCompile Include="src\thirdparty\glad.c" />
     <ClCompile Include="src\vehicle\VehicleInterpolator.cpp" />
-    <ClCompile Include="UI.cpp" />
-    <ClCompile Include="libraries\include\imgui\imgui.cpp" />
-    <ClCompile Include="libraries\include\imgui\imgui_demo.cpp" />
-    <ClCompile Include="libraries\include\imgui\imgui_draw.cpp" />
-    <ClCompile Include="libraries\include\imgui\imgui_tables.cpp" />
-    <ClCompile Include="libraries\include\imgui\imgui_widgets.cpp" />
-    <ClCompile Include="libraries\include\imgui\backends\imgui_impl_glfw.cpp" />
-    <ClCompile Include="libraries\include\imgui\backends\imgui_impl_opengl3.cpp" />
-    <ClCompile Include="UI_Elements.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="libraries\include\serialib\serialib.h" />
-    <ClInclude Include="libraries\include\stb_image.h" />
-    <ClInclude Include="src\Config.h" />
+    <ClInclude Include="third_party\include\serialib\serialib.h" />
+    <ClInclude Include="third_party\include\stb_image.h" />
+    <ClInclude Include="src\core\AppPaths.h" />
+    <ClInclude Include="src\core\Config.h" />
+    <ClInclude Include="src\core\DeviceRegistry.h" />
+    <ClInclude Include="src\core\WorldSnapshot.h" />
     <ClInclude Include="src\input\Input.h" />
-    <ClInclude Include="src\network\TrackServerClient.h" />
-    <ClInclude Include="src\ui\Accounts.h" />
+    <ClInclude Include="src\logging\ConsoleLog.h" />
+    <ClInclude Include="src\logging\CsvImport.h" />
+    <ClInclude Include="src\logging\TelemetryExport.h" />
+    <ClInclude Include="src\logging\TelemetryLog.h" />
     <ClInclude Include="src\network\ESP32_Code.h" />
+    <ClInclude Include="src\network\ReplayPlayer.h" />
     <ClInclude Include="src\network\Server.h" />
     <ClInclude Include="src\network\SimulationServer.h" />
-    <ClInclude Include="src\racing\ModeManager\ModeManager.h" />
+    <ClInclude Include="src\network\SyntheticTelemetry.h" />
+    <ClInclude Include="src\network\TelemetryIngest.h" />
+    <ClInclude Include="src\network\TrackServerClient.h" />
+    <ClInclude Include="src\racing\LapClock.h" />
+    <ClInclude Include="src\racing\ModeManager.h" />
     <ClInclude Include="src\racing\RaceManager.h" />
-    <ClInclude Include="src\racing\StopReset\StartStop.h" />
-    <ClInclude Include="src\racing\TimeDiffirence\TimeDiff.h" />
+    <ClInclude Include="src\racing\StartStop.h" />
+    <ClInclude Include="src\racing\TimeDiff.h" />
     <ClInclude Include="src\rendering\Interpolation.h" />
     <ClInclude Include="src\rendering\Render.h" />
     <ClInclude Include="src\rendering\VehicleNameRenderer.h" />
     <ClInclude Include="src\track\TelemetryTrackBuilder.h" />
+    <ClInclude Include="src\track\TrackEditor.h" />
+    <ClInclude Include="src\track\TrackProjection.h" />
     <ClInclude Include="src\track\TrackRecorder.h" />
-    <ClInclude Include="src\ui\UIRaceManager\RaceDisplay\RaceDisplay.h" />
-    <ClInclude Include="src\ui\UIRaceManager\RaceDisplay\RaceFlags.h" />
-    <ClInclude Include="src\ui\UIRaceManager\RaceDisplay\RaceStatusBar.h" />
-    <ClInclude Include="src\ui\UIRaceManager\UIRaceManager.h" />
-    <ClInclude Include="src\ui\pro\ProView.h" />
-    <ClInclude Include="src\ui\pro\ProLapList.h" />
-    <ClInclude Include="src\ui\pro\ProChannels.h" />
-    <ClInclude Include="src\ui\pro\ProLapInfo.h" />
-    <ClInclude Include="src\ui\pro\ProGForce.h" />
-    <ClInclude Include="src\ui\pro\ProTrackMap.h" />
-    <ClInclude Include="src\ui\pro\ProLaptime.h" />
-    <ClInclude Include="src\ui\pro\ProEvents.h" />
-    <ClInclude Include="src\ui\pro\ProSectors.h" />
+    <ClInclude Include="src\ui\Accounts.h" />
+    <ClInclude Include="src\ui\SettingsPanel.h" />
+    <ClInclude Include="src\ui\TrackReviewPanel.h" />
+    <ClInclude Include="src\ui\UI.h" />
     <ClInclude Include="src\ui\UI_Config.h" />
+    <ClInclude Include="src\ui\UI_Elements.h" />
     <ClInclude Include="src\ui\UI_Elements_Config.h" />
+    <ClInclude Include="src\ui\ui_scale.hpp" />
+    <ClInclude Include="src\ui\pro\ProChannels.h" />
+    <ClInclude Include="src\ui\pro\ProEvents.h" />
+    <ClInclude Include="src\ui\pro\ProGForce.h" />
+    <ClInclude Include="src\ui\pro\ProGForceBars.h" />
+    <ClInclude Include="src\ui\pro\ProGraphs.h" />
+    <ClInclude Include="src\ui\pro\ProLapList.h" />
+    <ClInclude Include="src\ui\pro\ProLaptime.h" />
+    <ClInclude Include="src\ui\pro\ProRelative.h" />
+    <ClInclude Include="src\ui\pro\ProSectors.h" />
+    <ClInclude Include="src\ui\pro\ProSessionInfo.h" />
+    <ClInclude Include="src\ui\pro\ProTrackMap.h" />
+    <ClInclude Include="src\ui\pro\ProTrackReport.h" />
+    <ClInclude Include="src\ui\pro\ProView.h" />
+    <ClInclude Include="src\ui\race\RaceDisplay.h" />
+    <ClInclude Include="src\ui\race\RaceFlags.h" />
+    <ClInclude Include="src\ui\race\RaceStatusBar.h" />
+    <ClInclude Include="src\vehicle\LapTypes.h" />
     <ClInclude Include="src\vehicle\Vehicle.h" />
     <ClInclude Include="src\vehicle\VehicleInterpolator.h" />
-    <ClInclude Include="UI.h" />
-    <ClInclude Include="UI_Elements.h" />
   </ItemGroup>
   <ItemGroup>
-    <None Include="..\code_writing_guide.md" />
-    <None Include="src\ui\UIRaceManager\RaceDisplay\IMPLEMENTATION_SUMMARY.py" />
-    <None Include="src\ui\UIRaceManager\RaceDisplay\INTEGRATION_GUIDE.md" />
-    <None Include="src\ui\UIRaceManager\RaceDisplay\QUICK_REFERENCE.md" />
-    <None Include="src\ui\UIRaceManager\RaceDisplay\README.md" />
+    <ResourceCompile Include="res\app.rc" />
   </ItemGroup>
   <ItemGroup>
-    <Text Include="src\ui\UIRaceManager\RaceDisplay\USAGE_EXAMPLE.txt" />
-    <Text Include="src\ui\UIRaceManager\RaceDisplay\VISUAL_LAYOUT.txt" />
-  </ItemGroup>
-  <ItemGroup>
-    <ResourceCompile Include="app.rc" />
+    <Image Include="res\AppIcon.ico" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

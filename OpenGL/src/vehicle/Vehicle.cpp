@@ -1,10 +1,12 @@
-﻿#include "../vehicle/Vehicle.h"
-#include "../vehicle/VehicleInterpolator.h"
-#include "../input/Input.h"
-#include "../Config.h"
-#include "../rendering/Interpolation.h"
-#include "../rendering/VehicleNameRenderer.h"
-#include "../../UI.h"
+﻿#include "vehicle/Vehicle.h"
+#include "vehicle/VehicleInterpolator.h"
+#include "input/Input.h"
+#include "core/Config.h"
+#include "rendering/Interpolation.h"
+#include "rendering/VehicleNameRenderer.h"
+#include "network/SimulationServer.h"
+#include "core/WorldSnapshot.h"
+#include "ui/UI.h"
 #include <cmath>
 #include <iostream>
 #include <iomanip>
@@ -15,8 +17,61 @@ extern UI* g_ui;
 
 // === ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ===
 std::map<int32_t, Vehicle> g_vehicles;
-std::mutex g_vehicles_mutex;
+// Мьютекс состояния машин. ВНУТРЕННИЙ: наружу торчит только VehiclesLock.
+//
+// Раньше он был виден всем, и половина кода брала его голым lock_guard. Работало
+// это лишь потому, что все такие захваты жили в потоке отрисовки, а пакетный
+// участок повтора — в нём же, но не одновременно. Один голый lock_guard,
+// добавленный в тракт приёма пакета, дал бы САМОБЛОКИРОВКУ на первом же откате:
+// пакетный участок уже держит мьютекс на этом потоке, а lock_guard про счётчик
+// глубины ничего не знает. Выглядело бы это как зависание приложения без стека —
+// отлаживать нечем.
+//
+// Поэтому имени наружу больше нет: взять мьютекс можно только через обёртку,
+// которая знает про реентрантность. Попытка объявить его у себя extern не
+// соберётся на этапе линковки, а не в проде.
+static std::mutex g_vehicles_mutex;
 std::atomic<bool> g_is_vehicles_active = false;
+std::atomic<bool> g_race_session_active = false;
+std::atomic<bool> g_pipeline_rebuilding = false;
+std::atomic<bool> g_pipeline_warmup = false;
+std::atomic<bool> g_position_smoothing_enabled = true;
+
+// Глубина захвата мьютекса машин ЭТИМ потоком. Ноль означает «не держим».
+// Пересчёт повтора поднимает её на весь прогон, и вложенные захваты внутри
+// приёма пакета становятся пустыми операциями.
+static thread_local int t_vehicles_lock_depth = 0;
+
+VehiclesLock::VehiclesLock()
+    : owns_(t_vehicles_lock_depth == 0)
+{
+    if (owns_)
+    {
+        g_vehicles_mutex.lock();
+        ++t_vehicles_lock_depth;
+    }
+}
+
+VehiclesLock::~VehiclesLock()
+{
+    if (owns_)
+    {
+        --t_vehicles_lock_depth;
+        g_vehicles_mutex.unlock();
+    }
+}
+
+void enter_vehicles_bulk_section()
+{
+    g_vehicles_mutex.lock();
+    ++t_vehicles_lock_depth;
+}
+
+void leave_vehicles_bulk_section()
+{
+    --t_vehicles_lock_depth;
+    g_vehicles_mutex.unlock();
+}
 
 // ✅ Система выбора машины для отслеживания
 int g_focused_vehicle_id = -1;  // -1 = лидер (дефолт)
@@ -24,6 +79,27 @@ int g_focused_vehicle_id = -1;  // -1 = лидер (дефолт)
 bool g_show_vehicle_names = true; // show TLA names above vehicles
 
 // ✅ Генератор уникальных ID
+size_t visibleSampleCount(const Vehicle& vehicle, int lapNumber,
+                          const std::vector<LapInfo>& samples)
+{
+    // Круга ещё не было: он целиком в непроигранной части записи.
+    if (lapNumber > vehicle.m_current_lap_number)
+        return 0;
+
+    // Круг пройден целиком — виден весь.
+    if (lapNumber < vehicle.m_current_lap_number)
+        return samples.size();
+
+    // Текущий круг виден до места, где машина стоит сейчас. Прогресс внутри
+    // круга возрастает, поэтому границу ищем двоичным поиском: панели читают
+    // историю каждый кадр, и перебирать её целиком нельзя.
+    const auto cut = std::upper_bound(
+        samples.begin(), samples.end(), vehicle.m_track_progress,
+        [](double progress, const LapInfo& sample) { return progress < sample.progress; });
+
+    return static_cast<size_t>(cut - samples.begin());
+}
+
 int32_t generateVehicleID()
 {
     static std::atomic<int32_t> nextID(1);
@@ -184,19 +260,28 @@ Vehicle::Vehicle(int32_t id, double normalized_x, double normalized_y)
     std::cout << "Vehicle #" << m_id << " created at START line (" << m_normalized_x << ", " << m_normalized_y << "), GPS: (" << m_lat_dd << ", " << m_lon_dd << ")" << std::endl;
 }
 
-Vehicle::Vehicle(const TelemetryPacket& packet)
+Vehicle::Vehicle(int32_t race_id, const TelemetryPacket& packet)
 {
     m_lat_dd = packet.lat / 1e7;
     m_lon_dd = packet.lon / 1e7;
     m_speed_kph = packet.speed / 100.0;
-    m_acceleration = packet.acceleration / 100.0;
-    m_g_force_x = packet.gForceX / 100.0;
-    m_g_force_y = packet.gForceY / 100.0;
+    // Ускорение — тоже со знаком: торможение это отрицательное ускорение, и
+    // прочтение беззнаковым превращало его в десятки миллионов м/с².
+    m_acceleration = static_cast<int32_t>(packet.acceleration) / 100.0;
+    // Перегрузка со ЗНАКОМ: в пакете поле беззнаковое, но торможение и левый
+    // поворот — это отрицательные значения, и трекер кладёт их дополнительным
+    // кодом. Для любой физически возможной перегрузки (до 327 g) прочтение как
+    // int16 совпадает с прежним, а отрицательные перестают превращаться в
+    // сотни g.
+    m_g_force_x = static_cast<int16_t>(packet.gForceX) / 100.0;
+    m_g_force_y = static_cast<int16_t>(packet.gForceY) / 100.0;
     m_fix_type = packet.fixtype;
-    m_id = packet.ID;
+    m_id = race_id;
+    m_device_id = packet.ID;
 
     // ⚠️ CRITICAL DEBUG: Print stack trace to find who creates this
-    std::cout << "[VEHICLE CONSTRUCTOR] Creating vehicle #" << m_id 
+    std::cout << "[VEHICLE CONSTRUCTOR] Creating vehicle #" << m_id
+              << " (device #" << m_device_id << ")"
               << " from TelemetryPacket (this should only happen for NEW vehicles!)" << std::endl;
     std::cout.flush();
 
@@ -265,33 +350,67 @@ void vehicleLoop()
 void removeVehicles()
 {
     auto now = std::chrono::steady_clock::now();
+    // Собираем race ID удалённых машин под локом, а сопутствующее состояние
+    // (маппинг, интерполятор, тайм-синк) чистим ПОСЛЕ выхода из g_vehicles_mutex:
+    // allocate-путь берёт s_proto_map_mutex, затем g_vehicles_mutex, поэтому
+    // обратный порядок здесь привёл бы к дедлоку.
+    std::vector<int32_t> removed_race_ids;
     {
-        std::lock_guard<std::mutex> lock(g_vehicles_mutex);
-        if (!g_vehicles.empty())
+        VehiclesLock lock;
+        // Во время сессии участник, потерявший связь, помечается, но не удаляется:
+        // всё его гоночное состояние (круги, лучшее время) живёт внутри объекта и
+        // умерло бы вместе с ним, а после реконнекта машина начала бы гонку с нуля.
+        const bool keep_entrants = g_race_session_active.load(std::memory_order_relaxed);
+
+        for (auto it = g_vehicles.begin(); it != g_vehicles.end();)
         {
-            for (auto it = g_vehicles.begin(); it != g_vehicles.end();)
+            const int32_t race_id = it->first;
+            Vehicle& vehicle = it->second;
+
+            const auto silence_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                now - vehicle.m_last_update_time).count();
+            const int timeoutMs = vehicle.m_has_authoritative_state
+                ? VehicleConstants::AUTHORITATIVE_VEHICLE_TIMEOUT_MS
+                : VehicleConstants::VEHICLE_TIMEOUT_MS;
+
+            if (silence_ms < timeoutMs)
             {
-                auto timeSinceLastUpdate = std::chrono::duration_cast<std::chrono::milliseconds>(now - it->second.m_last_update_time).count();
-                const int timeoutMs = it->second.m_has_authoritative_state
-                    ? VehicleConstants::AUTHORITATIVE_VEHICLE_TIMEOUT_MS
-                    : VehicleConstants::VEHICLE_TIMEOUT_MS;
-
-                if (timeSinceLastUpdate >= timeoutMs)
-                {
-                    std::cout << "[TIMEOUT] Vehicle ID #" << it->second.m_id 
-                              << " removed due to timeout (" << timeSinceLastUpdate << "ms > " 
-                              << timeoutMs << "ms)" << std::endl;
-                    std::cout.flush();
-                    it = g_vehicles.erase(it); // ✅ erase возвращает следующий итератор
-                }
-                else
-                {
-                    ++it; // ✅ Инкремент ТОЛЬКО если НЕ удалили
-                }
+                vehicle.m_signal_lost = false;
+                ++it;
+                continue;
             }
-        }
 
+            // Машины с авторитетным состоянием считает сервер: их круги живут не
+            // здесь, сохранять объект незачем — пусть уходят быстро, как и раньше.
+            if (keep_entrants && !vehicle.m_has_authoritative_state)
+            {
+                if (!vehicle.m_signal_lost)
+                {
+                    vehicle.m_signal_lost = true;
+                    std::cout << "[SIGNAL] Vehicle #" << race_id
+                              << " (device #" << vehicle.m_device_id
+                              << ") lost signal after " << silence_ms
+                              << "ms, kept: session is running" << std::endl;
+                    std::cout.flush();
+                }
+                ++it;
+                continue;
+            }
+
+            std::cout << "[TIMEOUT] Vehicle #" << race_id
+                      << " (device #" << vehicle.m_device_id
+                      << ") removed due to timeout (" << silence_ms << "ms > "
+                      << timeoutMs << "ms)" << std::endl;
+            std::cout.flush();
+            removed_race_ids.push_back(race_id);
+            it = g_vehicles.erase(it); // ✅ erase возвращает следующий итератор
+        }
     }
+
+    // Машины ушли окончательно — единой точкой чистим всё, что заведено на их
+    // race ID (уже без g_vehicles_mutex).
+    for (int32_t race_id : removed_race_ids)
+        telemetryForgetVehicle(race_id);
 }
 
 
@@ -328,8 +447,18 @@ std::vector<glm::vec2> generateTriangle(float size)
 }
 
 void renderVehicle(GLuint shader_program, GLuint vao, GLuint vbo,
-    const Vehicle& vehicle, const glm::mat4& projection)
+    const VehicleRenderState& vehicle, const glm::mat4& projection, float camera_zoom)
 {
+    // Сглаживание поворота лидера должно переживать кадр, поэтому угол хранится
+    // здесь, по ID машины. Раньше он лежал в Vehicle, но рендер работал с копией
+    // объекта и записывал угол в неё — сглаживание не накапливалось вообще.
+    // Доступ только из потока рендера.
+    static std::map<int32_t, float> s_rotation_cache;
+    float& cached_rotation = s_rotation_cache[vehicle.id];
+
+    // Constant on-screen size: world-space vertices shrink as the camera
+    // zooms in, so the marker never covers the track at high zoom.
+    const float markerScale = 1.0f / (camera_zoom > 0.01f ? camera_zoom : 0.01f);
     // ✅ Статические геометрии (генерируются один раз для производительности)
     static std::vector<glm::vec2> circleOutline = generateCircle(
         VehicleConstants::VEHICLE_OUTLINE_RADIUS, 
@@ -346,41 +475,41 @@ void renderVehicle(GLuint shader_program, GLuint vao, GLuint vbo,
     static GLint colorLoc = glGetUniformLocation(shader_program, "uColor");
     
     // ✅ Выбираем форму: треугольник для лидера, круг для остальных
-    const std::vector<glm::vec2>& outlineShape = vehicle.m_is_leader ? triangleOutline : circleOutline;
-    const std::vector<glm::vec2>& bodyShape = vehicle.m_is_leader ? triangleBody : circleBody;
+    const std::vector<glm::vec2>& outlineShape = vehicle.is_leader ? triangleOutline : circleOutline;
+    const std::vector<glm::vec2>& bodyShape = vehicle.is_leader ? triangleBody : circleBody;
 
     // ========================================================================
     // ✅ CALCULATE ROTATION ANGLE WITH PERSISTENCE
     // Caches last valid angle to prevent flickering when GPS jitter causes
     // movement < MIN_MOVEMENT threshold. Uses exponential smoothing for gradual rotation.
     // ========================================================================
-    float rotationAngle = vehicle.m_last_rotation_angle;  // ✅ Start with cached angle
+    float rotationAngle = cached_rotation;  // ✅ Start with cached angle
 
-    if (vehicle.m_is_leader)
+    if (vehicle.is_leader)
     {
         // Use authoritative heading if available. This is more stable than deriving
         // rotation from frame-to-frame position differences.
-        float newAngle = static_cast<float>(vehicle.m_heading) - glm::half_pi<float>();
+        float newAngle = static_cast<float>(vehicle.heading) - glm::half_pi<float>();
 
         // ✅ SMOOTH INTERPOLATION (exponential smoothing)
         const float SMOOTHING_FACTOR = 0.3f;  // 0.0 = no change, 1.0 = instant (0.3 = good balance)
 
         // Handle angle wrapping (-PI to PI)
-        float angleDiff = newAngle - vehicle.m_last_rotation_angle;
+        float angleDiff = newAngle - cached_rotation;
 
         if (angleDiff > glm::pi<float>())
             angleDiff -= 2.0f * glm::pi<float>();
         else if (angleDiff < -glm::pi<float>())
             angleDiff += 2.0f * glm::pi<float>();
 
-        rotationAngle = vehicle.m_last_rotation_angle + angleDiff * SMOOTHING_FACTOR;
+        rotationAngle = cached_rotation + angleDiff * SMOOTHING_FACTOR;
 
-        vehicle.m_last_rotation_angle = rotationAngle;
+        cached_rotation = rotationAngle;
     }
 
     // ✅ ОПТИМИЗАЦИЯ: Создаем матрицу вращения один раз
     glm::mat2 rotationMatrix(1.0f);
-    if (vehicle.m_is_leader)
+    if (vehicle.is_leader)
     {
         float cosAngle = std::cos(rotationAngle);
         float sinAngle = std::sin(rotationAngle);
@@ -390,19 +519,20 @@ void renderVehicle(GLuint shader_program, GLuint vao, GLuint vbo,
         );
     }
 
-  const glm::vec2 renderOffset = vehicle.m_apply_track_render_offset ? getTrackRenderOffset() : glm::vec2(0.0f, 0.0f);
-    const float baseX = static_cast<float>(vehicle.m_normalized_x) + renderOffset.x;
-    const float baseY = static_cast<float>(vehicle.m_normalized_y) + renderOffset.y;
+    const glm::vec2 renderOffset = vehicle.apply_track_render_offset ? getTrackRenderOffset() : glm::vec2(0.0f, 0.0f);
+    const float baseX = static_cast<float>(vehicle.x) + renderOffset.x;
+    const float baseY = static_cast<float>(vehicle.y) + renderOffset.y;
 
     // === РИСУЕМ БЕЛУЮ ОБВОДКУ ===
     std::vector<glm::vec2> outlineVertices;
     outlineVertices.reserve(outlineShape.size());
     for (const auto& vertex : outlineShape) {
         // ✅ Применяем матрицу поворота (экономит вычисления cos/sin)
-        glm::vec2 transformedVertex = (vehicle.m_is_leader) 
-            ? rotationMatrix * vertex 
+        glm::vec2 transformedVertex = (vehicle.is_leader)
+            ? rotationMatrix * vertex
             : vertex;
-        
+        transformedVertex *= markerScale;
+
         outlineVertices.push_back(glm::vec2(
            transformedVertex.x + baseX,
             transformedVertex.y + baseY
@@ -427,10 +557,11 @@ void renderVehicle(GLuint shader_program, GLuint vao, GLuint vbo,
     bodyVertices.reserve(bodyShape.size());
     for (const auto& vertex : bodyShape) {
         // ✅ Применяем матрицу поворота (экономит вычисления cos/sin)
-        glm::vec2 transformedVertex = (vehicle.m_is_leader) 
-            ? rotationMatrix * vertex 
+        glm::vec2 transformedVertex = (vehicle.is_leader)
+            ? rotationMatrix * vertex
             : vertex;
-        
+        transformedVertex *= markerScale;
+
         bodyVertices.push_back(glm::vec2(
            transformedVertex.x + baseX,
             transformedVertex.y + baseY
@@ -442,7 +573,7 @@ void renderVehicle(GLuint shader_program, GLuint vao, GLuint vbo,
         bodyVertices.data(), GL_DYNAMIC_DRAW);
 
     // ✅ Используем кешированный цвет машины
-    glUniform3f(colorLoc, vehicle.m_cached_color.r, vehicle.m_cached_color.g, vehicle.m_cached_color.b);
+    glUniform3f(colorLoc, vehicle.color.r, vehicle.color.g, vehicle.color.b);
 
     glBindVertexArray(vao);
     glDrawArrays(GL_TRIANGLE_FAN, 0, static_cast<GLsizei>(bodyVertices.size()));
@@ -467,80 +598,84 @@ void renderAllVehicles(GLuint shader_program, GLuint vao, GLuint vbo,
     float minY = camera_pos.y - visibleHeight;
     float maxY = camera_pos.y + visibleHeight;
 
-    // ✅ Собираем копии машин с интерполированными позициями
-    struct RenderData {
-        Vehicle vehicle;  // Copy for thread-safe rendering
-        double interp_x, interp_y, interp_heading, interp_speed;
-        bool use_interpolation;
-    };
+    // Читаем ОПУБЛИКОВАННЫЙ СНИМОК, а не рабочее состояние пайплайна. Отсюда
+    // сразу два свойства: кадр не может застать половину перестройки при
+    // перемотке повтора, и отрисовка вообще не соперничает с приёмом пакетов за
+    // мьютекс — раньше он захватывался каждый кадр. См. core/WorldSnapshot.h.
+    const std::shared_ptr<const world::Snapshot> snapshot = world::current();
 
-    std::vector<RenderData> vehiclesToRender;
+    std::vector<VehicleRenderState> vehiclesToRender;
+    vehiclesToRender.reserve(snapshot->vehicles.size());
+
+    for (const auto& [id, view] : snapshot->vehicles) {
+        // Связи нет — координаты застыли. Точку не рисуем, чтобы оператор не
+        // принял её за едущую машину; в таблице участник остаётся со своими
+        // кругами (см. removeVehicles / g_race_session_active).
+        if (view.signal_lost)
+            continue;
+
+        VehicleRenderState state;
+        state.id = id;
+        state.x = view.x;
+        state.y = view.y;
+        state.heading = view.heading;
+        state.speed_kph = view.speed_kph;
+        state.color = view.color;
+        state.name = view.name;
+        state.is_leader = view.is_leader;
+        state.apply_track_render_offset = view.apply_track_render_offset;
+        vehiclesToRender.push_back(std::move(state));
+    }
+
+    // Сглаживание применяем ТОЛЬКО когда данные идут в реальном темпе. На паузе
+    // и при перемотке позиции из снимка уже точные, а интерполятор в этот
+    // момент опирается на пачку пакетов с чужими метками времени и уводит
+    // машину в сторону — те самые остаточные прыжки.
+    if (g_position_smoothing_enabled.load(std::memory_order_relaxed))
     {
-        std::lock_guard<std::mutex> lock(g_vehicles_mutex);
-        vehiclesToRender.reserve(g_vehicles.size());
-
-        for (const auto& [id, vehicle] : g_vehicles) {
-            RenderData data{ vehicle, 0.0, 0.0, 0.0, 0.0, false };
-
-            // Try to get interpolated position
+        for (VehicleRenderState& state : vehiclesToRender)
+        {
+            double interp_x = 0.0;
+            double interp_y = 0.0;
+            double interp_heading = 0.0;
+            double interp_speed = 0.0;
             if (VehicleInterpolator::Get().GetInterpolatedState(
-                id, renderTime,
-                data.interp_x, data.interp_y, 
-                data.interp_heading, data.interp_speed))
+                    state.id, renderTime, interp_x, interp_y, interp_heading, interp_speed))
             {
-                data.use_interpolation = true;
-
-                // Check visibility with interpolated position
-                if (data.interp_x >= minX && data.interp_x <= maxX &&
-                    data.interp_y >= minY && data.interp_y <= maxY)
-                {
-                    // ✅ Use interpolated position AND heading for rendering
-                    data.vehicle.m_normalized_x = data.interp_x;
-                    data.vehicle.m_normalized_y = data.interp_y;
-                    data.vehicle.m_speed_kph = data.interp_speed;
-                    data.vehicle.m_heading = data.interp_heading;  // ✅ Fix: update heading too!
-
-                    // Update prev position for direction calculation
-                    data.vehicle.m_prev_x = vehicle.m_prev_x;
-                    data.vehicle.m_prev_y = vehicle.m_prev_y;
-
-                    vehiclesToRender.push_back(data);
-                }
-            }
-            else
-            {
-                // ✅ Fallback to direct position (no interpolation data yet or buffer not ready)
-                // This happens in first few frames or if packets are lost
-                float vX = static_cast<float>(vehicle.m_normalized_x);
-                float vY = static_cast<float>(vehicle.m_normalized_y);
-
-                if (vX >= minX && vX <= maxX && vY >= minY && vY <= maxY) {
-                    vehiclesToRender.push_back(data);
-                }
+                state.x = interp_x;
+                state.y = interp_y;
+                state.heading = interp_heading;
+                state.speed_kph = interp_speed;
             }
         }
-    } // ✅ Мьютекс освобожден
+    }
+
+    const auto is_visible = [&](const VehicleRenderState& state) {
+        return state.x >= minX && state.x <= maxX && state.y >= minY && state.y <= maxY;
+    };
 
     // ✅ Рендеринг БЕЗ блокировки (может занять 10-20ms)
-    for (const RenderData& data : vehiclesToRender) {
-        renderVehicle(shader_program, vao, vbo, data.vehicle, projection);
+    for (const VehicleRenderState& state : vehiclesToRender) {
+        if (is_visible(state))
+            renderVehicle(shader_program, vao, vbo, state, projection, camera_zoom);
     }
 
     // Draw TLA names above each vehicle if enabled.
     // Apply the same track-centering offset used by the dot so label and
     // dot always land at the same screen position.
     if (g_show_vehicle_names) {
-        for (const RenderData& data : vehiclesToRender) {
-            if (!data.vehicle.name.empty()) {
-                const glm::vec2 rOff = data.vehicle.m_apply_track_render_offset
-                                         ? getTrackRenderOffset()
-                                         : glm::vec2(0.0f, 0.0f);
-                VehicleNameRenderer::DrawName(
-                    data.vehicle.name,
-                    static_cast<float>(data.vehicle.m_normalized_x) + rOff.x,
-                    static_cast<float>(data.vehicle.m_normalized_y) + rOff.y,
-                    projection, g_ui ? g_ui->GetTitleFont() : nullptr, 1.0f);
-            }
+        for (const VehicleRenderState& state : vehiclesToRender) {
+            if (state.name.empty() || !is_visible(state))
+                continue;
+
+            const glm::vec2 rOff = state.apply_track_render_offset
+                                     ? getTrackRenderOffset()
+                                     : glm::vec2(0.0f, 0.0f);
+            VehicleNameRenderer::DrawName(
+                state.name,
+                static_cast<float>(state.x) + rOff.x,
+                static_cast<float>(state.y) + rOff.y,
+                projection, g_ui ? g_ui->GetTitleFont() : nullptr, 1.0f);
         }
     }
 }

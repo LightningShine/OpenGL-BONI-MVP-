@@ -9,8 +9,8 @@
 // Kept as 0 so legacy #if NETWORKING_ENABLED blocks compile out.
 #define NETWORKING_ENABLED 0
 
-#include "../Config.h"
-#include "windows.h"
+#include "core/Config.h"
+#include <windows.h>
 #include <vector>
 #include <thread>
 #include <random>

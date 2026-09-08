@@ -1,5 +1,7 @@
 ﻿#pragma once
 
+#include "ui/ui_scale.hpp"
+
 // ============================================================================
 // UI CONFIGURATION
 // All user interface related constants and settings
@@ -17,31 +19,67 @@ static constexpr float BASE_HEIGHT = 900.0f;
 // ============================================================================
 // APPLICATION INFO
 // ============================================================================
-static constexpr const char* APP_VERSION = "v1.0.0";
+// Единственное место, где задаётся версия — футер, Help и About читают отсюда.
+// Держать в синхроне с README ("Текущая версия").
+static constexpr const char* APP_VERSION = "v26.1.5";
 static constexpr const char* APP_NAME = "RAJAGP";
 
 // ============================================================================
-// FONT SETTINGS (as ratios of screen height)
+// UI SCALE (DPI-aware, модель macOS)
+// Размеры интерфейса задаются в логических пунктах: 1 пункт = 1 пиксель при
+// 100% системном масштабе (96 DPI). В пиксели их переводит ui_scale::points().
+// Так элементы держат постоянный ФИЗИЧЕСКИЙ размер на любом мониторе, а на
+// большом мониторе просто помещается больше контента.
+// ============================================================================
+static constexpr float UI_SCALE_MIN = 0.75f;  // защита от мусорного DPI от ОС
+static constexpr float UI_SCALE_MAX = 3.0f;
+
+// Эталонная плотность пикселей: при ней масштаб = 1.0. Итоговый масштаб —
+// максимум из системного (настройка Windows) и физического (PPI монитора /
+// REFERENCE_PPI). Физический спасает ноутбуки: 13" 2880×1800 = 245 PPI даёт
+// ~2.2 даже если в Windows выставлено всего 125%. 110, а не 96, потому что
+// маленькие плотные экраны смотрят с меньшего расстояния, чем настольные.
+static constexpr float UI_REFERENCE_PPI = 110.0f;
+
+// Размеры шрифтов в пунктах (пиксели при 100% масштабе)
+static constexpr float FONT_PT_MENU        = 12.0f;  // верхнее меню
+static constexpr float FONT_PT_UI          = 16.0f;  // модалки, кнопки
+static constexpr float FONT_PT_TITLE       = 32.0f;  // Russo One / моноширинные
+static constexpr float FONT_PT_RACE        = 24.0f;  // F1-шрифт таймера
+static constexpr float FONT_PT_RUSSO_SMALL = 13.0f;  // подписи PRO-панелей
+
+// ============================================================================
+// FONT SETTINGS (as ratios of screen height) — legacy, для старых расчётов
 // ============================================================================
 static constexpr float FONT_SIZE_REGULAR = 16.0f / BASE_HEIGHT;    // 0.017778 (1.78%)
 static constexpr float FONT_SIZE_TITLE = 24.0f / BASE_HEIGHT;      // 0.026667 (2.67%)
 static constexpr float FONT_SIZE_RACE = 24.0f / BASE_HEIGHT;       // 0.026667 (2.67%)
 
 // Font paths (relative to executable)
-static constexpr const char* FONT_PATH_UBUNTU_REGULAR = "styles/fonts/Ubuntu/Ubuntu-Regular.ttf";
-static constexpr const char* FONT_PATH_UBUNTU_BOLD = "styles/fonts/Ubuntu/Ubuntu-Bold.ttf";
-static constexpr const char* FONT_PATH_F1 = "styles/fonts/F1-Font-Family/Formula1-Regular-1.ttf";
-static constexpr const char* FONT_PATH_RUSSO_ONE = "styles/fonts/Russo_One/RussoOne-Regular.ttf";
-static constexpr const char* FONT_PATH_ROBOTO_MONO = "styles/fonts/Roboto_Mono/RobotoMono-Regular.ttf";
-static constexpr const char* FONT_PATH_OSWALD = "styles/fonts/Oswald/ttf/Oswald-Regular.ttf";
-static constexpr const char* FONT_PATH_OSWALD_BOLD = "styles/fonts/Oswald/ttf/Oswald-Bold.ttf";
-static constexpr const char* FONT_PATH_JETBRAINS_MONO = "styles/fonts/JetBrains_Mono/JetBrainsMono-Regular.ttf";
+static constexpr const char* FONT_PATH_UBUNTU_REGULAR = "assets/fonts/Ubuntu/Ubuntu-Regular.ttf";
+static constexpr const char* FONT_PATH_UBUNTU_BOLD = "assets/fonts/Ubuntu/Ubuntu-Bold.ttf";
+static constexpr const char* FONT_PATH_F1 = "assets/fonts/F1-Font-Family/Formula1-Regular-1.ttf";
+static constexpr const char* FONT_PATH_RUSSO_ONE = "assets/fonts/RussoOne/RussoOne-Regular.ttf";
+// Roboto Mono отсутствует в ассетах — вместо него грузим JetBrains Mono,
+// иначе на старте сыпался warning и шрифт подменялся дефолтным ImGui.
+static constexpr const char* FONT_PATH_ROBOTO_MONO = "assets/fonts/JetBrainsMono/JetBrainsMono-Regular.ttf";
+static constexpr const char* FONT_PATH_OSWALD = "assets/fonts/Oswald/Oswald-Regular.ttf";
+static constexpr const char* FONT_PATH_OSWALD_BOLD = "assets/fonts/Oswald/Oswald-Bold.ttf";
+static constexpr const char* FONT_PATH_JETBRAINS_MONO = "assets/fonts/JetBrainsMono/JetBrainsMono-Regular.ttf";
+static constexpr const char* FONT_PATH_JETBRAINS_MONO_BOLD = "assets/fonts/JetBrainsMono/JetBrainsMono-Bold.ttf";
 
 // ============================================================================
 // MENU BAR SETTINGS (as ratios)
 // ============================================================================
 static constexpr float TOP_MENU_HEIGHT = 30.0f / BASE_HEIGHT;      // 0.033333 (3.33%)
 static constexpr float BOTTOM_MENU_HEIGHT = 22.0f / BASE_HEIGHT;   // 0.024444 (2.44%)
+
+// Высоты баров как в Blender: контент-высота в пунктах × DPI. Полоса всегда
+// вмещает свой шрифт и не зависит от размера окна — при уменьшении окна
+// меню не сжимается и ничего на него не налезает. Ratio-константы выше
+// оставлены для legacy-мест.
+inline float top_bar_px()    { return ui_scale::points(30.0f); }
+inline float bottom_bar_px() { return ui_scale::points(22.0f); }
 
 // Menu spacing (as ratios)
 static constexpr float MENU_ITEM_SPACING = 0.0f;

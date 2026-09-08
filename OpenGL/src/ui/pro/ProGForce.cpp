@@ -1,42 +1,43 @@
-#include "ProGForce.h"
-#include "../../vehicle/Vehicle.h"
+#include "ui/pro/ProGForce.h"
+#include "core/WorldSnapshot.h"
+#include "vehicle/Vehicle.h"
 #include <imgui.h>
-#include <mutex>
 #include <cmath>
 #include <cstdio>
-
-extern std::map<int32_t, Vehicle> g_vehicles;
-extern std::mutex g_vehicles_mutex;
 
 namespace Pro {
 
 void RenderGForceWindow(const ProContext& ctx, int32_t vehicleId,
                          ImVec2 vpSz, float topH) {
-    ImGui::SetNextWindowPos ({410.f, topH + 600.f}, ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize({225.f, 225.f},         ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSizeConstraints({120.f, 120.f}, {vpSz.x, vpSz.y});
+    const float ui = ui_scale::get();
+    ImGui::SetNextWindowPos ({410.f * ui, topH + 600.f * ui}, ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize({225.f * ui, 225.f * ui},        ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSizeConstraints({120.f * ui, 120.f * ui}, {vpSz.x, vpSz.y});
 
     if (!ImGui::Begin("##GForce", nullptr,
-        PanelFlags() | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse |
-        ImGuiWindowFlags_NoBringToFrontOnFocus)) {
+        PanelFlags() | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
         ImGui::End(); return;
     }
 
     float w = ImGui::GetWindowWidth();
     float h = ImGui::GetWindowHeight();
     float z = PanelZoom("GForce");
-    DrawPanelHeader(ctx, "G-FORCE", false, nullptr, z);
+    DrawPanelHeader(ctx, "G-FORCE", false, "GForce");
 
-    // Live data
+    // Из снимка — тот же момент заезда, что и у остальных панелей.
     double gx = 0, gy = 0;
     {
-        std::lock_guard<std::mutex> lk(g_vehicles_mutex);
-        auto it = g_vehicles.find(vehicleId);
-        if (it != g_vehicles.end()) {
-            gx = it->second.m_g_force_x;
-            gy = it->second.m_g_force_y;
+        const std::shared_ptr<const world::Snapshot> snapshot = world::current();
+        if (const world::VehicleView* v = world::find(*snapshot, vehicleId)) {
+            gx = v->g_force_x;
+            gy = v->g_force_y;
         }
     }
+
+    // Образец — второй точкой в том же круге. Одна диаграмма на две машины:
+    // расстояние между точками и есть ответ «где мы разъезжаемся».
+    LapInfo    refAt;
+    const bool hasRef = ReferenceAtVehicle(vehicleId, refAt);
 
     ImDrawList* dl   = ImGui::GetWindowDrawList();
     ImVec2      base = ImGui::GetCursorScreenPos();
@@ -72,6 +73,16 @@ void RenderGForceWindow(const ProContext& ctx, int32_t vehicleId,
     float dotX = cx + ((float)gx / maxG) * r;
     float dotY = cy - ((float)gy / maxG) * r;
     float dotR = fmaxf(sz * 0.024f, 4.f);
+
+    // Образец рисуем ПОД своей точкой и полым кружком: сплошных красных точек
+    // на диаграмме должно остаться ровно одна, иначе непонятно, чья какая.
+    if (hasRef) {
+        const float rx = cx + (refAt.gForceX / maxG) * r;
+        const float ry = cy - (refAt.gForceY / maxG) * r;
+        dl->AddLine({rx, ry}, {dotX, dotY}, COL_REF_DIM, 1.f);
+        dl->AddCircle({rx, ry}, dotR, COL_REF, 16, 2.f);
+    }
+
     dl->AddCircleFilled({dotX, dotY}, dotR + 3.f, IM_COL32(180, 40, 40, 50));
     dl->AddCircleFilled({dotX, dotY}, dotR,        IM_COL32(220, 50, 50, 255));
     dl->AddCircle      ({dotX, dotY}, dotR,        IM_COL32(255, 120, 120, 180));

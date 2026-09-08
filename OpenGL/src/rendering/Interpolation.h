@@ -1,6 +1,7 @@
 ﻿#pragma once
-#include "../input/Input.h"
+#include "input/Input.h"
 #include <vector>
+#include <cstdint>
 #include <glm/glm.hpp>
 
 struct SplinePoint {
@@ -33,6 +34,20 @@ struct TrackCenterInfo {
 
 TrackCenterInfo calculateTrackCenter(const std::vector<glm::vec2>& points);
 void recenterTrack(std::vector<glm::vec2>& points, const TrackCenterInfo& center_info);
+
+// ----------------------------------------------------------------------------
+// Публикация геометрии трека.
+//
+// g_smooth_track_points читают горячие пути (проекция позиции машины на трек —
+// по вызову на каждый пакет телеметрии), поэтому потребители держат собственные
+// снимки и обновляют их только при смене версии. Любая запись геометрии обязана
+// идти через publish_smooth_track_points(): она и берёт g_track_mutex, и двигает
+// версию. Прямое присваивание глобалу оставит чужие снимки со старыми точками.
+// ----------------------------------------------------------------------------
+void publish_smooth_track_points(std::vector<SplinePoint> points);
+
+// Текущая версия геометрии. Меняется — значит трек перезаписан.
+uint32_t track_geometry_generation();
 
 // Track render offset (normalized units).
 // If track points are shifted (e.g. via recenterTrack), vehicles must be rendered with the same offset

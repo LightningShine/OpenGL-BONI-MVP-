@@ -1,4 +1,4 @@
-#include "TrackServerClient.h"
+#include "network/TrackServerClient.h"
 
 #include <atomic>
 #include <cctype>
@@ -18,10 +18,10 @@
 #include <winhttp.h>
 #pragma comment(lib, "winhttp.lib")
 
-#include "Server.h"             // TelemetryPacket (rajagp_core alias)
-#include "SimulationServer.h"   // processIncomingTelemetry
-#include "../vehicle/Vehicle.h" // g_vehicles authoritative timing update
-#include "../input/Input.h"     // g_map_origin (map origin from the track frame)
+#include "network/Server.h"             // TelemetryPacket (rajagp_core alias)
+#include "network/SimulationServer.h"   // processIncomingTelemetry
+#include "vehicle/Vehicle.h" // g_vehicles authoritative timing update
+#include "input/Input.h"     // g_map_origin (map origin from the track frame)
 
 #include <GeographicLib/UTMUPS.hpp>
 
@@ -212,13 +212,13 @@ void handleState(const std::string& text)
             g_race_epoch = epoch;
             g_have_epoch = true;
             if (is_new_session) {
-                std::lock_guard<std::mutex> lock(g_vehicles_mutex);
+                VehiclesLock lock;
                 for (auto& [id, v] : g_vehicles) {
                     v.m_laps.clear();
                     v.laps.clear();
                     v.m_best_lap_time       = -1.0f;
                     v.m_completed_laps      = 0;
-                    v.m_current_lap_number  = 1;
+                    v.m_current_lap_number  = RaceConstants::LAP_START_NUMBER;
                     v.m_current_lap_timer   = 0.0f;
                     v.m_has_started_first_lap = false;
                     v.m_is_leader           = false;
@@ -273,14 +273,19 @@ void handleState(const std::string& text)
         const bool finished = jsonNumber(car, "fin", 0, ok) != 0.0;
         const int32_t race_id = telemetryGetRaceIdForPrototype(id);
         if (race_id != -1) {
-            std::lock_guard<std::mutex> lock(g_vehicles_mutex);
+            VehiclesLock lock;
             auto it = g_vehicles.find(race_id);
             if (it != g_vehicles.end()) {
                 Vehicle& v = it->second;
                 v.m_has_authoritative_state = true;
+                // Между сообщениями сервера RaceManager тикает таймер сам —
+                // принимаем серверное значение только вперёд (или при смене
+                // круга), иначе время на экране дёргалось бы назад.
+                const bool lap_changed = (lap != v.m_current_lap_number);
+                if (lap_changed || lap_t > v.m_current_lap_timer)
+                    v.m_current_lap_timer = lap_t;
                 v.m_current_lap_number = lap;
                 v.m_completed_laps     = lap > 0 ? lap - 1 : 0;
-                v.m_current_lap_timer  = lap_t;
                 if (best > 0.0f) v.m_best_lap_time = best;
                 v.m_is_leader = (position == 1);
                 v.m_has_started_first_lap = lap > 0;

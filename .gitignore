@@ -361,3 +361,23 @@ MigrationBackup/
 
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
+# Данные приложения (см. OpenGL/src/core/AppPaths.h). Версионируются только
+# трассы и протоколы заездов — их переносят между машинами. То, что пишется на
+# ходу, в репозиторий не идёт:
+#   * журналы консоли — локальная диагностика одного запуска;
+#   * записи повторов .rjl — крупные бинарники, до сотни мегабайт на заезд.
+logs/
+OpenGL/saves/replays/
+
+# Локальное состояние UI и реестра устройств. Пишется приложением при каждом
+# запуске рядом с рабочим каталогом, у каждого разработчика своё — в репозитории
+# такие файлы только создают вечно грязный git status.
+OpenGL/devices.db
+OpenGL/imgui.ini
+OpenGL/pro_panels.ini
+OpenGL/pro_scales.ini
+OpenGL/ui_scale.ini
+OpenGL/recent_files.txt
+
+# Собранный дистрибутив (Inno Setup, OutputDir=out).
+installer/out/

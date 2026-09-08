@@ -1,5 +1,5 @@
 #pragma once
-#include "ProView.h"
+#include "ui/pro/ProView.h"
 namespace Pro {
     void RenderLaptimeWindow(const ProContext& ctx, int32_t vehicleId, ImVec2 vpSz, float topH);
 }

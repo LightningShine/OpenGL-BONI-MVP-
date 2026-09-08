@@ -15,7 +15,7 @@
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
 #include <fstream>
-#include "../../libraries/include/stb_image.h"
+#include <stb_image.h>
 
 
 // === WINDOWS BORDER COLOR ===
@@ -35,22 +35,29 @@
 
 // =================================
 // === PROJECTS FILES ===
-#include "../Config.h"
-#include "../ui/UI_Config.h"
-#include "../input/Input.h"
-#include "../rendering/Interpolation.h"
-#include "../rendering/Render.h"          
-#include "../rendering/VehicleNameRenderer.h"
-#include "../../UI.h"
-#include "../../UI_Elements.h"
-#include "../network/Server.h"
-#include "../network/TrackServerClient.h"
-#include "../network/ESP32_Code.h"
-#include "../network/SimulationServer.h"
-#include "../track/TrackRecorder.h"
-#include "../vehicle/Vehicle.h"
-#include "../racing/RaceManager.h"
-#include "../racing/ModeManager/ModeManager.h"
+#include "core/Config.h"
+#include "ui/UI_Config.h"
+#include "ui/ui_scale.hpp"
+#include "core/AppPaths.h"
+#include "core/DeviceRegistry.h"
+#include "logging/ConsoleLog.h"
+#include "network/SyntheticTelemetry.h"
+#include "network/ReplayPlayer.h"
+#include "input/Input.h"
+#include "rendering/Interpolation.h"
+#include "rendering/Render.h"          
+#include "rendering/VehicleNameRenderer.h"
+#include "ui/UI.h"
+#include "ui/UI_Elements.h"
+#include "network/Server.h"
+#include "network/TrackServerClient.h"
+#include "network/ESP32_Code.h"
+#include "network/SimulationServer.h"
+#include "track/TrackRecorder.h"
+#include "vehicle/Vehicle.h"
+#include "racing/RaceManager.h"
+#include "racing/ModeManager.h"
+#include "ui/pro/ProView.h"   // Pro::FlushPanelSettings на выходе
 
 
 using namespace std;
@@ -110,7 +117,7 @@ const std::vector<glm::vec2>* track_points = nullptr, std::mutex* points_mutex =
 			// Generate unique ID for simulation
          int vehicle_id = -1;
 			{
-				std::lock_guard<std::mutex> lock(g_vehicles_mutex);
+				VehiclesLock lock;
 				for (int id = 1; id <= 99; ++id)
 				{
 					if (g_vehicles.find(id) == g_vehicles.end())
@@ -141,6 +148,90 @@ const std::vector<glm::vec2>* track_points = nullptr, std::mutex* points_mutex =
 	if (glfwGetKey(window, GLFW_KEY_T) == GLFW_RELEASE)
 	{
 		wasTPressed = false;
+	}
+
+	// ── Транспорт повтора: Space — пуск/пауза, стрелки — перемотка ──────────
+	// Короткое нажатие стрелки даёт один тик записи. Удержание после короткой
+	// задержки включает НЕПРЕРЫВНУЮ перемотку: повторять одиночные шаги с
+	// частотой кадров бессмысленно — скорость зависела бы от частоты кадров,
+	// а не от намерения оператора.
+	// Модификаторы решают, кому достанутся стрелки. Раньше повтор забирал их
+	// безусловно, поэтому R + стрелка одновременно крутила камеру и мотала
+	// запись. Теперь у каждой роли свой модификатор и они не пересекаются.
+	const bool rotationHeld = glfwGetKey(window, GLFW_KEY_R) == GLFW_PRESS;
+	const bool shiftHeld = glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS ||
+	                       glfwGetKey(window, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS;
+
+	if (telemetry::replay_is_active() && !rotationHeld && !shiftHeld)
+	{
+		constexpr double SCRUB_HOLD_DELAY = 0.35;   // с какой задержки начинается перемотка
+		// Шаг перемотки = скорость × интервал применения. При 6× и шаге в 10 мс
+		// это 60 мс записи за обновление — сопоставимо с интервалом между
+		// пакетами, поэтому назад ощущается так же непрерывно, как вперёд.
+		constexpr double SCRUB_SPEED      = 6.0;
+
+		// Своя дельта кадра: processInput её не получает. Ограничиваем сверху,
+		// иначе первый кадр после открытия записи (или после свёрнутого окна)
+		// отмотал бы сразу далеко.
+		static double lastScrubTime = glfwGetTime();
+		const double nowTime = glfwGetTime();
+		double deltaTime = nowTime - lastScrubTime;
+		lastScrubTime = nowTime;
+		if (deltaTime < 0.0 || deltaTime > 0.1)
+			deltaTime = 0.0;
+
+		static bool wasSpacePressed = false;
+		const bool spaceDown = glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS;
+		if (spaceDown && !wasSpacePressed)
+			telemetry::replay_toggle_pause();
+		wasSpacePressed = spaceDown;
+
+		auto handleArrow = [&](int key, double direction, bool& wasDown, double& heldFor)
+		{
+			const bool down = glfwGetKey(window, key) == GLFW_PRESS;
+			if (down && !wasDown)
+			{
+				telemetry::replay_step(static_cast<int>(direction));
+				heldFor = 0.0;
+			}
+			else if (down)
+			{
+				heldFor += deltaTime;
+				if (heldFor >= SCRUB_HOLD_DELAY)
+					telemetry::replay_scrub(direction * SCRUB_SPEED * deltaTime);
+			}
+			wasDown = down;
+		};
+
+		static bool wasRightDown = false;
+		static bool wasLeftDown = false;
+		static double rightHeldFor = 0.0;
+		static double leftHeldFor = 0.0;
+		handleArrow(GLFW_KEY_RIGHT, 1.0, wasRightDown, rightHeldFor);
+		handleArrow(GLFW_KEY_LEFT, -1.0, wasLeftDown, leftHeldFor);
+	}
+
+	// G key: синтетический источник ПРОВОДНОЙ телеметрии. В отличие от T, идёт
+	// через тот же тракт, что и приёмник (CRC, журнал .rjl, пайплайн), и даёт
+	// повторяемый поток — на нём проверяется хронометраж.
+	static bool wasGPressed = false;
+	if (glfwGetKey(window, GLFW_KEY_G) == GLFW_PRESS && !wasGPressed)
+	{
+		wasGPressed = true;
+
+		if (telemetry::synthetic_is_running())
+		{
+			telemetry::synthetic_stop();
+		}
+		else
+		{
+			telemetry::SyntheticScenario scenario;  // значения по умолчанию — чистый заезд
+			telemetry::synthetic_start(scenario);
+		}
+	}
+	if (glfwGetKey(window, GLFW_KEY_G) == GLFW_RELEASE)
+	{
+		wasGPressed = false;
 	}
 
 	// Y key: test track recording without hardware by generating a circle of telemetry packets.
@@ -223,9 +314,11 @@ const std::vector<glm::vec2>* track_points = nullptr, std::mutex* points_mutex =
 
 
 	// Camera movement (W/A/S/D or Arrows)
-	// Note: Arrow keys are used for rotation when R is pressed
-	bool isRotationMode = glfwGetKey(window, GLFW_KEY_R) == GLFW_PRESS;
-	
+	// Стрелки распределены так: R + влево/вправо — поворот вида,
+	// Shift + влево/вправо — сдвиг камеры, голые влево/вправо — перемотка
+	// повтора. Вверх/вниз остаются за камерой.
+	const bool isRotationMode = rotationHeld;
+
 	if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
 		camera_pos.y += speed / zoom;  // Up
 
@@ -247,10 +340,12 @@ const std::vector<glm::vec2>* track_points = nullptr, std::mutex* points_mutex =
 		if (glfwGetKey(window, GLFW_KEY_DOWN) == GLFW_PRESS)
 			camera_pos.y -= speed / zoom;
 		
-		if (glfwGetKey(window, GLFW_KEY_LEFT) == GLFW_PRESS)
+		// Горизонтальный сдвиг — только с Shift: голые стрелки влево/вправо
+		// отданы перемотке повтора.
+		if (shiftHeld && glfwGetKey(window, GLFW_KEY_LEFT) == GLFW_PRESS)
 			camera_pos.x -= speed / zoom;
-		
-		if (glfwGetKey(window, GLFW_KEY_RIGHT) == GLFW_PRESS)
+
+		if (shiftHeld && glfwGetKey(window, GLFW_KEY_RIGHT) == GLFW_PRESS)
 			camera_pos.x += speed / zoom;
 	}
 	
@@ -361,7 +456,7 @@ const std::vector<glm::vec2>* track_points = nullptr, std::mutex* points_mutex =
 					int vehicleId = key - GLFW_KEY_0;
 
 					// Check if vehicle exists
-					std::lock_guard<std::mutex> lock(g_vehicles_mutex);
+					VehiclesLock lock;
 					if (g_vehicles.find(vehicleId) != g_vehicles.end()) {
 						g_focused_vehicle_id = vehicleId;
 						isWaitingForVehicleId = false;
@@ -555,37 +650,108 @@ int window_width, int window_height, float horizontalBound, float verticalBound)
     glBindVertexArray(0);
 }
 
-int main()
+// Файлы из командной строки: трасса и/или запись телеметрии.
+//
+// Это рабочий сценарий «привезли карту памяти трекера»: файл `.rjl` открывается
+// сразу, без блужданий по меню, а Windows умеет отдавать путь двойным щелчком —
+// ассоциация в инсталляторе уже зарегистрирована, но до сих пор путь просто
+// игнорировался. Порядок аргументов не важен, разбираем по расширению.
+struct StartupFiles
 {
+	std::string track;
+	std::string recording;
+	double      replay_speed = 1.0;
+	// Демонстрационный заезд без железа: тот же синтетический источник, что и по
+	// клавише G. Идёт через полный тракт приёма, поэтому годится и как проверка
+	// хронометража, и как показ работы на машине без приёмника.
+	double      sim_speed = 0.0;   // 0 = не запускать
+};
 
-	// Platform and feature detection
-	std::cout << "==========================================" << std::endl;
-	std::cout << "   OpenGL Telemetry System" << std::endl;
-	std::cout << "==========================================" << std::endl;
-	
-#if NETWORKING_ENABLED
-	std::cout << "[PLATFORM] Running on x64 architecture" << std::endl;
-	std::cout << "[FEATURES] All features available:" << std::endl;
-	std::cout << "  + GameNetworkingSockets (Server/Client)" << std::endl;
-	std::cout << "  + UPnP Port Forwarding" << std::endl;
-	std::cout << "  + Network Telemetry Streaming" << std::endl;
-	std::cout << "  + Full OpenGL Rendering" << std::endl;
-#else
-	std::cout << "[PLATFORM] Running on ARM64 architecture" << std::endl;
-	std::cout << "[WARNING] Limited functionality mode!" << std::endl;
-	std::cout << std::endl;
-	std::cout << "Disabled features on ARM64:" << std::endl;
-	std::cout << "  - GameNetworkingSockets (Not supported on ARM64 Windows)" << std::endl;
-	std::cout << "  - Network Server/Client functionality" << std::endl;
-	std::cout << "  - UPnP Port Forwarding" << std::endl;
-	std::cout << std::endl;
-	std::cout << "Available features:" << std::endl;
-	std::cout << "  + Local telemetry simulation" << std::endl;
-	std::cout << "  + OpenGL Rendering" << std::endl;
-	std::cout << "  + Serial COM port support" << std::endl;
-	std::cout << std::endl;
-	std::cout << "=> For full networking features, please use x64 build!" << std::endl;
+static StartupFiles parse_startup_files(int argc, char** argv)
+{
+	StartupFiles files;
+	for (int i = 1; i < argc; ++i)
+	{
+		const std::string arg = argv[i];
+
+		constexpr const char* SPEED_FLAG = "--speed=";
+		if (arg.rfind(SPEED_FLAG, 0) == 0)
+		{
+			const double value = std::atof(arg.c_str() + std::strlen(SPEED_FLAG));
+			if (value > 0.0)
+				files.replay_speed = value;
+			continue;
+		}
+
+		constexpr const char* SIM_FLAG = "--sim";
+		if (arg.rfind(SIM_FLAG, 0) == 0)
+		{
+			const char* value = arg.c_str() + std::strlen(SIM_FLAG);
+			const double multiplier = (*value == '=') ? std::atof(value + 1) : 1.0;
+			files.sim_speed = (multiplier > 0.0) ? multiplier : 1.0;
+			continue;
+		}
+
+		std::string ext = std::filesystem::path(arg).extension().string();
+		for (char& c : ext) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+
+		if (ext == ".rjl")            files.recording = arg;
+		else if (ext == ".trk2" || ext == ".txt") files.track = arg;
+	}
+	return files;
+}
+
+int main(int argc, char** argv)
+{
+	const StartupFiles startup_files = parse_startup_files(argc, argv);
+
+#ifdef _WIN32
+	// Console in UTF-8, otherwise Cyrillic (track/driver names, paths) prints as '?'
+	SetConsoleOutputCP(CP_UTF8);
+	SetConsoleCP(CP_UTF8);
+	// Explicit TrueType font: UTF-8 needs one, and conhost resets to a tiny
+	// raster font when the codepage changes
+	{
+		HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
+		CONSOLE_FONT_INFOEX cf{};
+		cf.cbSize = sizeof(cf);
+		if (GetCurrentConsoleFontEx(hOut, FALSE, &cf))
+		{
+			wcscpy_s(cf.FaceName, L"Consolas");
+			cf.dwFontSize.X = 0;
+			cf.dwFontSize.Y = 16;
+			SetCurrentConsoleFontEx(hOut, FALSE, &cf);
+		}
+	}
 #endif
+
+	// Каталоги данных — до всего остального: журнал консоли открывается прямо
+	// следующей строкой и обязан лечь уже в новое место. Здесь же выполняется
+	// разовый перенос со старой раскладки (см. AppPaths.h).
+	app_paths::prepare();
+
+	// Журнал консоли. Объявлен здесь, чтобы жить до конца main: всё, что
+	// печатается ниже, попадает и в консоль, и в файл. Разбор «что сломалось
+	// на гонке» перестаёт зависеть от того, сохранил ли оператор вывод.
+	const logging::ConsoleLogSession console_log(
+		app_paths::logs(), LoggingConstants::KEEP_CONSOLE_LOG_FILES);
+
+	// Стартовый баннер. Сетевой стек — WebSocket-клиент Track Server, он
+	// работает на всех архитектурах (старый GNS удалён, см. Server.h).
+	std::cout << "==========================================" << std::endl;
+	std::cout << "   " << UIConfig::APP_NAME << " Telemetry System" << std::endl;
+	std::cout << "==========================================" << std::endl;
+#if defined(_M_ARM64)
+	std::cout << "[PLATFORM] Windows ARM64" << std::endl;
+#elif defined(_M_X64)
+	std::cout << "[PLATFORM] Windows x64" << std::endl;
+#else
+	std::cout << "[PLATFORM] Windows (unknown arch)" << std::endl;
+#endif
+	std::cout << "[FEATURES] Track Server client (WebSocket), COM telemetry, "
+	             "simulation, OpenGL rendering" << std::endl;
+	if (console_log.is_active())
+		std::cout << "[LOG] Console log: " << console_log.file_path().string() << std::endl;
 	std::cout << "==========================================" << std::endl;
 	std::cout << std::endl;
 
@@ -658,7 +824,11 @@ int main()
     // Use NULL for monitor to create a windowed mode (borderless because of GLFW_DECORATED = FALSE)
     // This fixes the black screen issue on capture and cursor visibility
 	glfwWindowHint(GLFW_SAMPLES, 4);
-	
+	// DPI: GLFW_SCALE_TO_MONITOR НЕ включаем — GLFW ресайзил бы окно только по
+	// системному DPI, а наш масштаб включает ещё и физическую плотность
+	// монитора. Окно пересчитывает UI::apply_ui_scale_change() сам, одним
+	// коэффициентом с контентом (см. src/ui/ui_scale.hpp).
+
 	std::cout << "[MAIN] Creating window " << Width << "x" << Height << "..." << std::endl;
 	GLFWwindow* window = glfwCreateWindow(Width, Height, UIConfig::APP_NAME, NULL, NULL);
 	
@@ -694,15 +864,16 @@ int main()
 	}
 	
 	std::cout << "[MAIN] Window created successfully" << std::endl;
+	ui_scale::init(window);
 
 
 
 	// === SET WINDOW ICON ===
 	{
 		int icon_w = 0, icon_h = 0, icon_channels = 0;
-		unsigned char* icon_pixels = stbi_load("styles/images/Icon", &icon_w, &icon_h, &icon_channels, 4);
+		unsigned char* icon_pixels = stbi_load("assets/images/Icon", &icon_w, &icon_h, &icon_channels, 4);
 		if (!icon_pixels)
-			icon_pixels = stbi_load("./styles/icons/PNG/Icon.png", &icon_w, &icon_h, &icon_channels, 4);
+			icon_pixels = stbi_load("./assets/icons/PNG/Icon.png", &icon_w, &icon_h, &icon_channels, 4);
 		if (icon_pixels)
 		{
 			GLFWimage icon_image;
@@ -711,11 +882,11 @@ int main()
 			icon_image.pixels = icon_pixels;
 			glfwSetWindowIcon(window, 1, &icon_image);
 			stbi_image_free(icon_pixels);
-			std::cout << "[MAIN] Window icon set from styles/images/Icon" << std::endl;
+			std::cout << "[MAIN] Window icon set from assets/images/Icon" << std::endl;
 		}
 		else
 		{
-			std::cerr << "[MAIN] Warning: Could not load window icon from styles/images/Icon(.png)" << std::endl;
+			std::cerr << "[MAIN] Warning: Could not load window icon from assets/images/Icon(.png)" << std::endl;
 		}
 	}
 
@@ -836,7 +1007,27 @@ int main()
 	}
 	g_ui = &ui;
 
+	// Как повтору загрузить трассу, встроенную в запись. Знание о загрузке
+	// остаётся здесь, в приложении: модуль повтора о UI по-прежнему не знает.
+	telemetry::replay_set_track_loader([&ui](const std::filesystem::path& track) {
+		ui.HandleDroppedFile(track.string());
+		return g_is_map_loaded.load();
+	});
+
 	std::cout << "[MAIN] UI initialized successfully" << std::endl;
+
+	// Файлы из командной строки открываются НЕ здесь, а в цикле отрисовки.
+	// Здесь ещё не создан RaceManager, а трасса при загрузке отдаёт ему линию
+	// старт/финиша — присвоение молча пропускалось по нулевому указателю, и
+	// хронометраж потом просто стоял. Плюс трассы формата .txt доезжают до GPU
+	// через pending-consume, то есть готовы лишь через кадр-другой.
+	std::string pending_track = startup_files.track;
+	std::string pending_recording = startup_files.recording;
+	bool pending_sim = (startup_files.sim_speed > 0.0);
+
+	// Сколько кадров запись из командной строки ждёт заданную рядом трассу.
+	// Секунды при 60 кадрах — с запасом на загрузку и подъём геометрии на GPU.
+	int track_wait_frames = startup_files.track.empty() ? 0 : 60;
 
 
 
@@ -910,6 +1101,10 @@ int main()
 
 	std::cout << "vehicleLoop thread started" << std::endl;
 	
+	// ========================== DEVICE REGISTRY (имена/группы трекеров) ==========================
+	// Локальная SQLite-база рядом с exe: помнит ID устройств и заданные имена.
+	DeviceRegistry::instance().open("devices.db");
+
 	// ========================== RACE MANAGER INITIALIZATION ==========================
 	g_race_manager = new RaceManager();
 	std::cout << "[MAIN] Race Manager initialized" << std::endl;
@@ -1022,22 +1217,114 @@ int main()
 			std::cout << "[MAIN] ✓ Track rendering cache built - track should now be visible!" << std::endl;
 		}
 
+		// Трасса из командной строки. Тот же путь, что и у файла, брошенного на
+		// окно: он не только открывает трассу, но и убирает заставку. Без этого
+		// сцена не рисуется, а вместе с ней не выставляется линия старт/финиша.
+		if (!pending_track.empty() && g_race_manager)
+		{
+			std::cout << "[MAIN] Opening track from command line: "
+			          << pending_track << std::endl;
+			ui.HandleDroppedFile(pending_track);
+			pending_track.clear();
+		}
+		if (track_wait_frames > 0)
+			--track_wait_frames;
+
+		// Отложенное открытие записи из командной строки. Трассу не требуем:
+		// запись может нести её внутри и загрузит сама — это и есть сценарий
+		// «привезли карту памяти, на этой машине трассы никогда не было».
+		//
+		// Если трасса задана рядом с записью, ждём, пока она реально встанет:
+		// формат .txt доезжает до GPU через pending-consume, то есть готов лишь
+		// через кадр-другой, а запись, открытая в тот же кадр, видела «трасса не
+		// загружена» и отказывалась — то открывалась, то нет, по настроению.
+		// Ожидание ограничено: если трасса не загрузилась вовсе, запись всё
+		// равно попробует открыться и объяснит отказ.
+		if (!pending_recording.empty() && pending_track.empty() && g_race_manager &&
+		    (g_is_map_loaded || track_wait_frames == 0))
+		{
+			std::cout << "[MAIN] Opening recording from command line: "
+			          << pending_recording << std::endl;
+
+			// Через UI, а не напрямую: причина отказа должна дойти до экрана
+			// так же, как при открытии из меню.
+			ui.OpenReplayFile(pending_recording);
+			if (telemetry::replay_is_active())
+			{
+				telemetry::replay_set_speed(startup_files.replay_speed);
+				telemetry::replay_toggle_pause();   // открывается на паузе — пускаем
+			}
+			pending_recording.clear();
+		}
+
+		// Демонстрационный заезд из командной строки — тоже по готовности трассы:
+		// генератор строит путь по её геометрии.
+		if (pending_sim && g_is_map_loaded)
+		{
+			telemetry::SyntheticScenario scenario;
+			scenario.speed_multiplier = startup_files.sim_speed;
+			telemetry::synthetic_start(scenario);
+
+			// Заезд сразу боевой: иначе круги не считаются вовсе (в состоянии
+			// Idle хронометраж только крутит таймер), и демонстрировать было бы
+			// нечего.
+			if (g_race_manager)
+				g_race_manager->StartSession();
+
+			pending_sim = false;
+		}
+
 		// Calculate delta time
 		auto currentFrameTime = std::chrono::steady_clock::now();
 		float deltaTime = std::chrono::duration<float>(currentFrameTime - lastFrameTime).count();
 		lastFrameTime = currentFrameTime;
 
-		// Update Race Manager (lap timing logic)
-		if (g_race_manager)
+		// На паузе повтора время записи стоит, поэтому и хронометраж стоит:
+		// иначе таймер текущего круга продолжал бы идти по кадрам, хотя данных
+		// не поступает. Записанные времена кругов это не затрагивает — они
+		// считаются по меткам пакетов.
+		if (telemetry::replay_is_paused())
+			deltaTime = 0.0f;
+
+		ui.BeginFrame();
+
+		processInput(window, camera_position, camera_zoom, camera_rotation, camera_move_speed,
+					&g_smooth_track_points, &points, &points_mutex);  // ✅ Pass track data for networking
+
+		// Перемотка повтора исполняется здесь: сдвиг, накопленный только что в
+		// processInput, применяется в этом же кадре и до отрисовки. Ровно один
+		// шаг на кадр — в обе стороны. См. replay_apply_pending_seek.
+		telemetry::replay_apply_pending_seek();
+
+		// Прогрев только что открытой записи: заезд становится известен целиком
+		// — круги, графики, траектории. Здесь, а не в replay_open, потому что
+		// для подсчёта кругов нужна линия старт/финиша, а её выставляет
+		// отрисовка трассы. Работа режется на куски по кадрам, см.
+		// replay_build_journal_if_pending.
+		telemetry::replay_build_journal_if_pending();
+
+		// Update Race Manager (lap timing logic).
+		// Он же досчитывает состояние после шага перемотки: сам шаг публикует
+		// только позиции (пересчёт таблицы с дельтами по всем машинам слишком
+		// дорог для каждого шага), а разбор пересечений, круги и таблица
+		// приходят сюда — ровно один раз на кадр, на уже согласованном
+		// состоянии. Флаг пересчёта остаётся страховкой: читать гоночный
+		// результат по половине скормленной записи нельзя, в таблице от этого
+		// мелькали чужие лидеры.
+		//
+		// ПОСЛЕ ПЕРЕМОТКИ, А НЕ ДО НЕЁ. Перемотка скармливает пакеты и
+		// складывает найденные пересечения в m_pending_crossings, а разбирает
+		// их хронометраж. Пока Update стояла в кадре ПЕРВОЙ, разбор доставался
+		// СЛЕДУЮЩЕМУ кадру: один кадр на экране жили новые позиции со старыми
+		// номерами кругов и старой таблицей, и всё, что от них производно
+		// (подсветка круга в LAP LIST, отметка точки просмотра на графике),
+		// мигало на каждом щелчке перемотки.
+		if (g_race_manager && !telemetry::replay_is_rebuilding())
 		{
 			g_race_manager->Update(deltaTime);
 		}
-		
-		ui.BeginFrame();
 
-		processInput(window, camera_position, camera_zoom, camera_rotation, camera_move_speed, 
-					&g_smooth_track_points, &points, &points_mutex);  // ✅ Pass track data for networking
-		camera_position += camera_velocity;  
+		camera_position += camera_velocity;
 		camera_velocity *= friction;
 		
 		if (ui.IsProMode())
@@ -1190,6 +1477,11 @@ int main()
 
 	// ========================== CLEAN UP ==========================
 	
+	// Настройки панелей пишутся отложенно (см. Pro::FlushPanelSettings): то, что
+	// оператор изменил в последнюю секунду перед закрытием, дописываем здесь,
+	// иначе оно потерялось бы молча.
+	Pro::FlushPanelSettings(true);
+
 	// Clean up Race Manager
 	if (g_race_manager)
 	{
